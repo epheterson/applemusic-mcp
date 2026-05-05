@@ -10,6 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write  # create tags and releases
+      actions: write   # dispatch publish.yml after creating the release
+                       # (without this, gh workflow run gets HTTP 403 from
+                       # the default GITHUB_TOKEN — discovered when v0.10.2
+                       # release was created but publish.yml never fired)
     steps:
       - uses: actions/checkout@v4
         with:
