@@ -2713,6 +2713,17 @@ def _playlist_create(name: str, description: str = "") -> str:
         return str(e)
 
 
+def _macos_only(action_name: str) -> Optional[str]:
+    """Return the standard "requires macOS" error if AppleScript isn't available.
+
+    Used by playlist() / library() dispatcher branches as a one-line gate:
+    ``if (err := _macos_only("remove")): return err``.
+    """
+    if not APPLESCRIPT_AVAILABLE:
+        return f"Error: {action_name} action requires macOS"
+    return None
+
+
 def _playlist_create_folder(path: str) -> str:
     """Internal: Create a folder or folder path. Supports slash-separated paths.
 
@@ -3661,12 +3672,10 @@ def playlist(
     elif action == "copy":
         return _playlist_copy(source, new_name)
     elif action == "remove":
-        if not APPLESCRIPT_AVAILABLE:
-            return "Error: remove action requires macOS"
+        if (err := _macos_only("remove")): return err
         return _playlist_remove(playlist, track, artist)
     elif action == "delete":
-        if not APPLESCRIPT_AVAILABLE:
-            return "Error: delete action requires macOS"
+        if (err := _macos_only("delete")): return err
         if folder:
             return _playlist_delete_folder(folder)
         playlist_name = name or playlist
@@ -3674,8 +3683,7 @@ def playlist(
             return "Error: name, playlist, or folder required for delete"
         return _playlist_delete(playlist_name)
     elif action == "rename":
-        if not APPLESCRIPT_AVAILABLE:
-            return "Error: rename action requires macOS"
+        if (err := _macos_only("rename")): return err
         if not new_name:
             return "Error: new_name required for rename"
         if folder:
@@ -3686,14 +3694,12 @@ def playlist(
         return _playlist_rename(playlist_name, new_name)
     elif action == "create_folder":
         # Backward compat — redirect to create(folder=...)
-        if not APPLESCRIPT_AVAILABLE:
-            return "Error: folder operations require macOS"
+        if (err := _macos_only("create_folder")): return err
         if not name:
             return "Error: name required for create_folder"
         return _playlist_create_folder(name)
     elif action == "move":
-        if not APPLESCRIPT_AVAILABLE:
-            return "Error: move action requires macOS"
+        if (err := _macos_only("move")): return err
         if not playlist:
             return "Error: playlist required for move"
         folder_target = folder or name
@@ -3766,12 +3772,10 @@ def library(
             return "Error: rate_action required (love, dislike, get, set)"
         return _library_rate(rate_action, track, artist, stars)
     elif action == "remove":
-        if not APPLESCRIPT_AVAILABLE:
-            return "Error: remove action requires macOS"
+        if (err := _macos_only("remove")): return err
         return _library_remove(track, artist)
     elif action == "snapshot":
-        if not APPLESCRIPT_AVAILABLE:
-            return "Error: Snapshots require macOS with AppleScript"
+        if (err := _macos_only("snapshot")): return err
         sub = query.strip() if query else ""
         sub_lower = sub.lower()
         if sub_lower == "new":
@@ -3902,48 +3906,12 @@ def _library_search(
 
 
 def _library_add_track_via_ui(query: str, search_artist: str) -> tuple[bool, str]:
-    """Add a catalog song to library via Music.app's UI search.
+    """Tokenless macOS path for ``library(action="add", track=...)``.
 
-    Tokenless macOS path for ``library(action="add", track=...)``. Mirrors
-    the search-and-add half of ``asc.ui_add_to_playlist`` but stops after
-    "Add to Library" — no playlist hop. Returns (success, message).
-
-    The README promises tokenless macOS works for "most features" — this
-    is what makes that promise true for direct library-add. Without this,
-    the API path raises FileNotFoundError("Developer token not found")
-    and a Claude session leaks the legacy generate-token guidance even
-    though the operation could have succeeded via UI automation.
+    Delegates to ``asc.ui_add_to_library``'s popover-canonical flow, which
+    handles (name, artist) matching internally.
     """
-    full_query = f"{query} {search_artist}".strip() if search_artist else query
-    ok, results, why = asc.ui_search_catalog(full_query)
-    if not ok or not results:
-        asc.ui_clear_search()
-        return False, why or f"No catalog results for '{full_query}'"
-
-    # Pick the best Song match — same shape as ui_add_to_playlist's filter.
-    # Prefer a Song whose artist matches; fall back to the first Song seen
-    # (not results[0], which could be an Album/Artist entry).
-    target = None
-    first_song = None
-    for r in results:
-        if r.get("type") == "Song":
-            if first_song is None:
-                first_song = r
-            if search_artist and search_artist.lower() not in r.get("artist", "").lower():
-                continue
-            target = r
-            break
-    if target is None:
-        target = first_song or results[0]
-
-    target_name = target["name"]
-    target_artist = target.get("artist", search_artist)
-
-    # New popover-canonical flow: pass artist explicitly so the popover-
-    # row matcher can pick the exact (name, artist) match instead of the
-    # first Song-prefix row by that title.
-    ok, msg = asc.ui_add_to_library(target_name, target_artist)
-    asc.ui_clear_search()
+    ok, msg = asc.ui_add_to_library(query, search_artist)
     if not ok:
         return False, f"Failed to add to library: {msg}"
     # Verify the track actually appears in the local library before reporting
@@ -3953,11 +3921,16 @@ def _library_add_track_via_ui(query: str, search_artist: str) -> tuple[bool, str
     for attempt in range(3):
         if attempt > 0:
             time.sleep(1.0)
-        lib_ok, lib_results = asc.search_library(target_name, "songs")
+        lib_ok, lib_results = asc.search_library(query, "songs")
         if lib_ok and lib_results:
-            return True, f"{target_name} by {target_artist}"
+            for r in lib_results:
+                if query.lower() not in r.get("name", "").lower():
+                    continue
+                if search_artist and search_artist.lower() not in r.get("artist", "").lower():
+                    continue
+                return True, f"{r.get('name', query)} by {r.get('artist', search_artist)}"
     return False, (
-        f"Add to Library button was clicked for '{target_name}' but the track "
+        f"Add to Library button was clicked for '{query}' but the track "
         f"did not appear in the local library after retry. iCloud Library sync "
         f"may be paused or this track may not be available for library-add."
     )
@@ -3975,12 +3948,9 @@ def _library_add(
     if not track and not album:
         return "Error: Provide track or album parameter"
 
-    # Tokenless macOS path: route to UI automation for songs (the README
-    # promises tokenless macOS works for catalog ops; the building blocks
-    # for direct library-add via UI exist in asc.ui_search_catalog +
-    # asc.ui_add_to_library — used together by ui_add_to_playlist's
-    # composite flow). Albums via UI aren't supported here yet; tell the
-    # user clearly rather than leaking the API token error.
+    # Tokenless macOS path: route to UI automation for songs. Albums via
+    # UI aren't supported yet — tell the user instead of leaking the API
+    # token error.
     use_ui_path = not _has_developer_token() and APPLESCRIPT_AVAILABLE
     if use_ui_path and album and not track:
         # Pure album-add request without a token; can't fulfill via UI.

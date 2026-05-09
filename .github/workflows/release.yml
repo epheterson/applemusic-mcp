@@ -41,20 +41,54 @@ jobs:
             echo "Tag $TAG does not exist - will create release."
           fi
 
+      - name: Extract this version's CHANGELOG section
+        id: notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Pull this release's notes from the section between `## [VERSION]`
+          # and the next `## [`. Empty result falls through to --generate-notes.
+          notes=$(awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (capturing) { exit }
+              if ($0 ~ "^## \\[" ver "\\]") { capturing=1; next }
+            }
+            capturing { print }
+          ' CHANGELOG.md)
+          # Trim leading/trailing blank lines.
+          notes=$(printf '%s' "$notes" | awk 'NF{found=1} found' | tac | awk 'NF{found=1} found' | tac)
+          if [ -z "$notes" ]; then
+            echo "No CHANGELOG section for v$VERSION — will fall back to auto-generated notes."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "body<<NOTES_EOF"
+              printf '%s\n' "$notes"
+              echo "NOTES_EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create tag + GitHub Release
         if: steps.check.outputs.exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.version }}
+          NOTES_FOUND: ${{ steps.notes.outputs.found }}
+          NOTES_BODY: ${{ steps.notes.outputs.body }}
         run: |
-          # Tag the merge commit and create the GitHub Release.
-          # --generate-notes populates the body from PR/commit messages
-          # since the previous release.
-          gh release create "$TAG" \
-            --title "v$VERSION" \
-            --generate-notes \
-            --target "$GITHUB_SHA"
+          if [ "$NOTES_FOUND" = "true" ]; then
+            gh release create "$TAG" \
+              --title "v$VERSION" \
+              --notes "$NOTES_BODY" \
+              --target "$GITHUB_SHA"
+          else
+            gh release create "$TAG" \
+              --title "v$VERSION" \
+              --generate-notes \
+              --target "$GITHUB_SHA"
+          fi
           echo "Created release $TAG"
 
       - name: Trigger publish workflow

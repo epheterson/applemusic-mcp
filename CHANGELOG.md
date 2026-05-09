@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.3] - 2026-05-05
+
+### Faster
+
+- Adding a track (to a playlist or just to your library) now takes ~5 seconds instead of ~19.
+
+### Better at finding tracks
+
+- Picks the canonical recording (preferring it over remixes, lives,
+  and covers), disambiguates by artist when supplied, and fails with
+  a clear error when no canonical match exists — no more silent
+  wrong-track adds.
+- Empty searches return no results (was treating Apple's "No results"
+  placeholder as a fake hit).
+
+### More reliable
+
+- Music.app is auto-launched and restored to a usable state if it's quit,
+  windowless, or stuck on an album/song page.
+- v0.10.2 was tagged but never reached PyPI (CI permissions gap). v0.10.3
+  ships v0.10.2's improvements alongside its own.
+
+### Better release notes
+
+- GitHub Releases now show this changelog instead of auto-generated PR lists.
+
 ## [0.10.2] - 2026-05-04
 
 ### Changed

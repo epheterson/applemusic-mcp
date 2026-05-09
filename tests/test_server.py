@@ -3896,10 +3896,10 @@ class TestLibraryAddUiOnTokenlessMacos:
     """Regression test for the bug horrorshow75 hit — Claude tried
     library(action='add') for catalog tracks before adding to playlist,
     saw 'Developer token not found', and concluded the whole MCP needed
-    auth. v0.9.5 routes tokenless macOS library-add through UI automation
-    using asc.ui_search_catalog + asc.ui_add_to_library — the same
-    primitives ui_add_to_playlist already uses. Makes the README's
-    'tokenless macOS works' promise true for direct library-add."""
+    auth. Tokenless macOS library-add now routes through asc.ui_add_to_library's
+    popover-canonical-match flow, which handles canonical (name, artist)
+    matching internally. Makes the README's 'tokenless macOS works' promise
+    true for direct library-add."""
 
     def test_ui_path_used_when_no_token_on_macos(self, monkeypatch):
         from applemusic_mcp import applescript as real_asc
@@ -3907,11 +3907,6 @@ class TestLibraryAddUiOnTokenlessMacos:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
 
         mock_asc = MagicMock()
-        mock_asc.ui_search_catalog.return_value = (
-            True,
-            [{"name": "Silvera", "artist": "Gojira", "type": "Song", "index": 1}],
-            "",
-        )
         mock_asc.ui_add_to_library.return_value = (
             True,
             "Added 'Silvera' to library",
@@ -3941,7 +3936,6 @@ class TestLibraryAddUiOnTokenlessMacos:
 
         result = server._library_add(track="Silvera", artist="Gojira")
         # Confirm UI path was actually exercised
-        assert mock_asc.ui_search_catalog.called
         assert mock_asc.ui_add_to_library.called
         # Verify ran (post-add library check)
         assert mock_asc.search_library.called
@@ -3952,22 +3946,25 @@ class TestLibraryAddUiOnTokenlessMacos:
         assert "Developer token not found" not in result
 
     def test_ui_path_failure_surfaces_helpful_error(self, monkeypatch):
-        """When UI search finds nothing, the user sees a useful 'no
-        catalog results' message — not a generic API error."""
+        """When the popover flow can't find the track, the user sees
+        the popover-flow error directly — not a generic API error."""
         from applemusic_mcp import applescript as real_asc
 
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
 
         mock_asc = MagicMock()
-        # UI search comes back empty
-        mock_asc.ui_search_catalog.return_value = (True, [], "")
+        # ui_add_to_library reports popover couldn't surface the track
+        mock_asc.ui_add_to_library.return_value = (
+            False,
+            "No Song-row match in autocomplete pop-over for 'ZZZNonexistentTrack'.",
+        )
         mock_asc.ui_clear_search.return_value = None
         mock_asc.classify_error = real_asc.classify_error
         monkeypatch.setattr(server, "asc", mock_asc)
         monkeypatch.setattr(server, "_has_developer_token", lambda: False)
 
         result = server._library_add(track="ZZZNonexistentTrack")
-        assert "No catalog results" in result
+        assert "Failed to add to library" in result
         assert "Developer token not found" not in result
 
     def test_album_input_on_tokenless_macos_explains_unsupported(self, monkeypatch):
@@ -4024,11 +4021,6 @@ class TestLibraryAddUiOnTokenlessMacos:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
 
         mock_asc = MagicMock()
-        mock_asc.ui_search_catalog.return_value = (
-            True,
-            [{"name": "Silvera", "artist": "Gojira", "type": "Song", "index": 1}],
-            "",
-        )
         mock_asc.ui_add_to_library.return_value = (True, "Added")
         # Post-add verify polls search_library; mock to succeed.
         mock_asc.search_library.return_value = (
@@ -4064,11 +4056,6 @@ class TestLibraryAddUiOnTokenlessMacos:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
 
         mock_asc = MagicMock()
-        mock_asc.ui_search_catalog.return_value = (
-            True,
-            [{"name": "Silvera", "artist": "Gojira", "type": "Song", "index": 1}],
-            "",
-        )
         mock_asc.ui_add_to_library.return_value = (True, "Added")
         # Post-add verify polls search_library; mock to succeed.
         mock_asc.search_library.return_value = (
@@ -4087,7 +4074,6 @@ class TestLibraryAddUiOnTokenlessMacos:
 
         result = server._library_add(track="Silvera", album="Magma", artist="Gojira")
         # Track went through UI path successfully
-        assert mock_asc.ui_search_catalog.called
         assert mock_asc.ui_add_to_library.called
         assert "Silvera" in result
         # Album surfaces as a step-error rather than silently swallowing

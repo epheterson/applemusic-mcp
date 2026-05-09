@@ -1318,6 +1318,172 @@ class TestUIPrimitives:
         assert name == "Different Song"
 
 
+class TestPopoverSongRowScoring:
+    """Unit tests for `_find_popover_song_row` score-and-pick scoring.
+
+    Mocks `run_applescript` to return fixture pop-over rows and asserts
+    the matcher picks the row with the highest tier score (with row-index
+    as the tiebreaker). Each fixture mirrors the `idx|||title|||type · artist`
+    format the actual AppleScript probe produces.
+    """
+
+    @staticmethod
+    def _fixture(rows: list[tuple[int, str, str]]) -> str:
+        """Build a |||-delimited fixture matching the AppleScript probe output."""
+        return "\n".join(f"{idx}|||{title}|||{type_artist}" for idx, title, type_artist in rows)
+
+    def _patch_applescript(self, monkeypatch, fixture: str):
+        import applemusic_mcp.applescript as asc
+
+        monkeypatch.setattr(asc, "run_applescript", lambda *_a, **_k: (True, fixture))
+
+    def test_song_exact_beats_album_exact(self, monkeypatch):
+        """Tier 1 (Song EXACT) beats Tier 3 (Album EXACT)."""
+        import applemusic_mcp.applescript as asc
+
+        self._patch_applescript(monkeypatch, self._fixture([
+            (5, "Brown Sugar", "Album · D'Angelo"),
+            (7, "Brown Sugar", "Song · D'Angelo"),
+        ]))
+        result = asc._find_popover_song_row("Brown Sugar", "D'Angelo")
+        assert result == (7, "D'Angelo")
+
+    def test_canonical_marker_paren_beats_album_exact(self, monkeypatch):
+        """Tier 2 (canonical-marker parenthetical Song) beats Tier 3 (Album EXACT)."""
+        import applemusic_mcp.applescript as asc
+
+        self._patch_applescript(monkeypatch, self._fixture([
+            (3, "Brown Sugar (2014 Remaster)", "Song · D'Angelo"),
+            (5, "Brown Sugar", "Album · D'Angelo"),
+        ]))
+        result = asc._find_popover_song_row("Brown Sugar", "D'Angelo")
+        assert result == (3, "D'Angelo")
+
+    def test_album_now_rejected_returns_none_with_only_album(self, monkeypatch):
+        """Album rows are rejected entirely under the 'no album-dive' policy.
+        If only an album row exists, return None — caller fails loudly."""
+        import applemusic_mcp.applescript as asc
+
+        self._patch_applescript(monkeypatch, self._fixture([
+            (5, "Brown Sugar", "Album · D'Angelo"),
+        ]))
+        result = asc._find_popover_song_row("Brown Sugar", "D'Angelo")
+        assert result is None
+
+    def test_brown_sugar_dangelo_real_popover_returns_remix_row(self, monkeypatch):
+        """The Brown Sugar / D'Angelo case: pop-over has no Song-EXACT row,
+        only Album + Song-with-non-canonical-paren. With album-dive removed,
+        the only navigable Song row is the 808 Mix variant (tier 4) — that's
+        what the matcher returns. Caller can decide whether to surface that
+        to the user or fail with 'no canonical match'."""
+        import applemusic_mcp.applescript as asc
+
+        # Mirrors the actual pop-over output we observed live.
+        self._patch_applescript(monkeypatch, self._fixture([
+            (5, "Brown Sugar ￼", "Album · D'Angelo"),  # has U+FFFC artifact
+            (7, "Brown Sugar (Soul Inside 808 Mix)", "Song · D'Angelo"),
+            (11, "Brown Sugar (Verzuz Live)", "Music Video · D'Angelo"),
+        ]))
+        result = asc._find_popover_song_row("Brown Sugar", "D'Angelo")
+        # Album rejected; Music Video rejected; only the 808 Mix Song
+        # remains and it scores tier 4 (non-canonical paren).
+        assert result == (7, "D'Angelo")
+
+    def test_lower_idx_wins_within_same_tier(self, monkeypatch):
+        """Two Song-EXACT matches by same artist — Apple's earlier row
+        (lower idx) should win as the relevance signal."""
+        import applemusic_mcp.applescript as asc
+
+        self._patch_applescript(monkeypatch, self._fixture([
+            (3, "Heaven", "Song · Talking Heads"),
+            (8, "Heaven", "Song · Talking Heads"),  # duplicate (rare but possible)
+        ]))
+        result = asc._find_popover_song_row("Heaven", "Talking Heads")
+        assert result == (3, "Talking Heads")
+
+    def test_artist_filter_rejects_wrong_artist(self, monkeypatch):
+        """Same title by a different artist must NOT match when the caller
+        supplied an artist constraint."""
+        import applemusic_mcp.applescript as asc
+
+        self._patch_applescript(monkeypatch, self._fixture([
+            (3, "Heaven", "Song · The Walkmen"),
+            (5, "Heaven", "Song · Beyoncé"),
+        ]))
+        result = asc._find_popover_song_row("Heaven", "Talking Heads")
+        assert result is None
+
+    def test_artist_filter_picks_correct_artist(self, monkeypatch):
+        """Multiple artists with same title — picks the one matching artist."""
+        import applemusic_mcp.applescript as asc
+
+        self._patch_applescript(monkeypatch, self._fixture([
+            (3, "Heaven", "Song · The Walkmen"),
+            (5, "Heaven", "Song · Talking Heads"),
+            (7, "Heaven", "Song · Beyoncé"),
+        ]))
+        result = asc._find_popover_song_row("Heaven", "Talking Heads")
+        assert result == (5, "Talking Heads")
+
+    def test_artist_optional_picks_first_song_exact(self, monkeypatch):
+        """Without artist filter — pick highest-tier match regardless,
+        using row index as tiebreaker."""
+        import applemusic_mcp.applescript as asc
+
+        self._patch_applescript(monkeypatch, self._fixture([
+            (3, "Heaven", "Song · The Walkmen"),
+            (5, "Heaven", "Song · Talking Heads"),
+        ]))
+        result = asc._find_popover_song_row("Heaven")
+        assert result == (3, "The Walkmen")  # lower idx wins on tier-tie
+
+    def test_non_song_rows_all_rejected(self, monkeypatch):
+        """Album, Artist, MusicVideo, Playlist all rejected — only Song scored."""
+        import applemusic_mcp.applescript as asc
+
+        self._patch_applescript(monkeypatch, self._fixture([
+            (3, "Heaven", "Album · Talking Heads"),
+            (5, "Talking Heads", "Artist"),
+            (7, "Heaven", "Music Video · Talking Heads"),
+            (9, "Heaven Mix", "Playlist · Apple Music"),
+        ]))
+        result = asc._find_popover_song_row("Heaven", "Talking Heads")
+        assert result is None
+
+    def test_no_results_in_popover_returns_none(self, monkeypatch):
+        """No-match-anywhere → None."""
+        import applemusic_mcp.applescript as asc
+
+        self._patch_applescript(monkeypatch, self._fixture([
+            (3, "Something Else", "Song · Other Artist"),
+        ]))
+        result = asc._find_popover_song_row("Heaven", "Talking Heads")
+        assert result is None
+
+    def test_no_popover_returns_none(self, monkeypatch):
+        """If pop-over isn't visible, AppleScript probe returns NO_POPOVER."""
+        import applemusic_mcp.applescript as asc
+
+        monkeypatch.setattr(asc, "run_applescript", lambda *_a, **_k: (True, "NO_POPOVER"))
+        result = asc._find_popover_song_row("Heaven", "Talking Heads")
+        assert result is None
+
+    def test_canonical_paren_markers_are_recognized(self, monkeypatch):
+        """Each canonical-marker word should score in tier 2 (1700), so
+        a parenthetical-canonical Song should beat any non-canonical paren."""
+        import applemusic_mcp.applescript as asc
+
+        for marker in ["Original Mix", "Album Version", "2014 Remaster",
+                       "Stereo Version", "Mono Version", "Single Version",
+                       "Radio Edit", "Studio Version"]:
+            self._patch_applescript(monkeypatch, self._fixture([
+                (3, f"Test ({marker})", "Song · X"),
+                (5, "Test (Live at Madison)", "Song · X"),  # non-canonical paren
+            ]))
+            result = asc._find_popover_song_row("Test", "X")
+            assert result == (3, "X"), f"marker {marker!r} should win tier 2"
+
+
 @pytest.mark.skipif(
     not os.environ.get("TEST_UI"), reason="UI tests require Music.app visible. Run with TEST_UI=1"
 )
@@ -1358,6 +1524,88 @@ class TestUISearchIntegration:
         assert ok is False
         assert results == []
         assert why == "Empty query"
+
+
+def _probe_row_is_fresh(name: str, artist: str) -> bool:
+    """Probe Music.app's song-page row for a track to detect "stale in-library
+    cache" — the situation where AppleScript-level remove_from_library has
+    completed but Music.app's per-row cloud-state cache still shows
+    "Download button" (=in library) for several minutes after iCloud removal.
+
+    Such a row would cause ui_add_to_library to fail at the hover-find step
+    even though search_library returns 0 hits — we want setup_class to skip
+    these stale candidates and try the next one.
+
+    Returns True if row's initial buttons (no hover) DON'T include
+    "Download button" — i.e., the row is genuinely fresh and a Music.app
+    "Add to Library" button is reachable.
+
+    Side-effect: leaves search popover state unchanged (clears it on exit).
+    """
+    ok, _err = asc._open_search_popover(f"{name} {artist}".strip())
+    if not ok:
+        asc.ui_clear_search()
+        return False
+    match = asc._find_popover_song_row(name, artist)
+    if match is None:
+        asc.ui_clear_search()
+        return False
+    idx, _resolved = match
+    ok, _err = asc._click_popover_row(idx)
+    if not ok:
+        asc.ui_clear_search()
+        return False
+    group_path = asc._wait_for_song_page(name)
+    if group_path is None:
+        asc.ui_clear_search()
+        return False
+    # Hover the row first — Music.app only reveals the in-library indicator
+    # ("Download button") OR the not-in-library button ("Add to Library")
+    # AFTER hover. A no-hover probe shows only Favorite|More for any state.
+    ok, pos = asc.run_applescript(f"""
+tell application "System Events"
+    tell process "Music"
+        try
+            set g to {group_path}
+            set gp to position of g
+            set gs to size of g
+            return ((item 1 of gp) + (item 1 of gs) / 2 as text) & "," & ((item 2 of gp) + (item 2 of gs) / 2 as text)
+        on error
+            return "ERR"
+        end try
+    end tell
+end tell""")
+    if not ok or pos.strip() == "ERR":
+        asc.ui_clear_search()
+        return False
+    try:
+        hcx, hcy = [float(v) for v in pos.strip().split(",")]
+    except ValueError:
+        asc.ui_clear_search()
+        return False
+    asc._hover_with_nudge(hcx, hcy)
+    time.sleep(0.6)
+    ok, descs = asc.run_applescript(f"""
+tell application "System Events"
+    tell process "Music"
+        try
+            set g to {group_path}
+            set out to ""
+            repeat with b in (every button of g)
+                try
+                    set out to out & (description of b) & "|"
+                end try
+            end repeat
+            return out
+        on error
+            return "PROBE_FAIL"
+        end try
+    end tell
+end tell""")
+    asc.ui_clear_search()
+    if not ok or descs.strip() == "PROBE_FAIL":
+        return False
+    return "Download button" not in descs
 
 
 @pytest.mark.ui
@@ -1405,6 +1653,17 @@ class TestUIFlowsLive:
         ("Wandering", "Crooked Still"),
         ("Bee Pee Tee", "Hot 8 Brass Band"),
         ("Rainwater", "Penguin Cafe Orchestra"),
+        # More obscure-but-indexed fallbacks for when rapid-rerun pollution
+        # exhausts the primary list (each test run leaves a "stale" cache
+        # entry for ~minutes-to-hours of iCloud propagation lag).
+        ("Pyramid Song", "Radiohead"),
+        ("Hyperballad", "Björk"),
+        ("Casimir Pulaski Day", "Sufjan Stevens"),
+        ("Mykonos", "Fleet Foxes"),
+        ("Emmylou", "First Aid Kit"),
+        ("Sea of Love", "Cat Power"),
+        ("Hounds of Love", "Kate Bush"),
+        ("Sleeping Lessons", "The Shins"),
     ]
 
     track_name: str = ""
@@ -1457,13 +1716,29 @@ class TestUIFlowsLive:
                 )
                 continue
 
+            # Criterion 3: Music.app's song-page row must show this as
+            # not-in-library. A previous test run that added+removed the
+            # track via AppleScript can leave Music.app's per-row cloud-
+            # state cache showing "Download button" (=in library) for
+            # minutes-to-hours after iCloud-side removal. If we picked a
+            # candidate in that state, ui_add_to_library would fail at
+            # the hover-find step with "Download button" in the row's
+            # children rather than "Add to Library".
+            if not _probe_row_is_fresh(name, artist):
+                skipped_reasons.append(
+                    f"{name}: Music.app song-page shows Download button "
+                    f"(stale in-library cache from prior run); skipping"
+                )
+                continue
+
             cls.track_name = name
             cls.track_artist = artist
             break
         else:
             pytest.skip(
-                "No candidate satisfied both criteria (not in library + "
-                "surfaces as Song in Top Results):\n  - "
+                "No candidate satisfied all three criteria (not in library + "
+                "surfaces as Song in Top Results + Music.app row shows fresh "
+                "Add to Library button):\n  - "
                 + "\n  - ".join(skipped_reasons)
             )
 
@@ -1479,9 +1754,16 @@ end tell""")
 
     @classmethod
     def teardown_class(cls):
-        """Delete the test playlist. Track-level library cleanup is per-test
-        in teardown_method — not all tests add to library, so doing it here
-        would over-delete."""
+        """Delete the test playlist AND remove the selected candidate from
+        library (defensive — per-test teardown also handles this).
+
+        We do NOT iterate cls.CANDIDATES here because a user running these
+        tests may legitimately have one of the candidate tracks in their
+        library (Bon Iver / Radiohead / Sufjan are mainstream); removing
+        them would be destructive. Only the selected candidate (track_name)
+        could possibly have been added by ui_add_to_library, and only if
+        criterion 1 confirmed it wasn't there before the test started.
+        """
         try:
             asc.run_applescript(f"""
 tell application "Music"
@@ -1489,6 +1771,19 @@ tell application "Music"
         delete (every user playlist whose name is "{cls.TEST_PLAYLIST}")
     end try
 end tell""")
+        except Exception:
+            pass
+        # Defensive UNCONDITIONAL removal of the SELECTED candidate only —
+        # setup_class confirmed it wasn't in library before the test started,
+        # so removing it cleans up any add this run made. We don't precheck
+        # via search_library because that races with iCloud sync (see
+        # teardown_method comment for the failure mode).
+        if not cls.track_name:
+            return
+        try:
+            asc.remove_from_library(
+                track_name=cls.track_name, artist=cls.track_artist
+            )
         except Exception:
             pass
 
@@ -1512,25 +1807,19 @@ end tell""")
             )
         except Exception:
             pass
-        # Remove from library (silent if not there). Uses search_library to
-        # check first — remove_from_library will error if the track isn't
-        # found, polluting test output.
+        # Remove from library — UNCONDITIONALLY (idempotent — silent on miss).
+        # The earlier search_library precheck raced with iCloud sync: if
+        # ui_add_to_playlist returned success but iCloud hadn't propagated
+        # the library entry to local AppleScript queries within the ~1s
+        # between the test ending and teardown running, the precheck would
+        # return 0 hits and skip removal, but the track would land in
+        # library seconds later — pollution. remove_from_library tolerates
+        # "not found" silently, so just call it and let it no-op on miss.
         try:
-            ok, lib_hits = asc.search_library(self.track_name, "songs")
-            if ok and lib_hits:
-                # Only remove tracks matching our specific (name, artist) —
-                # don't accidentally nuke unrelated tracks with similar names.
-                for t in lib_hits:
-                    if (
-                        t.get("name", "").lower() == self.track_name.lower()
-                        and self.track_artist.lower()
-                        in t.get("artist", "").lower()
-                    ):
-                        asc.remove_from_library(
-                            track_name=self.track_name,
-                            artist=self.track_artist or None,
-                        )
-                        break
+            asc.remove_from_library(
+                track_name=self.track_name,
+                artist=self.track_artist or None,
+            )
         except Exception:
             pass
 
@@ -1538,49 +1827,41 @@ end tell""")
     # Tests
     # ------------------------------------------------------------------
 
-    def test_ui_search_catalog_finds_obscure_track(self):
-        """``ui_search_catalog`` should return at least one result for our
-        chosen candidate (catalog has it, even if user's library doesn't)."""
-        query = f"{self.track_name} {self.track_artist}"
-        ok, results, why = asc.ui_search_catalog(query)
-        asc.ui_clear_search()
-        assert ok is True, f"search failed: {why}"
-        assert len(results) > 0, "expected at least one Top Result"
-        # Best-effort match — Music.app's "Top Results" includes related items
-        # even when the exact track isn't first; just confirm we got some
-        # result and it parsed cleanly.
-        assert all("name" in r and "type" in r for r in results)
+    def test_full_ui_flow(self):
+        """One deep flow exercising the entire tokenless-macOS chain in a
+        single Music.app session — replaces the prior 3 tests that each
+        re-ran ui_search_catalog as setup. Halves the live-test runtime
+        and asserts the realistic end-user path:
 
-    def test_ui_search_results_have_expected_shape(self):
-        """Top Results parse should return well-formed dicts (name, type,
-        artist, index)."""
-        query = f"{self.track_name} {self.track_artist}"
-        ok, results, why = asc.ui_search_catalog(query)
-        asc.ui_clear_search()
-        assert ok and results, f"search failed: {why}"
-        for r in results:
-            assert "name" in r and isinstance(r["name"], str)
-            assert "type" in r and isinstance(r["type"], str)
-            assert "artist" in r and isinstance(r["artist"], str)
-            assert "index" in r and isinstance(r["index"], int)
-            assert r["index"] >= 1
+        1. ui_search_catalog returns parsed Top Results
+        2. Top Results dicts have the expected shape
+        3. ui_add_to_playlist (popover-canonical flow) drives
+           search → library-add → playlist-add → verify
+        4. The EXACT track we asked for landed in the playlist
+           (no wrong-track substitution — v0.10.2 regression guard)
 
-    def test_ui_add_to_playlist_full_flow(self):
-        """Full composite: search → add to library → wait sync → add to
-        playlist → verify. This is the path that powers
-        ``playlist(action='add', auto_search=True)`` for tokenless users.
-
-        KNOWN macOS 26 LIMITATION (still under investigation): Music.app's
-        Top Results UI in the latest builds appears to omit the per-row
-        ``Add to Library`` button for many catalog tracks — only ``[play]``
-        and ``[More]`` show after hover. The Add to Library option lives
-        inside the [More] context menu on those rows. ``ui_add_to_library``
-        currently looks for the button directly and fails when it isn't
-        present, so this test is expected to skip on builds where Apple
-        has shifted the UI. The new ``[More]`` menu navigation flow is
-        out of scope for this PR; tracked as a follow-up.
+        Soft-skips on the known macOS 26 limitation where Apple's Top
+        Results UI sometimes omits the per-row Add to Library button —
+        a real Apple UX shift, not a code bug.
         """
         query = f"{self.track_name} {self.track_artist}"
+
+        # Step 1+2: search + parse
+        ok, results, why = asc.ui_search_catalog(query)
+        try:
+            assert ok is True, f"search failed: {why}"
+            assert len(results) > 0, "expected at least one Top Result"
+            for r in results:
+                assert "name" in r and isinstance(r["name"], str)
+                assert "type" in r and isinstance(r["type"], str)
+                assert "artist" in r and isinstance(r["artist"], str)
+                assert "index" in r and isinstance(r["index"], int)
+                assert r["index"] >= 1
+        finally:
+            asc.ui_clear_search()
+
+        # Step 3: full composite add-to-playlist (the path that powers
+        # playlist(action='add', auto_search=True) for tokenless users)
         ok, msg = asc.ui_add_to_playlist(self.TEST_PLAYLIST, query, self.track_artist)
         if not ok:
             soft_failures = (
@@ -1596,8 +1877,7 @@ end tell""")
                 )
         assert ok, f"ui_add_to_playlist failed: {msg}"
 
-        # Verify the EXACT track we asked for landed (not a wrong-track
-        # substitution — which v0.10.2 hardened against).
+        # Step 4: verify EXACT track landed (not a wrong-track substitution)
         ok_check, exists = asc.track_exists_in_playlist(
             self.TEST_PLAYLIST, self.track_name, self.track_artist
         )
@@ -1605,4 +1885,161 @@ end tell""")
             f"ui_add_to_playlist returned success ({msg!r}) but the track "
             f"{self.track_name!r} by {self.track_artist!r} is NOT in "
             f"{self.TEST_PLAYLIST!r}. The wrong track may have been added."
+        )
+
+
+@pytest.mark.ui
+@pytest.mark.skipif(
+    not os.environ.get("TEST_UI"),
+    reason="UI flows require Music.app visible + Accessibility. Run with TEST_UI=1.",
+)
+class TestUIPlayLive:
+    """Live test for ``ui_play_result_by_query`` — the tokenless-catalog
+    play path (used when a user wants to play a catalog track without
+    adding it to library). Distinct from add-to-library because no track
+    state mutation happens; safe to run repeatedly without polluting
+    Music.app's per-row UI cache.
+
+    Cleanup: pauses playback after each test.
+    """
+
+    @classmethod
+    def setup_class(cls):
+        asc.run_applescript('tell application "Music" to activate')
+        time.sleep(1.0)
+
+    def teardown_method(self, method):
+        # Stop playback so the test doesn't leave music playing in the
+        # background after the suite finishes.
+        try:
+            asc.run_applescript('tell application "Music" to pause')
+        except Exception:
+            pass
+
+    def test_play_result_by_query_starts_correct_track(self):
+        """ui_play_result_by_query should start playback of a track whose
+        name matches the query. Uses a well-indexed catalog track that
+        Music.app can find quickly via Top Results."""
+        # Use a track unlikely to require library presence — Apple Music
+        # plays catalog tracks even if not in library.
+        query = "Bohemian Rhapsody Queen"
+        ok, msg = asc.ui_play_result_by_query(query)
+        if not ok:
+            pytest.skip(
+                f"ui_play_result_by_query failed (likely Top Results UI "
+                f"surface limitation, same family as the deep-flow soft-skip): "
+                f"{msg}"
+            )
+        # Confirm Music.app actually started playing
+        time.sleep(1.5)
+        playing_ok, current_track = asc.get_current_track()
+        assert playing_ok, f"get_current_track failed: {current_track}"
+        # current_track is dict {state, name, artist, ...}; check name loosely
+        # because catalog can return live versions, remasters, etc.
+        track_name = current_track.get("name", "") if isinstance(current_track, dict) else ""
+        assert "bohemian" in track_name.lower(), (
+            f"Expected Bohemian Rhapsody to be playing, got: {current_track}"
+        )
+
+
+@pytest.mark.ui
+@pytest.mark.skipif(
+    not os.environ.get("TEST_UI"),
+    reason="UI flows require Music.app visible + Accessibility. Run with TEST_UI=1.",
+)
+class TestUIEdgeCasesLive:
+    """Live tests for UI-flow edge cases that don't fit the happy-path
+    deep-flow test: empty/junk queries, search-state cleanup, and
+    popover-canonical artist disambiguation. None of these mutate the
+    library or playlist state.
+    """
+
+    @classmethod
+    def setup_class(cls):
+        asc.run_applescript('tell application "Music" to activate')
+        time.sleep(1.0)
+
+    def teardown_method(self, method):
+        try:
+            asc.ui_clear_search()
+        except Exception:
+            pass
+
+    def test_search_returns_empty_for_junk_query(self):
+        """A query that can't possibly match anything should produce no
+        Top Results without raising — caller's job is to handle gracefully."""
+        ok, results, why = asc.ui_search_catalog("qqxqzznotarealquery9999")
+        # Either ok=True with empty results, OR ok=False with a why.
+        # Both are acceptable; what's NOT acceptable is a crash or stale
+        # results from a previous query leaking through.
+        assert (ok and not results) or (not ok), (
+            f"junk query unexpectedly returned results: ok={ok}, "
+            f"len(results)={len(results)}, why={why!r}"
+        )
+
+    def test_clear_search_resets_field(self):
+        """After ui_search_catalog + ui_clear_search, the search field
+        value should be empty — confirms cleanup actually clears state
+        and doesn't just leave the field with stale text."""
+        ok, results, why = asc.ui_search_catalog("Bon Iver")
+        assert ok, f"setup search failed: {why}"
+        asc.ui_clear_search()
+        time.sleep(0.5)
+        # Use the production search-field probe so this test rides whatever
+        # toolbar variant Music.app exposes today (toolbar/flat/sidebar).
+        field_path = asc._get_search_field()
+        if not field_path:
+            pytest.skip(
+                "Could not resolve search field path — Music.app build may "
+                "have shifted the toolbar layout. Not a code bug."
+            )
+        ok, value = asc.run_applescript(f"""
+tell application "System Events"
+    tell process "Music"
+        try
+            return value of ({field_path}) as text
+        on error
+            return "FIELD_NOT_FOUND"
+        end try
+    end tell
+end tell""")
+        if not ok or value.strip() == "FIELD_NOT_FOUND":
+            pytest.skip(
+                "Could not probe search field via resolved path — Music.app "
+                "may have navigated away from Search view after clear."
+            )
+        assert value.strip() == "", (
+            f"ui_clear_search did not empty the search field — value is "
+            f"still {value.strip()!r}"
+        )
+
+    def test_popover_disambiguates_by_artist(self):
+        """The popover-canonical-match flow's `_find_popover_song_row`
+        must pick the row whose artist matches the caller's `artist` arg
+        — not just the first row whose Title matches. Same-title tracks
+        by different artists is a real common case (e.g. "Heaven" by
+        many artists).
+
+        Probe-only: opens popover, calls the matcher, asserts the
+        resolved_artist matches what we asked for. No click, no add,
+        no playlist mutation.
+        """
+        ok, _err = asc._open_search_popover("Heaven Talking Heads")
+        if not ok:
+            pytest.skip("popover did not appear — likely a transient UI flake")
+        match = asc._find_popover_song_row("Heaven", "Talking Heads")
+        if match is None:
+            pytest.skip(
+                "Popover did not surface a Song row matching 'Heaven' by "
+                "'Talking Heads' — Apple's autocomplete ranking can omit "
+                "this candidate; not a code bug."
+            )
+        idx, resolved_artist = match
+        assert idx >= 1, f"matched popover row index should be >= 1, got {idx}"
+        # Resolved artist should contain "Talking Heads" — case-insensitive
+        # because Music.app sometimes returns "talking heads" lower-cased.
+        assert "talking heads" in resolved_artist.lower(), (
+            f"popover-canonical-match returned wrong artist: expected "
+            f"'Talking Heads', got {resolved_artist!r}. Disambiguation "
+            f"may have picked a different artist's 'Heaven'."
         )

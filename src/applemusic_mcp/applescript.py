@@ -1587,12 +1587,32 @@ def _click_play_or_shuffle(shuffle: bool = False) -> tuple[bool, str]:
 
 
 def _ensure_music_frontmost() -> None:
-    """Bring Music.app to the foreground with a visible window.
+    """Bring Music.app to the foreground with a visible main-library window.
 
-    Music.app can be running without a window (e.g. after closing the window
-    or via background playback). This ensures the main window is open via
-    the Window menu if no window is found.
+    Recovers from three observed states: process not running, zero windows
+    (user closed the last one; background playback keeps the process alive),
+    and window-without-splitter-group (song-detail/album page where UI
+    primitives that hardcode ``splitter group 1 of window 1`` fail with
+    "Can't get splitter group 1 of window Music of").
     """
+    try:
+        subprocess.run(["open", "-a", "Music"], check=False, timeout=5)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    # Cold launches can take 1-3s before Music is reachable via System Events.
+    for _ in range(20):
+        try:
+            r = subprocess.run(
+                ["osascript", "-e", 'tell application "System Events" to '
+                 '(name of processes) contains "Music"'],
+                capture_output=True, text=True, timeout=2,
+            )
+            if r.returncode == 0 and r.stdout.strip() == "true":
+                break
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        time.sleep(0.15)
+
     run_applescript("""
 tell application "Music" to activate
 delay 0.5
@@ -1600,15 +1620,27 @@ tell application "System Events"
     tell process "Music"
         set frontmost to true
         delay 0.3
+        set needsRestore to false
         if (count of windows) is 0 then
+            set needsRestore to true
+        else
+            try
+                get splitter group 1 of window 1
+            on error
+                set needsRestore to true
+            end try
+        end if
+        if needsRestore then
             try
                 click menu item "Music" of menu "Window" of menu bar 1
             end try
             delay 1
-            if (count of windows) is 0 then
+            try
+                get splitter group 1 of window 1
+            on error
                 keystroke "1" using command down
                 delay 1
-            end if
+            end try
         end if
     end tell
 end tell""")
@@ -1623,11 +1655,12 @@ def _jxa_mouse_move(x: float, y: float) -> bool:
 
     Returns True if the command succeeded.
     """
+    # 0.05s lets the OS commit the CGEvent before osascript exits.
     script = f'''ObjC.import("CoreGraphics");
 var p = $.CGPointMake({x}, {y});
 var e = $.CGEventCreateMouseEvent($(), $.kCGEventMouseMoved, p, 0);
 $.CGEventPost($.kCGHIDEventTap, e);
-delay(0.5);
+delay(0.05);
 "ok"'''
     try:
         result = subprocess.run(
@@ -1650,6 +1683,8 @@ def _jxa_mouse_click(x: float, y: float) -> bool:
 
     Returns True if the command succeeded.
     """
+    # 0.05s down→up gap is the minimum that registers as a click (lower
+    # is treated as separate down/up events).
     script = f'''ObjC.import("CoreGraphics");
 var p = $.CGPointMake({x}, {y});
 var down = $.CGEventCreateMouseEvent($(), $.kCGEventLeftMouseDown, p, $.kCGMouseButtonLeft);
@@ -1657,7 +1692,6 @@ $.CGEventPost($.kCGHIDEventTap, down);
 delay(0.05);
 var up = $.CGEventCreateMouseEvent($(), $.kCGEventLeftMouseUp, p, $.kCGMouseButtonLeft);
 $.CGEventPost($.kCGHIDEventTap, up);
-delay(0.2);
 "ok"'''
     try:
         result = subprocess.run(
@@ -2420,43 +2454,12 @@ def _focus_search_field(query: str) -> tuple[bool, str]:
 
     _ensure_music_frontmost()
 
-    # Try once with the cached/probed path; on a UI element error, invalidate
-    # the cache and retry once with a fresh probe. The toolbar layout can
-    # change across Music.app navigations (sidebar vs toolbar field, group
-    # presence) and a stale cache otherwise breaks the session until restart.
-    # The script itself does sidebar Search-row click + Cmd+F + set value +
-    # Enter as one consolidated AppleScript so window state can't drift.
-    ok, err = _emit_search_applescript(_get_search_field(), query)
-    if not ok and _is_path_error(err):
-        global _search_field_cache
-        _search_field_cache = None
-        ok, err = _emit_search_applescript(_get_search_field(), query)
-    if ok:
-        return True, ""
+    # Errors meaning "cached UI path no longer resolves" (vs environmental
+    # causes like locked screen / missing Accessibility) — invalidate + retry.
+    PATH_ERROR_MARKERS = ("Can't get", "AppleEvent handler failed", "-10000", "-1728")
 
-    accessible, access_reason = check_ui_accessible()
-    if not accessible:
-        return False, access_reason
-    return False, _classify_as_error(err)
-
-
-# AppleScript errors that mean "the cached UI path no longer resolves" — as
-# opposed to environmental causes (locked screen, missing Accessibility
-# permission). Used to decide when to invalidate the search-field cache.
-_PATH_ERROR_MARKERS = ("Can't get", "AppleEvent handler failed", "-10000", "-1728")
-
-
-def _is_path_error(err: str) -> bool:
-    return any(m in err for m in _PATH_ERROR_MARKERS)
-
-
-def _emit_search_applescript(search_field_path: str, query: str) -> tuple[bool, str]:
-    """Emit the consolidated search AppleScript with the resolved path.
-
-    Extracted so _focus_search_field can retry with a fresh path on cache
-    miss without duplicating the script body.
-    """
-    return run_applescript(f"""
+    def _emit(field_path: str) -> tuple[bool, str]:
+        return run_applescript(f"""
 tell application "System Events"
     tell process "Music"
         try
@@ -2466,7 +2469,7 @@ tell application "System Events"
         end try
         keystroke "f" using command down
         delay 0.5
-        set searchField to {search_field_path}
+        set searchField to {field_path}
         set focused of searchField to true
         delay 0.2
         set value of searchField to "{_escape_for_applescript(query)}"
@@ -2480,6 +2483,19 @@ tell application "System Events"
         key code 36
     end tell
 end tell""")
+
+    ok, err = _emit(_get_search_field())
+    if not ok and any(m in err for m in PATH_ERROR_MARKERS):
+        global _search_field_cache
+        _search_field_cache = None
+        ok, err = _emit(_get_search_field())
+    if ok:
+        return True, ""
+
+    accessible, access_reason = check_ui_accessible()
+    if not accessible:
+        return False, access_reason
+    return False, _classify_as_error(err)
 
 
 _PARSE_TOP_RESULTS_QUERY = f"""
@@ -2571,6 +2587,10 @@ def _parse_top_results(raw: str) -> list[dict]:
             continue
         name = parts[1].strip()
         type_line = parts[2].strip()
+        # Music.app's "No results for X. Try a new search." placeholder uses
+        # the row pattern with an empty type-line — skip so callers see [].
+        if not type_line and name.lower().startswith("no results for"):
+            continue
         result_type = type_line
         artist = ""
         for sep in _TYPE_LINE_SEPS:
@@ -2823,20 +2843,27 @@ end tell""")
 def _find_popover_song_row(
     name: str, artist: str = ""
 ) -> Optional[tuple[int, str]]:
-    """Walk the autocomplete pop-over for a canonical Song-row match.
+    """Walk the autocomplete pop-over and pick the best canonical Song match.
 
-    Two modes:
-      - With artist: row must satisfy name contains AND label starts with
-        "Song <middle-dot> " AND label contains the requested artist (all
-        case-insensitive). Refuses Album/Artist/MusicVideo rows.
-      - Without artist: find the FIRST row whose name matches AND label
-        starts with "Song <middle-dot> ". Apple's autocomplete ranks the
-        most-popular match first - this is the canonical interpretation
-        when caller didn't disambiguate.
+    Score-and-pick over Song rows only. Album rows are rejected — clicking
+    them navigates to an album page (extra hop, brittle row layout); when
+    Apple's pop-over doesn't surface a Song row that matches, that's itself
+    a signal the request is ambiguous and we fail loudly instead.
 
-    Returns (row_index_1based, resolved_artist) - the resolved artist is
-    extracted from the matched row's label so the caller can use it
-    downstream (e.g. for playlist-add verification). None if no match.
+    Score tiers (per Song row):
+        2000  EXACT title match (canonical track)
+        1700  Canonical-marker parenthetical
+              (e.g. "Brown Sugar (Remaster)" — parens are editorial metadata,
+              not a different recording)
+         800  Non-canonical parenthetical
+              (e.g. "Brown Sugar (Soul Inside 808 Mix)" — remix variant)
+         400  Title contains the requested name elsewhere
+        None  Wrong artist, no name overlap, or non-Song row
+
+    Within a tier, lower row index wins (Apple's relevance signal).
+
+    Returns (row_index_1based, resolved_artist) on a match. None if nothing
+    qualifies — caller surfaces a clear "no match" error.
     """
     safe_name = name.lower()
     safe_artist = artist.lower()
@@ -2867,10 +2894,17 @@ tell application "System Events"
 end tell""")
     if not ok or not raw or raw.strip() == "NO_POPOVER":
         return None
-    # The middle-dot separator is U+00B7. Apple wraps it with U+2004
-    # (THREE-PER-EM SPACE) on both sides, sometimes U+00A0 (NBSP).
-    # Normalize all space variants to a regular space first, then match.
+
+    # Apple's "Type · Artist" labels use U+00B7 surrounded by U+2004
+    # (THREE-PER-EM SPACE), sometimes U+00A0 (NBSP). Normalize to ASCII.
     SONG_PREFIX = "song · "
+    CANONICAL_PAREN_MARKERS = (
+        "original", "album version", "remaster", "stereo",
+        "mono", "single version", "radio edit", "studio version",
+    )
+
+    # Parse rows into (idx, v1_lower, v2_lower, v2_norm).
+    candidates = []
     for line in raw.strip().split("\n"):
         parts = line.split("|||")
         if len(parts) < 3:
@@ -2879,25 +2913,36 @@ end tell""")
             idx = int(parts[0])
         except ValueError:
             continue
-        v1 = parts[1].lower()
-        # Normalize space variants surrounding the middle dot.
-        v2_norm = (
-            parts[2]
-            .replace(" ", " ")
-            .replace(" ", " ")
-            .strip()
-        )
+        v1_lower = parts[1].replace("￼", "").strip().lower()
+        v2_norm = parts[2].replace(" ", " ").replace(" ", " ").strip()
         v2_lower = v2_norm.lower()
+        candidates.append((idx, v1_lower, v2_lower, v2_norm))
+
+    def _score(row) -> Optional[tuple[int, int, int]]:
+        idx, v1_lower, v2_lower, _v2_norm = row
         if not v2_lower.startswith(SONG_PREFIX):
-            continue
-        if safe_name not in v1:
-            continue
+            return None  # Album/Artist/MusicVideo/Playlist all rejected
         if safe_artist and safe_artist not in v2_lower:
-            continue
-        # Match. Extract the resolved artist (everything after "Song <dot> ").
-        resolved_artist = v2_norm[len(SONG_PREFIX):].strip()
-        return idx, resolved_artist
-    return None
+            return None
+        if v1_lower == safe_name:
+            tier = 2000
+        elif v1_lower.startswith(safe_name + " ("):
+            rest = v1_lower[len(safe_name) + 2:]
+            tier = 1700 if any(rest.startswith(m) for m in CANONICAL_PAREN_MARKERS) else 800
+        elif safe_name in v1_lower:
+            tier = 400
+        else:
+            return None
+        rank_bonus = max(0, 11 - min(idx, 11))
+        return (tier, rank_bonus, idx)
+
+    scored = [(s, row) for row in candidates if (s := _score(row)) is not None]
+    if not scored:
+        return None
+    scored.sort(key=lambda x: (-x[0][0], -x[0][1], x[0][2]))
+    _best_score, best_row = scored[0]
+    idx, _v1, _v2l, v2_norm = best_row
+    return idx, v2_norm[len(SONG_PREFIX):].strip()
 
 
 def _click_popover_row(idx: int) -> tuple[bool, str]:
@@ -3018,11 +3063,10 @@ end tell""")
     if not _hover_with_nudge(hcx, hcy):
         return False, None
 
-    # Poll for the expected button to appear with the correct description.
-    # Capture both `start` and `deadline` separately so the re-hover trigger
-    # below ("halfway through max_wait") doesn't fire spuriously early on
-    # tight timeouts (was `deadline - max_wait/2`, which collapses against
-    # the loop's first-iteration latency on fast machines).
+    # Poll for the expected button to appear. macOS 26 sometimes drops the
+    # initial mouseMoved event, so re-hover ONCE at the halfway point. Don't
+    # re-hover repeatedly — each _hover_with_nudge is two CG events; flooding
+    # them confuses Music.app's hover-state machine.
     start = time.monotonic()
     deadline = start + max_wait
     rehovered = False
@@ -3047,11 +3091,10 @@ end tell""")
                 return True, (bx, by)
             except ValueError:
                 pass
-        # Re-hover at the halfway point if button hasn't appeared.
         if not rehovered and time.monotonic() > start + max_wait / 2:
             _hover_with_nudge(hcx, hcy)
             rehovered = True
-        time.sleep(0.15)
+        time.sleep(0.05)
     return False, None
 
 
@@ -3303,26 +3346,26 @@ def ui_add_to_playlist(playlist_name: str, query: str, artist: str = "") -> tupl
     if not ok:
         return False, f"Failed to add to library: {msg}"
 
-    # Step 3: Wait for iCloud sync; verify track in library before playlist add
+    # Step 3: Verify track in library before playlist add. iCloud sync from
+    # the UI add is usually <1s; 12s is the worst-case budget.
     track_name = name
     track_artist = artist
-    time.sleep(2)
     library_visible = False
-    for _ in range(8):
-        ok, lib_results = search_library(track_name.replace("\u0301", ""), "songs")
+    sync_deadline = time.monotonic() + 12.0
+    while time.monotonic() < sync_deadline:
+        ok, lib_results = search_library(track_name.replace("́", ""), "songs")
         if ok and lib_results:
-            # Confirm the artist matches too (strict)
             if not track_artist or any(
                 track_artist.lower() in (t.get("artist") or "").lower()
                 for t in lib_results
             ):
                 library_visible = True
                 break
-        time.sleep(1.5)
+        time.sleep(0.4)
     if not library_visible:
         return False, (
             f"Added '{track_name}' to library but it didn't appear in local "
-            f"library search within ~14s — iCloud sync may be delayed."
+            f"library search within 12s — iCloud sync may be delayed."
         )
 
     # Step 4: Add to playlist via existing AppleScript backend
@@ -3330,17 +3373,18 @@ def ui_add_to_playlist(playlist_name: str, query: str, artist: str = "") -> tupl
     if not ok:
         return False, f"Added to library but failed to add to playlist: {result}"
 
-    # Step 5: Verify it persisted (some user-created playlists silently revert
-    # local AppleScript edits server-side). Sleep past the rollback window
-    # before the first probe.
-    time.sleep(2.0)
-    for _ in range(3):
+    # Step 5: Verify it persisted. Some user-created playlists silently
+    # revert local AppleScript edits within ~1s; settle past the rollback
+    # window before the first probe.
+    time.sleep(0.6)
+    verify_deadline = time.monotonic() + 3.0
+    while time.monotonic() < verify_deadline:
         exists_ok, exists = track_exists_in_playlist(
             playlist_name, track_name, track_artist or None
         )
         if exists_ok and exists:
             return True, f"Added {track_name} by {track_artist} to {playlist_name}"
-        time.sleep(1.0)
+        time.sleep(0.3)
     return False, (
         f"Added '{track_name}' to library but it did not persist in "
         f"'{playlist_name}' after retry. Some user-created playlists silently "
