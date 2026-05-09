@@ -35,12 +35,12 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # Trusted Publishing — no API token needed in repo secrets.
-    # Configure once at https://pypi.org/manage/project/mcp-applemusic/settings/publishing/
-    # with publisher: GitHub, owner: epheterson, repo: mcp-applemusic,
+    # Configure once at https://pypi.org/manage/project/applemusic-mcp/settings/publishing/
+    # with publisher: GitHub, owner: epheterson, repo: applemusic-mcp,
     # workflow: publish.yml, environment: pypi
     environment:
       name: pypi
-      url: https://pypi.org/project/mcp-applemusic/
+      url: https://pypi.org/project/applemusic-mcp/
     permissions:
       id-token: write
     steps:

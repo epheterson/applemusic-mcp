@@ -382,7 +382,7 @@ If `library(action='search')` returns "No songs found in library", it is **not**
 
 ## Compound flows (no API)
 
-Recipes for replicating mcp-applemusic's catalog features without an API token. Gate each user request on "does this need catalog access?" — pure library and playback ops stay in AppleScript; only catalog lookups go through UI automation.
+Recipes for replicating applemusic-mcp's catalog features without an API token. Gate each user request on "does this need catalog access?" — pure library and playback ops stay in AppleScript; only catalog lookups go through UI automation.
 
 ### Add a catalog song to the user's library
 
@@ -683,14 +683,14 @@ Dev tokens last 180 days max.
 
 ---
 
-# The Easy Way: mcp-applemusic
+# The Easy Way: applemusic-mcp
 
-The [mcp-applemusic](https://github.com/epheterson/mcp-applemusic) MCP server handles all this complexity automatically: AppleScript escaping, token management, library-first workflow, ID conversions.
+The [applemusic-mcp](https://github.com/epheterson/applemusic-mcp) MCP server handles all this complexity automatically: AppleScript escaping, token management, library-first workflow, ID conversions.
 
 **Install:**
 ```bash
-git clone https://github.com/epheterson/mcp-applemusic.git
-cd mcp-applemusic && python3 -m venv venv && source venv/bin/activate
+git clone https://github.com/epheterson/applemusic-mcp.git
+cd applemusic-mcp && python3 -m venv venv && source venv/bin/activate
 pip install -e .
 ```
 
@@ -699,7 +699,7 @@ pip install -e .
 {
   "mcpServers": {
     "Apple Music": {
-      "command": "/path/to/mcp-applemusic/venv/bin/python",
+      "command": "/path/to/applemusic-mcp/venv/bin/python",
       "args": ["-m", "applemusic_mcp"]
     }
   }
@@ -708,7 +708,7 @@ pip install -e .
 
 On macOS, most features work immediately. For catalog features or Windows/Linux, see the repo README.
 
-| Manual | mcp-applemusic |
+| Manual | applemusic-mcp |
 |--------|----------------|
 | 4 API calls to add song | `playlist(action="add", auto_search=True)` |
 | Copy URL + open in Music | `playback(action="play", url="...")` |

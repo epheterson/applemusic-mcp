@@ -1494,7 +1494,7 @@ end tell""")
     return _SEARCH_FIELD_SIDEBAR
 
 
-_GITHUB_ISSUES = "https://github.com/epheterson/mcp-applemusic/issues"
+_GITHUB_ISSUES = "https://github.com/epheterson/applemusic-mcp/issues"
 
 
 def _classify_as_error(error_text: str) -> str:

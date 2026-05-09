@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mcp-applemusic"
-version = "0.10.3"
+name = "applemusic-mcp"
+version = "0.10.4"
 description = "MCP server for Apple Music - playlist management, playback control (macOS), and library access"
 readme = "README.md"
 license = "MIT"
@@ -50,9 +50,9 @@ dev = [
 applemusic-mcp = "applemusic_mcp.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/epheterson/mcp-applemusic"
-Repository = "https://github.com/epheterson/mcp-applemusic"
-Issues = "https://github.com/epheterson/mcp-applemusic/issues"
+Homepage = "https://github.com/epheterson/applemusic-mcp"
+Repository = "https://github.com/epheterson/applemusic-mcp"
+Issues = "https://github.com/epheterson/applemusic-mcp/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/applemusic_mcp"]

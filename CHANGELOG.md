@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.4] - 2026-05-09
+
+### Renamed
+
+- **PyPI package and GitHub repo renamed** from `mcp-applemusic` to `applemusic-mcp`.
+  - Install: `pip install applemusic-mcp`
+  - GitHub: https://github.com/epheterson/applemusic-mcp (old URL auto-redirects)
+  - The `mcp-applemusic` name on PyPI was registered by an unrelated project
+    in February 2025, blocking us from publishing under that name. v0.10.4 is
+    the first PyPI release under the new name.
+- **CLI command `applemusic-mcp` is unchanged** (was already this name).
+
 ## [0.10.3] - 2026-05-05
 
 ### Faster

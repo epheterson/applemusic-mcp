@@ -3,4 +3,4 @@
 Cross-platform with macOS AppleScript integration for playback control.
 """
 
-__version__ = "0.10.3"
+__version__ = "0.10.4"

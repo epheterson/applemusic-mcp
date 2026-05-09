@@ -1,8 +1,8 @@
-# mcp-applemusic
+# applemusic-mcp
 
-[![Release](https://img.shields.io/github/v/release/epheterson/mcp-applemusic.svg?label=release)](https://github.com/epheterson/mcp-applemusic/releases)
+[![Release](https://img.shields.io/github/v/release/epheterson/applemusic-mcp.svg?label=release)](https://github.com/epheterson/applemusic-mcp/releases)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![Downloads](https://static.pepy.tech/badge/mcp-applemusic)](https://pepy.tech/project/mcp-applemusic)
+[![Downloads](https://static.pepy.tech/badge/applemusic-mcp)](https://pepy.tech/project/applemusic-mcp)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-15%20%7C%2026-blue.svg)]()
 [![MCP](https://img.shields.io/badge/MCP-server-purple.svg)](https://modelcontextprotocol.io/)
@@ -46,8 +46,8 @@
 **No Apple Developer account needed!** Most features work instantly via AppleScript. Catalog features use the API when available, with UI automation fallback on macOS (requires display + Accessibility permissions).
 
 ```bash
-git clone https://github.com/epheterson/mcp-applemusic.git
-cd mcp-applemusic
+git clone https://github.com/epheterson/applemusic-mcp.git
+cd applemusic-mcp
 python3 -m venv venv && source venv/bin/activate
 pip install -e .
 ```
@@ -58,7 +58,7 @@ Add to your MCP client config. **Claude Desktop** (`~/Library/Application Suppor
 {
   "mcpServers": {
     "Apple Music": {
-      "command": "/full/path/to/mcp-applemusic/venv/bin/python",
+      "command": "/full/path/to/applemusic-mcp/venv/bin/python",
       "args": ["-m", "applemusic_mcp"]
     }
   }
@@ -118,7 +118,7 @@ Same `mcpServers` shape works across clients (Claude Desktop, Cursor, Cline, Win
 {
   "mcpServers": {
     "Apple Music": {
-      "command": "/full/path/to/mcp-applemusic/venv/bin/python",
+      "command": "/full/path/to/applemusic-mcp/venv/bin/python",
       "args": ["-m", "applemusic_mcp"]
     }
   }
