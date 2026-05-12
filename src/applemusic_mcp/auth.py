@@ -283,7 +283,7 @@ def run_auth_server(port: int = 8765) -> Optional[str]:
     # Write auth HTML
     auth_html = create_auth_html(developer_token, port)
     auth_file = config_dir / "auth.html"
-    with open(auth_file, "w") as f:
+    with open(auth_file, "w", encoding="utf-8") as f:
         f.write(auth_html)
 
     # Token storage for callback
@@ -297,7 +297,7 @@ def run_auth_server(port: int = 8765) -> Optional[str]:
         def do_GET(self):
             if self.path == "/auth.html" or self.path == "/":
                 self.send_response(200)
-                self.send_header("Content-type", "text/html")
+                self.send_header("Content-type", "text/html; charset=utf-8")
                 self.end_headers()
                 with open(auth_file, "rb") as f:
                     self.wfile.write(f.read())

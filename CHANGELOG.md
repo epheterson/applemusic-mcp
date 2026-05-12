@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.5] - 2026-05-13
+
+### Fixed
+
+- **`applemusic-mcp authorize` crash on Windows with non-UTF-8 system locale**
+  (e.g. Chinese GBK). The auth HTML page contains a `✓` glyph; writing it to
+  disk used Python's locale-default codec, which raised
+  `UnicodeEncodeError: 'gbk' codec can't encode character '✓'`. The file
+  is now opened with `encoding="utf-8"`, and the local auth server advertises
+  `Content-Type: text/html; charset=utf-8` so browsers render the glyph
+  correctly.
+
 ## [0.10.4] - 2026-05-09
 
 ### Renamed
