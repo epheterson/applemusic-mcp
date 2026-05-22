@@ -43,7 +43,7 @@
 
 **Requirements:** Python 3.10+, Apple Music app with subscription.
 
-**No Apple Developer account needed!** Most features work instantly via AppleScript. Catalog features use the API when available, with UI automation fallback on macOS (requires display + Accessibility permissions).
+**No Apple Developer account needed on macOS!** Most features work instantly via AppleScript. Catalog features use the API when available, with UI automation fallback on macOS (requires display + Accessibility permissions). On other platforms and for more features a $99/yr Apple Developer Program membership is required for the API.
 
 ```bash
 git clone https://github.com/epheterson/applemusic-mcp.git
@@ -73,7 +73,9 @@ Add to your MCP client config. **Claude Desktop** (`~/Library/Application Suppor
 
 ## API Setup (Optional on macOS, Required on Windows/Linux)
 
-Want catalog search, recommendations, or adding songs from Apple Music? Set up API access:
+**Requirements:** Python 3.10+, Apple Music app with subscription, active [Apple Developer Program](https://developer.apple.com/programs/) membership ($99/yr USD).
+
+Want catalog search, recommendations, and Windows/Linux support? Set up API access.
 
 ### 1. Get MusicKit Key
 
