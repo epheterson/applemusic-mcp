@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-05-30
+
+### Fixed
+
+- **Playback failed for tracks whose title has a typographic apostrophe**
+  (U+2019, e.g. "That's a No No") even though search found them ([#26]). Root
+  cause was an asymmetry between two Music.app engines: the native `search`
+  command folds smart punctuation, but the `whose name contains` object-query
+  filter used by playback is glyph-exact, so a straight-apostrophe query missed
+  a curly-stored title (and vice versa). `osascript` also normalizes
+  U+2019→U+0027 on stdout, so names returned by search re-queried the curly
+  database and missed.
+
+### Changed
+
+- **Track resolution for play/love/dislike/rate/reveal is now a two-stage
+  matcher.** Stage 1 is the fast glyph-exact `whose` filter (now robust to
+  apostrophe/quote/ellipsis variants by matching the quote-free fragments of
+  the title). Stage 2, only on a miss, bulk-fetches every track name in one
+  Apple Event and folds in-memory under AppleScript's native
+  `ignoring punctuation and diacriticals` — matching curly quotes, ellipses,
+  and accents (café ≈ cafe) via Apple's Unicode tables. The bulk fetch is
+  essential: per-track property access in a loop is ~1 Apple Event each
+  (seconds on a large library); the bulk fetch is one event (~instant).
+- **One canonical normalized matcher at every point a user string is compared
+  to a candidate** (server side). `_normalize_for_match` now folds diacritics
+  (NFD) in addition to quotes/`&`/punctuation, and a new `_loose_contains` /
+  `_loose_equals` pair replaces the ad-hoc `x.lower() in y.lower()` guards
+  across playback, library add, rating, search filters, and playlist
+  resolution — so the same smart-quote/accent class of bug can't recur at other
+  entry points.
+
+### Notes
+
+- The generic fuzzy matcher (`_fuzzy_match_entity`, used for catalog/playlist
+  matching) keeps its own normalization core (`_normalize_with_tracking`),
+  now behavior-aligned with `_normalize_for_match`. Consolidating both onto a
+  single core remains a follow-up.
+
+[#26]: https://github.com/epheterson/applemusic-mcp/issues/26
+
 ## [0.10.5] - 2026-05-13
 
 ### Fixed

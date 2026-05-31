@@ -165,6 +165,39 @@ tell application "Music"
 end tell
 ```
 
+### Matching titles with typographic punctuation / accents
+
+`whose name contains "..."` is **glyph-exact** — unlike Music's native `search`
+command, it does *not* fold a straight apostrophe (U+0027) against the curly one
+(U+2019) Music often stores, nor accents. So `whose name contains "That's a No
+No"` misses a title stored as `That's a No No`. Two robust strategies:
+
+```applescript
+-- 1. Match the quote-free fragments instead of the apostrophe itself.
+--    Works regardless of which apostrophe variant is stored or typed.
+play (first track of library playlist 1 whose ¬
+    (name contains "That" and name contains "s a No No"))
+
+-- 2. For accents/ellipsis/anything: bulk-fetch names in ONE Apple Event and
+--    fold in-memory. `ignoring punctuation and diacriticals` uses Apple's
+--    Unicode tables (curly quotes, ellipses, café≈cafe). Do NOT access
+--    `name of t` per-iteration in a loop — that is one Apple Event per track
+--    (~17s on a 12k library); fetch the whole list at once (~instant).
+tell application "Music"
+    set allNames to (get name of every track of library playlist 1)
+    set idx to 0
+    ignoring punctuation and diacriticals
+        repeat with i from 1 to (count of allNames)
+            if ((item i of allNames) as text) contains "Fur Elise" then
+                set idx to i
+                exit repeat
+            end if
+        end repeat
+    end ignoring
+    if idx > 0 then play (track idx of library playlist 1)
+end tell
+```
+
 ## Library Queries
 
 ```applescript
