@@ -4173,7 +4173,10 @@ class TestLibraryBrowsePagination:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         mock_asc = MagicMock()
         mock_asc.get_library_songs_page.return_value = (
-            True, [self._make_as_song(i) for i in range(10)], 100, ""
+            True,
+            [self._make_as_song(i) for i in range(10)],
+            100,
+            "",
         )
         monkeypatch.setattr(server, "asc", mock_asc)
 
@@ -4188,7 +4191,10 @@ class TestLibraryBrowsePagination:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         mock_asc = MagicMock()
         mock_asc.get_library_songs_page.return_value = (
-            True, [self._make_as_song(i) for i in range(10, 20)], 100, ""
+            True,
+            [self._make_as_song(i) for i in range(10, 20)],
+            100,
+            "",
         )
         monkeypatch.setattr(server, "asc", mock_asc)
 
@@ -4205,7 +4211,8 @@ class TestLibraryBrowsePagination:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         mock_asc = MagicMock()
         mock_asc.get_library_songs.return_value = (
-            True, [self._make_as_song(i) for i in range(150)]
+            True,
+            [self._make_as_song(i) for i in range(150)],
         )
         monkeypatch.setattr(server, "asc", mock_asc)
 
@@ -4297,7 +4304,10 @@ class TestLibraryBrowsePagination:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         mock_asc = MagicMock()
         mock_asc.get_library_songs_page.return_value = (
-            True, [self._make_as_song(i) for i in range(10, 20)], 1000, ""
+            True,
+            [self._make_as_song(i) for i in range(10, 20)],
+            1000,
+            "",
         )
         monkeypatch.setattr(server, "asc", mock_asc)
 
@@ -4344,3 +4354,91 @@ class TestLibraryBrowsePagination:
         mock_asc.get_library_songs.assert_called_once_with(0)
         mock_asc.get_library_songs_page.assert_not_called()
         assert result is not None
+
+
+class TestCanonicalMatcher:
+    """The single normalized matcher used at every user-string comparison point.
+
+    Issue #26: Music stores titles with typographic glyphs (curly quotes U+2019,
+    ellipsis U+2026, accents) while users/models type ASCII. Every match point
+    routes through _normalize_for_match / _loose_contains so the cosmetic glyph
+    never decides a match. These are pure-function tests — no Music app needed.
+    """
+
+    # --- _normalize_for_match -------------------------------------------------
+
+    def test_smart_and_straight_quotes_normalize_identically(self):
+        assert server._normalize_for_match("That's a No No") == server._normalize_for_match(
+            "That’s a No No"
+        )
+
+    def test_left_quote_and_modifier_apostrophe_fold(self):
+        base = server._normalize_for_match("Its Me")
+        for variant in ["It's Me", "It’s Me", "It‘s Me", "Itʼs Me"]:
+            assert server._normalize_for_match(variant) == base
+
+    def test_accents_fold_to_base_letter(self):
+        # The bug the old normalizer had: é was stripped to nothing (caf), not e.
+        assert server._normalize_for_match("café") == "cafe"
+        assert server._normalize_for_match("Björk") == "bjork"
+        assert server._normalize_for_match("Beyoncé") == server._normalize_for_match("Beyonce")
+
+    def test_ellipsis_folds(self):
+        assert server._normalize_for_match("Wait…") == server._normalize_for_match("Wait...")
+
+    def test_ampersand_becomes_and(self):
+        assert server._normalize_for_match("Salt & Pepa") == server._normalize_for_match(
+            "Salt and Pepa"
+        )
+
+    def test_hyphens_become_spaces_emoji_removed(self):
+        # Hyphens join words -> spaces (keeps tokens distinct); emoji -> gone.
+        assert server._normalize_for_match("Peek-A-Boo 🎵") == "peek a boo"
+
+    def test_hyphen_removal_does_not_cross_token_boundary(self):
+        # Regression: deleting the hyphen would fold "Peek-A-Boo" -> "peekaboo",
+        # letting "kabo" cross the boundary and false-match. Spacing prevents it.
+        assert not server._loose_contains("kabo", "Peek-A-Boo")
+        # But a real hyphen/space variation still matches.
+        assert server._loose_contains("Peek A Boo", "Peek-A-Boo")
+
+    def test_whitespace_collapsed_and_cased(self):
+        assert server._normalize_for_match("  THE   Beatles ") == "the beatles"
+
+    def test_none_and_empty_are_empty(self):
+        assert server._normalize_for_match(None) == ""
+        assert server._normalize_for_match("") == ""
+        assert server._normalize_for_match("   ") == ""
+
+    # --- _loose_contains ------------------------------------------------------
+
+    def test_straight_query_matches_curly_name(self):
+        assert server._loose_contains("That's a No No", "That’s a No No")
+
+    def test_curly_query_matches_straight_name(self):
+        # The reporter's `track="That’s..."` case: query is curly, the name
+        # search returns is straight (osascript normalizes stdout).
+        assert server._loose_contains("Wouldn’t It Be Nice", "Wouldn't It Be Nice (Live)")
+
+    def test_accent_query_matches_unaccented_name(self):
+        assert server._loose_contains("Fur Elise", 'Bagatelle "Für Elise"')
+
+    def test_substring_semantics_preserved(self):
+        assert server._loose_contains("No No", "That's a No No")
+        assert not server._loose_contains("Yes Yes", "That's a No No")
+
+    def test_empty_needle_imposes_no_constraint(self):
+        # Drop-in for `if query and query.lower() not in name`.
+        assert server._loose_contains("", "anything") is True
+        assert server._loose_contains(None, "anything") is True
+
+    def test_none_haystack_only_matches_empty_needle(self):
+        assert server._loose_contains("x", None) is False
+        assert server._loose_contains(None, None) is True
+
+    # --- _loose_equals --------------------------------------------------------
+
+    def test_loose_equals_folds_quotes_and_accents(self):
+        assert server._loose_equals("Café del Mar", "cafe del mar")
+        assert server._loose_equals("Rock 'n' Roll", "Rock ’n’ Roll")
+        assert not server._loose_equals("Song", "Songs")

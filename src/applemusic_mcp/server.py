@@ -165,23 +165,69 @@ def _format_fuzzy_match(fuzzy: FuzzyMatchResult | None) -> str:
     return "\n".join(parts)
 
 
-def _normalize_for_match(s: str) -> str:
-    """Normalize string for fuzzy matching.
+def _normalize_for_match(s: Optional[str]) -> str:
+    """Canonical normalizer for matching a user string against a candidate name.
 
-    Lowercases, removes special chars, collapses whitespace.
-    Used for matching AppleScript track names to API track names.
+    This is the single source of truth for "do these two strings match" across
+    every comparison point (track/artist/album/playlist lookups). Both the user
+    query and the candidate are run through it before comparison, so cosmetic
+    differences never cause a miss. See :func:`_loose_contains`.
+
+    Folds, in order:
+      1. case (lowercase) and surrounding whitespace
+      2. **diacritics** via NFD — ``café → cafe`` (must precede step 4, or the
+         accented codepoint is stripped to nothing and ``café → caf`` instead)
+      3. ``&`` → ``and`` (before step 4 strips it)
+      4. all remaining punctuation — smart/straight quotes (U+2019 ≈ U+0027),
+         ellipses, hyphens, emoji — to nothing (issue #26)
+      5. collapsed internal whitespace
     """
-    # Lowercase and strip
+    # None-safe: callers pass values straight from .get()/optional fields.
+    if not s:
+        return ""
+    # 1. Lowercase and strip
     s = s.lower().strip()
-    # Remove common variations
-    s = s.replace("'", "").replace("'", "").replace("`", "")
-    s = s.replace('"', "").replace('"', "").replace('"', "")
+    # 2. Fold diacritics (café → cafe) BEFORE stripping non-ASCII below, so the
+    #    accented letter collapses to its base form instead of vanishing.
+    s = "".join(
+        c for c in unicodedata.normalize("NFD", s) if not unicodedata.category(c).startswith("M")
+    )
+    # 3. Normalize ampersand to its word form before punctuation is stripped.
     s = s.replace("&", "and")
-    # Keep only alphanumeric and spaces
+    # 4. Word-joiners (hyphen, en/em dash, slash, underscore) become spaces so
+    #    tokens stay distinct: "Peek-A-Boo" → "peek a boo", NOT "peekaboo" —
+    #    the latter would let a query like "kabo" cross the original hyphen
+    #    boundary and false-match. Matches _normalize_with_tracking's hyphen
+    #    handling.
+    s = re.sub(r"[-–—/_]+", " ", s)
+    # 5. Strip the remaining punctuation (quote variants, ellipsis, emoji) to
+    #    nothing, so intra-word marks fold away ("don't" → "dont", not "don t")
+    #    and smart vs straight punctuation cannot cause a mismatch.
     s = re.sub(r"[^a-z0-9\s]", "", s)
-    # Collapse multiple spaces
+    # 6. Collapse multiple spaces
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+
+def _loose_contains(needle: Optional[str], haystack: Optional[str]) -> bool:
+    """True if `needle` matches inside `haystack` after canonical normalization.
+
+    The single comparison primitive that replaces ad-hoc
+    ``needle.lower() in haystack.lower()`` checks. Normalizing both sides folds
+    away smart quotes, accents, ``&``/``and`` and other cosmetic differences
+    that plain substring matching misses (issue #26). An empty/normalizes-empty
+    needle imposes no constraint (mirrors ``"" in x`` being True), so it is a
+    drop-in for the existing ``if query and query.lower() not in name`` guards.
+    """
+    n = _normalize_for_match(needle)
+    if not n:
+        return True
+    return n in _normalize_for_match(haystack)
+
+
+def _loose_equals(a: Optional[str], b: Optional[str]) -> bool:
+    """True if `a` and `b` are equal after canonical normalization."""
+    return _normalize_for_match(a) == _normalize_for_match(b)
 
 
 def _normalize_with_tracking(name: str) -> tuple[list[str], list[str]]:
@@ -1326,7 +1372,7 @@ def _find_matching_catalog_song(
         if not artist:
             return True
         song_artist = song.get("attributes", {}).get("artistName", "")
-        return artist.lower() in song_artist.lower()
+        return _loose_contains(artist, song_artist)
 
     # Candidates that match artist filter
     artist_filtered = [s for s in songs if artist_matches(s)]
@@ -1456,7 +1502,7 @@ def _find_matching_catalog_album(
         if not artist:
             return True
         album_artist = album.get("attributes", {}).get("artistName", "")
-        return artist.lower() in album_artist.lower()
+        return _loose_contains(artist, album_artist)
 
     # Candidates that match artist filter
     artist_filtered = [a for a in albums if artist_matches(a)]
@@ -1526,8 +1572,6 @@ def _find_track_id(name: str, artist: str = "") -> tuple[str | None, str | None,
         - If not found: (None, None, "")
     """
     search_term = f"{name} {artist}".strip() if artist else name
-    name_lower = name.lower()
-    artist_lower = artist.lower() if artist else ""
 
     # 1. Search library first
     library_songs = _search_library_songs(search_term, limit=5)
@@ -1537,10 +1581,10 @@ def _find_track_id(name: str, artist: str = "") -> tuple[str | None, str | None,
         song_artist = attrs.get("artistName", "")
 
         # Partial match on name
-        if name_lower not in song_name.lower():
+        if not _loose_contains(name, song_name):
             continue
         # Partial match on artist if provided
-        if artist_lower and artist_lower not in song_artist.lower():
+        if artist and not _loose_contains(artist, song_artist):
             continue
 
         library_id = song.get("id", "")
@@ -1555,10 +1599,10 @@ def _find_track_id(name: str, artist: str = "") -> tuple[str | None, str | None,
         song_artist = attrs.get("artistName", "")
 
         # Partial match on name
-        if name_lower not in song_name.lower():
+        if not _loose_contains(name, song_name):
             continue
         # Partial match on artist if provided
-        if artist_lower and artist_lower not in song_artist.lower():
+        if artist and not _loose_contains(artist, song_artist):
             continue
 
         catalog_id = song.get("id", "")
@@ -1947,9 +1991,8 @@ def _auto_search_and_add_to_playlist(
                 sok, s_hits = asc.search_library(found_name, "songs")
                 if sok and s_hits:
                     if found_artist and len(found_artist) >= 2:
-                        fa_lower = found_artist.lower()
                         for h in s_hits:
-                            if fa_lower in (h.get("artist") or "").lower():
+                            if _loose_contains(found_artist, h.get("artist") or ""):
                                 visible = True
                                 break
                     else:
@@ -1999,7 +2042,7 @@ def _auto_search_and_add_to_playlist(
             pl_success, playlists = asc.get_playlists()
             if pl_success:
                 for pl in playlists:
-                    if playlist_name.lower() in pl.get("name", "").lower():
+                    if _loose_contains(playlist_name, pl.get("name", "")):
                         playlist_id = pl.get("id")
                         break
 
@@ -2236,9 +2279,8 @@ def _playlist_tracks(
                         # Find matching playlist by name
                         for pl in playlists:
                             pl_name = pl.get("attributes", {}).get("name", "")
-                            if (
-                                pl_name.lower() == resolved.applescript_name.lower()
-                                or resolved.applescript_name.lower() in pl_name.lower()
+                            if _loose_equals(pl_name, resolved.applescript_name) or _loose_contains(
+                                resolved.applescript_name, pl_name
                             ):
                                 api_playlist_id = pl.get("id")
                                 break
@@ -2360,11 +2402,10 @@ def _playlist_tracks(
 
         # Apply filter
         if filter:
-            filter_lower = filter.lower()
             track_data = [
                 t
                 for t in track_data
-                if filter_lower in t["name"].lower() or filter_lower in t["artist"].lower()
+                if _loose_contains(filter, t["name"]) or _loose_contains(filter, t["artist"])
             ]
 
         # Apply pagination
@@ -2502,11 +2543,10 @@ def _playlist_tracks(
 
         # Apply filter
         if filter:
-            filter_lower = filter.lower()
             track_data = [
                 t
                 for t in track_data
-                if filter_lower in t["name"].lower() or filter_lower in t["artist"].lower()
+                if _loose_contains(filter, t["name"]) or _loose_contains(filter, t["artist"])
             ]
 
         # Apply pagination
@@ -2565,7 +2605,6 @@ def _playlist_search(
             matches.append({"name": t["name"], "artist": t["artist"], "id": track_id})
     else:
         # API path: manually filter tracks (cross-platform)
-        query_lower = query.lower()
         success, tracks = _get_playlist_track_names(resolved.api_id)
         if not success:
             return f"Error: {tracks}"
@@ -2575,9 +2614,9 @@ def _playlist_search(
             album = t.get("album", "")
             track_id = t.get("id", "")
             if (
-                query_lower in name.lower()
-                or query_lower in artist.lower()
-                or query_lower in album.lower()
+                _loose_contains(query, name)
+                or _loose_contains(query, artist)
+                or _loose_contains(query, album)
             ):
                 matches.append({"name": name, "artist": artist, "id": track_id})
 
@@ -2649,14 +2688,12 @@ def _get_playlist_track_names(playlist_id: str) -> tuple[bool, list[dict] | str]
 
 def _find_track_in_list(tracks: list[dict], track_name: str, artist: str = "") -> list[str]:
     """Find matching tracks in a list by name/artist."""
-    track_lower = track_name.lower()
-    artist_lower = artist.lower() if artist else ""
     matches = []
 
     for t in tracks:
-        if track_lower in t["name"].lower():
-            if artist_lower:
-                if artist_lower in t["artist"].lower():
+        if _loose_contains(track_name, t["name"]):
+            if artist:
+                if _loose_contains(artist, t["artist"]):
                     matches.append(f"{t['name']} - {t['artist']}")
             else:
                 matches.append(f"{t['name']} - {t['artist']}")
@@ -2987,9 +3024,9 @@ def _playlist_add(
                         found_album = None
                         for alb in albums:
                             attrs = alb.get("attributes", {})
-                            if r.value.lower() in attrs.get("name", "").lower():
+                            if _loose_contains(r.value, attrs.get("name", "")):
                                 if r.artist:
-                                    if r.artist.lower() in attrs.get("artistName", "").lower():
+                                    if _loose_contains(r.artist, attrs.get("artistName", "")):
                                         found_album = alb
                                         break
                                 else:
@@ -3072,9 +3109,7 @@ def _playlist_add(
             # not (deliberate latency choice — see test_first_attempt_success_does_not_verify).
             if success and split_match is None and verify:
                 v_name, v_artist = name, track_artist or ""
-                if not _verify_track_in_playlist(
-                    resolved.applescript_name, v_name, v_artist
-                ):
+                if not _verify_track_in_playlist(resolved.applescript_name, v_name, v_artist):
                     time.sleep(_VERIFY_DELAY_S)
                     success, result, split_match = _smart_as_add_track_to_playlist(
                         resolved.applescript_name,
@@ -3672,10 +3707,12 @@ def playlist(
     elif action == "copy":
         return _playlist_copy(source, new_name)
     elif action == "remove":
-        if (err := _macos_only("remove")): return err
+        if err := _macos_only("remove"):
+            return err
         return _playlist_remove(playlist, track, artist)
     elif action == "delete":
-        if (err := _macos_only("delete")): return err
+        if err := _macos_only("delete"):
+            return err
         if folder:
             return _playlist_delete_folder(folder)
         playlist_name = name or playlist
@@ -3683,7 +3720,8 @@ def playlist(
             return "Error: name, playlist, or folder required for delete"
         return _playlist_delete(playlist_name)
     elif action == "rename":
-        if (err := _macos_only("rename")): return err
+        if err := _macos_only("rename"):
+            return err
         if not new_name:
             return "Error: new_name required for rename"
         if folder:
@@ -3694,12 +3732,14 @@ def playlist(
         return _playlist_rename(playlist_name, new_name)
     elif action == "create_folder":
         # Backward compat — redirect to create(folder=...)
-        if (err := _macos_only("create_folder")): return err
+        if err := _macos_only("create_folder"):
+            return err
         if not name:
             return "Error: name required for create_folder"
         return _playlist_create_folder(name)
     elif action == "move":
-        if (err := _macos_only("move")): return err
+        if err := _macos_only("move"):
+            return err
         if not playlist:
             return "Error: playlist required for move"
         folder_target = folder or name
@@ -3772,10 +3812,12 @@ def library(
             return "Error: rate_action required (love, dislike, get, set)"
         return _library_rate(rate_action, track, artist, stars)
     elif action == "remove":
-        if (err := _macos_only("remove")): return err
+        if err := _macos_only("remove"):
+            return err
         return _library_remove(track, artist)
     elif action == "snapshot":
-        if (err := _macos_only("snapshot")): return err
+        if err := _macos_only("snapshot"):
+            return err
         sub = query.strip() if query else ""
         sub_lower = sub.lower()
         if sub_lower == "new":
@@ -3924,9 +3966,9 @@ def _library_add_track_via_ui(query: str, search_artist: str) -> tuple[bool, str
         lib_ok, lib_results = asc.search_library(query, "songs")
         if lib_ok and lib_results:
             for r in lib_results:
-                if query.lower() not in r.get("name", "").lower():
+                if not _loose_contains(query, r.get("name", "")):
                     continue
-                if search_artist and search_artist.lower() not in r.get("artist", "").lower():
+                if search_artist and not _loose_contains(search_artist, r.get("artist", "")):
                     continue
                 return True, f"{r.get('name', query)} by {r.get('artist', search_artist)}"
     return False, (
@@ -4361,8 +4403,8 @@ def _catalog_album_tracks(
                     attrs = a.get("attributes", {})
                     album_name = attrs.get("name", "")
                     album_artist = attrs.get("artistName", "")
-                    if r.value.lower() in album_name.lower():
-                        if not r.artist or r.artist.lower() in album_artist.lower():
+                    if _loose_contains(r.value, album_name):
+                        if not r.artist or _loose_contains(r.artist, album_artist):
                             album_id = a.get("id")
                             break
         except Exception:
@@ -4611,7 +4653,9 @@ def _library_browse(
                     data, format, export, full, "songs", total_count=true_total, offset=offset
                 )
             as_error = as_err or "AppleScript get_library_songs_page failed"
-            return f"Error browsing library: {_format_applescript_error(as_error, 'browse library')}"
+            return (
+                f"Error browsing library: {_format_applescript_error(as_error, 'browse library')}"
+            )
         else:
             # Full fetch: limit=0 (all songs) or clean_only=True (needs post-filter total).
             success, as_songs = asc.get_library_songs(0)
@@ -4630,7 +4674,9 @@ def _library_browse(
             # found" when the real cause is Music.app not running or
             # Automation permissions denied. Same defense as _playlist_list.
             as_error = str(as_songs) if as_songs else "AppleScript get_library_songs failed"
-            return f"Error browsing library: {_format_applescript_error(as_error, 'browse library')}"
+            return (
+                f"Error browsing library: {_format_applescript_error(as_error, 'browse library')}"
+            )
 
     # Fall back to API (non-macOS, or non-songs item_type)
     try:
@@ -5270,8 +5316,8 @@ def _library_rate(
         attrs = song.get("attributes", {})
         song_name = attrs.get("name", "")
         song_artist = attrs.get("artistName", "")
-        if track_name.lower() in song_name.lower():
-            if not track_artist or track_artist.lower() in song_artist.lower():
+        if _loose_contains(track_name, song_name):
+            if not track_artist or _loose_contains(track_artist, song_artist):
                 success, msg = _rate_song_api(song.get("id"), action)
                 if success:
                     audit_log.log_action(
@@ -6362,9 +6408,9 @@ if APPLESCRIPT_AVAILABLE:
                 for lib_track in lib_results:
                     lib_album = lib_track.get("album", "")
                     lib_artist = lib_track.get("artist", "")
-                    if album.lower() not in lib_album.lower():
+                    if not _loose_contains(album, lib_album):
                         continue
-                    if artist and artist.lower() not in lib_artist.lower():
+                    if artist and not _loose_contains(artist, lib_artist):
                         continue
                     # Found match - play first track (Music continues with album)
                     if shuffle:
@@ -6395,9 +6441,9 @@ if APPLESCRIPT_AVAILABLE:
                         album_name = attrs.get("name", "")
                         album_artist = attrs.get("artistName", "")
                         album_id = cat_album.get("id", "")
-                        if album.lower() not in album_name.lower():
+                        if not _loose_contains(album, album_name):
                             continue
-                        if artist and artist.lower() not in album_artist.lower():
+                        if artist and not _loose_contains(artist, album_artist):
                             continue
                         album_url = attrs.get("url", "")
 
@@ -6548,9 +6594,9 @@ if APPLESCRIPT_AVAILABLE:
             for lib_track in lib_results:
                 lib_name = lib_track.get("name", "")
                 lib_artist = lib_track.get("artist", "")
-                if track_name.lower() not in lib_name.lower():
+                if not _loose_contains(track_name, lib_name):
                     continue
-                if track_artist and track_artist.lower() not in lib_artist.lower():
+                if track_artist and not _loose_contains(track_artist, lib_artist):
                     continue
                 # Found match - now play it (will foreground Music)
                 success, result = asc.play_track(lib_name, lib_artist)
@@ -6572,13 +6618,13 @@ if APPLESCRIPT_AVAILABLE:
             song_artist = attrs.get("artistName", "")
 
             # Check if it's a reasonable match
-            if track_name.lower() not in song_name.lower():
+            if not _loose_contains(track_name, song_name):
                 continue
             # Check artist in artistName OR song name (for "feat. X" cases)
             if (
                 track_artist
-                and track_artist.lower() not in song_artist.lower()
-                and track_artist.lower() not in song_name.lower()
+                and not _loose_contains(track_artist, song_artist)
+                and not _loose_contains(track_artist, song_name)
             ):
                 continue
 
@@ -6783,7 +6829,9 @@ if APPLESCRIPT_AVAILABLE:
         results = []
         errors = []
 
-        def _record(ok: bool, msg: str, name: Optional[str], track_artist: Optional[str], err_prefix: str):
+        def _record(
+            ok: bool, msg: str, name: Optional[str], track_artist: Optional[str], err_prefix: str
+        ):
             """Record an asc.remove_track_from_playlist outcome with verify-after-remove.
 
             On success, confirms the track is genuinely gone from the playlist —
@@ -6797,9 +6845,7 @@ if APPLESCRIPT_AVAILABLE:
             if not verify or name is None:
                 results.append(msg)
                 return
-            if _verify_track_not_in_playlist(
-                resolved.applescript_name, name, track_artist or ""
-            ):
+            if _verify_track_not_in_playlist(resolved.applescript_name, name, track_artist or ""):
                 results.append(msg)
             else:
                 errors.append(
@@ -6906,14 +6952,17 @@ if APPLESCRIPT_AVAILABLE:
                 # If we got results but none match the artist filter, treat as gone
                 if track_artist:
                     matches = [
-                        t for t in lib_results
-                        if track_artist.lower() in (t.get("artist") or "").lower()
+                        t
+                        for t in lib_results
+                        if _loose_contains(track_artist, t.get("artist") or "")
                     ]
                     if not matches:
                         return True
             return False
 
-        def _record(ok: bool, msg: str, name: Optional[str], track_artist: Optional[str], err_prefix: str):
+        def _record(
+            ok: bool, msg: str, name: Optional[str], track_artist: Optional[str], err_prefix: str
+        ):
             """Record an asc.remove_from_library outcome with verify-after-remove."""
             if not ok:
                 errors.append(f"{err_prefix}: {msg}")
