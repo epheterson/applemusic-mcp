@@ -6,6 +6,7 @@ They test the actual Music app integration.
 
 import os
 import pytest
+import re
 import sys
 import time
 
@@ -85,8 +86,8 @@ class TestPlaybackControl:
 
 class TestPlaylistOperations:
     """Test playlist operations."""
-    pytestmark = pytest.mark.slow
 
+    pytestmark = pytest.mark.slow
 
     def test_get_playlists(self):
         """Should get list of playlists."""
@@ -170,8 +171,8 @@ class TestPlaylistOperations:
 
 class TestFolderOperations:
     """Test folder operations."""
-    pytestmark = pytest.mark.slow
 
+    pytestmark = pytest.mark.slow
 
     def test_create_and_delete_folder(self):
         """Should create and delete a folder playlist."""
@@ -326,8 +327,8 @@ class TestFolderOperations:
 
 class TestLibrarySearch:
     """Test library search functions."""
-    pytestmark = pytest.mark.slow
 
+    pytestmark = pytest.mark.slow
 
     def test_search_library_all(self):
         """Should search entire library."""
@@ -395,8 +396,8 @@ class TestGetLibrarySongsPage:
 
 class TestLibraryStats:
     """Test library statistics."""
-    pytestmark = pytest.mark.slow
 
+    pytestmark = pytest.mark.slow
 
     def test_get_library_stats(self):
         """Should get library statistics."""
@@ -472,10 +473,141 @@ class TestInputSanitization:
             assert isinstance(success, bool)
 
 
+class TestSmartPunctuationMatching:
+    """Smart-punctuation vs ASCII track matching (issue #26).
+
+    Music stores many titles with typographic glyphs — a curly right single
+    quote (U+2019), curly double quotes, or a one-char ellipsis (U+2026) — while
+    users/the model type the ASCII forms. AppleScript's ``contains`` is
+    glyph-exact, so the match must not depend on which variant is used. The fix
+    splits on the ambiguous punctuation and matches the surrounding fragments.
+    """
+
+    STRAIGHT = "That's a No No"  # U+0027
+    CURLY = "That’s a No No"  # U+2019
+
+    def test_no_apostrophe_is_single_contains(self):
+        assert asc._name_contains_clause("Peek-A-Boo") == 'name contains "Peek-A-Boo"'
+
+    def test_hyphen_is_not_split(self):
+        # Hyphens are deliberately excluded — they're too common in real titles.
+        assert "and" not in asc._name_contains_clause("Mother-Mother-Mother")
+
+    def test_apostrophe_splits_into_fragments(self):
+        clause = asc._name_contains_clause(self.STRAIGHT)
+        assert clause == '(name contains "That" and name contains "s a No No")'
+
+    def test_straight_and_curly_produce_identical_clause(self):
+        # The whole point: the stored glyph and the typed glyph both vanish,
+        # so either input resolves to the same query.
+        assert asc._name_contains_clause(self.STRAIGHT) == asc._name_contains_clause(self.CURLY)
+
+    def test_apostrophe_never_appears_in_clause(self):
+        for variant in ("'", "’", "‘", "ʼ"):
+            clause = asc._name_contains_clause(f"It{variant}s Me")
+            assert variant not in clause
+
+    def test_ascii_ellipsis_and_unicode_ellipsis_match(self):
+        # "Wait..." (3 ASCII dots) and "Wait…" (U+2026) must resolve identically.
+        assert asc._name_contains_clause("Wait...") == 'name contains "Wait"'
+        assert asc._name_contains_clause("Wait…") == 'name contains "Wait"'
+        assert asc._name_contains_clause("Wait...") == asc._name_contains_clause("Wait…")
+
+    def test_ellipsis_mid_title_splits(self):
+        clause = asc._name_contains_clause("Hello...Goodbye")
+        assert clause == '(name contains "Hello" and name contains "Goodbye")'
+
+    def test_smart_double_quotes_match_straight(self):
+        # A quoted title stored with curly double quotes vs typed straight.
+        assert asc._name_contains_clause("“Heroes”") == 'name contains "Heroes"'
+        assert asc._name_contains_clause('"Heroes"') == 'name contains "Heroes"'
+        assert asc._name_contains_clause("“Heroes”") == asc._name_contains_clause('"Heroes"')
+
+    def test_multiple_apostrophes(self):
+        clause = asc._name_contains_clause("Rock 'n' Roll")
+        assert clause == '(name contains "Rock " and name contains "n" and name contains " Roll")'
+
+    def test_leading_apostrophe_drops_empty_fragment(self):
+        # "'Cause" -> only "Cause" survives, so it stays a single contains.
+        assert asc._name_contains_clause("’Cause") == 'name contains "Cause"'
+
+    def test_injection_payload_is_inert(self):
+        # The double quote that would break out of the literal is consumed as a
+        # split delimiter, so the payload survives only as inert match fragments.
+        clause = asc._name_contains_clause('Evil" & do shell script "x')
+        assert clause.count('"') % 2 == 0  # quotes balance
+        # Stripping every quoted literal leaves nothing executable behind.
+        residue = re.sub(r'"(?:[^"\\]|\\.)*"', "", clause)
+        assert "do shell script" not in residue
+
+    def test_backslash_injection_still_escaped(self):
+        # Backslash isn't a split delimiter, so escaping must still apply.
+        assert "\\\\" in asc._name_contains_clause("test\\backslash")
+
+    def test_library_track_query_uses_fragment_clause(self):
+        q = asc._library_track_query(self.STRAIGHT, "ITZY")
+        assert '(name contains "That" and name contains "s a No No")' in q
+        assert 'artist contains "ITZY"' in q
+
+    def test_track_filter_clause_uses_fragment_clause(self):
+        clause = asc._track_filter_clause(track_name=self.CURLY)
+        assert clause == 'whose (name contains "That" and name contains "s a No No")'
+
+
+class TestHybridTrackResolver:
+    """Two-stage resolver: fast `whose` first pass, fold fallback (issue #26).
+
+    The fallback uses AppleScript's native `ignoring punctuation and
+    diacriticals`, which folds curly quotes, ellipses, AND accents (é≈e) — the
+    generic case the splitting fast pass alone can't reach.
+    """
+
+    def test_fast_pass_is_first(self):
+        # Stage 1 must be the cheap glyph-exact whose filter.
+        block = asc._resolve_library_track_applescript("Hey Jude")
+        assert block.lstrip().startswith("try")
+        assert "first track of library playlist 1 whose" in block
+
+    def test_fallback_bulk_fetches_in_one_event(self):
+        # The whole point of the perf fix: one `every track` fetch, not a
+        # per-track property loop.
+        block = asc._resolve_library_track_applescript("Hey Jude")
+        assert "get name of every track of lib" in block
+        # No per-track `name of t` access inside the repeat (the 17s trap).
+        assert "name of t\n" not in block
+
+    def test_fallback_folds_punctuation_and_diacriticals(self):
+        block = asc._resolve_library_track_applescript("Café")
+        assert "ignoring punctuation and diacriticals" in block
+
+    def test_fallback_matches_on_name_only_without_artist(self):
+        block = asc._resolve_library_track_applescript("Wait")
+        assert "get artist of every track" not in block
+        assert '((item i of allNames) as text) contains "Wait"' in block
+
+    def test_fallback_matches_name_and_artist(self):
+        block = asc._resolve_library_track_applescript("That's a No No", "ITZY")
+        assert "get artist of every track of lib" in block
+        assert 'contains "That\'s a No No"' in block
+        assert 'contains "ITZY"' in block
+
+    def test_resolver_reports_not_found(self):
+        block = asc._resolve_library_track_applescript("Whatever")
+        assert 'return "ERROR:Track not found: Whatever"' in block
+
+    def test_resolver_escapes_injection(self):
+        block = asc._resolve_library_track_applescript('x" & do shell script "y')
+        # The fast-pass clause splits on the quote; the fallback string literal
+        # escapes it. Either way no unescaped breakout reaches AppleScript.
+        assert "do shell script" in block  # present, but only inside literals
+        # Every double-quote in the fallback match line is balanced/escaped.
+        assert block.count('"') % 2 == 0
+
+
 class TestRemoveFromLibrary:
     """Test remove_from_library function."""
-    pytestmark = pytest.mark.slow
 
+    pytestmark = pytest.mark.slow
 
     def test_remove_nonexistent_track(self):
         """Should return error for track not in library."""
@@ -492,8 +624,8 @@ class TestRemoveFromLibrary:
 
 class TestOpenCatalogSong:
     """Test open_catalog_song function."""
-    pytestmark = pytest.mark.slow
 
+    pytestmark = pytest.mark.slow
 
     def test_open_catalog_song_returns_tuple(self, monkeypatch):
         """Should return (success, message) tuple for valid Apple Music URL."""
@@ -547,8 +679,8 @@ class TestAddTrackDisambiguation:
     - Hot Potato by The Wiggles (Ready, Steady, Wiggle!)
     - Hot Potato by Dorothy the Dinosaur & The Wiggles (Dorothy The Dinosaur's Travelling Show)
     """
-    pytestmark = pytest.mark.slow
 
+    pytestmark = pytest.mark.slow
 
     TEST_PLAYLIST = "🧪 Integration Test Playlist"
 
@@ -634,8 +766,8 @@ end tell""")
 
 class TestOpenCatalogAndPlay:
     """Test open_catalog_and_play function."""
-    pytestmark = pytest.mark.slow
 
+    pytestmark = pytest.mark.slow
 
     def _mock_subprocess(self, monkeypatch):
         """Mock subprocess.run for open_catalog_song."""
@@ -784,8 +916,8 @@ class TestOpenCatalogAndPlay:
 
 class TestLibrarySnapshot:
     """Test library_snapshot and library_diff functions."""
-    pytestmark = pytest.mark.slow
 
+    pytestmark = pytest.mark.slow
 
     def _make_snapshot(self, track_count=100, playlists=None, playback=None):
         """Build a snapshot dict for testing."""
@@ -1166,9 +1298,7 @@ class TestUIPrimitives:
         monkeypatch.setattr(asc, "run_applescript", lambda _: (False, "execution error"))
         monkeypatch.setattr(asc, "_ensure_music_frontmost", lambda: None)
         monkeypatch.setattr(asc, "_get_search_field", lambda: asc._SEARCH_FIELD_TOOLBAR)
-        monkeypatch.setattr(
-            asc, "check_ui_accessible", lambda: (False, "Music.app not running")
-        )
+        monkeypatch.setattr(asc, "check_ui_accessible", lambda: (False, "Music.app not running"))
 
         ok, err = asc._focus_search_field("anything")
         assert ok is False
@@ -1301,7 +1431,9 @@ class TestUIPrimitives:
     def test_verify_track_playing_match_on_first_poll(self, monkeypatch):
         import applemusic_mcp.applescript as asc
 
-        monkeypatch.setattr(asc, "run_applescript", lambda _: (True, "Sweet Baby James (Remastered)"))
+        monkeypatch.setattr(
+            asc, "run_applescript", lambda _: (True, "Sweet Baby James (Remastered)")
+        )
         ok, name = asc._verify_track_playing("Sweet Baby James", timeout=1.0)
         assert ok is True
         assert "Sweet Baby James" in name
@@ -1341,10 +1473,15 @@ class TestPopoverSongRowScoring:
         """Tier 1 (Song EXACT) beats Tier 3 (Album EXACT)."""
         import applemusic_mcp.applescript as asc
 
-        self._patch_applescript(monkeypatch, self._fixture([
-            (5, "Brown Sugar", "Album · D'Angelo"),
-            (7, "Brown Sugar", "Song · D'Angelo"),
-        ]))
+        self._patch_applescript(
+            monkeypatch,
+            self._fixture(
+                [
+                    (5, "Brown Sugar", "Album · D'Angelo"),
+                    (7, "Brown Sugar", "Song · D'Angelo"),
+                ]
+            ),
+        )
         result = asc._find_popover_song_row("Brown Sugar", "D'Angelo")
         assert result == (7, "D'Angelo")
 
@@ -1352,10 +1489,15 @@ class TestPopoverSongRowScoring:
         """Tier 2 (canonical-marker parenthetical Song) beats Tier 3 (Album EXACT)."""
         import applemusic_mcp.applescript as asc
 
-        self._patch_applescript(monkeypatch, self._fixture([
-            (3, "Brown Sugar (2014 Remaster)", "Song · D'Angelo"),
-            (5, "Brown Sugar", "Album · D'Angelo"),
-        ]))
+        self._patch_applescript(
+            monkeypatch,
+            self._fixture(
+                [
+                    (3, "Brown Sugar (2014 Remaster)", "Song · D'Angelo"),
+                    (5, "Brown Sugar", "Album · D'Angelo"),
+                ]
+            ),
+        )
         result = asc._find_popover_song_row("Brown Sugar", "D'Angelo")
         assert result == (3, "D'Angelo")
 
@@ -1364,9 +1506,14 @@ class TestPopoverSongRowScoring:
         If only an album row exists, return None — caller fails loudly."""
         import applemusic_mcp.applescript as asc
 
-        self._patch_applescript(monkeypatch, self._fixture([
-            (5, "Brown Sugar", "Album · D'Angelo"),
-        ]))
+        self._patch_applescript(
+            monkeypatch,
+            self._fixture(
+                [
+                    (5, "Brown Sugar", "Album · D'Angelo"),
+                ]
+            ),
+        )
         result = asc._find_popover_song_row("Brown Sugar", "D'Angelo")
         assert result is None
 
@@ -1379,11 +1526,16 @@ class TestPopoverSongRowScoring:
         import applemusic_mcp.applescript as asc
 
         # Mirrors the actual pop-over output we observed live.
-        self._patch_applescript(monkeypatch, self._fixture([
-            (5, "Brown Sugar ￼", "Album · D'Angelo"),  # has U+FFFC artifact
-            (7, "Brown Sugar (Soul Inside 808 Mix)", "Song · D'Angelo"),
-            (11, "Brown Sugar (Verzuz Live)", "Music Video · D'Angelo"),
-        ]))
+        self._patch_applescript(
+            monkeypatch,
+            self._fixture(
+                [
+                    (5, "Brown Sugar ￼", "Album · D'Angelo"),  # has U+FFFC artifact
+                    (7, "Brown Sugar (Soul Inside 808 Mix)", "Song · D'Angelo"),
+                    (11, "Brown Sugar (Verzuz Live)", "Music Video · D'Angelo"),
+                ]
+            ),
+        )
         result = asc._find_popover_song_row("Brown Sugar", "D'Angelo")
         # Album rejected; Music Video rejected; only the 808 Mix Song
         # remains and it scores tier 4 (non-canonical paren).
@@ -1394,10 +1546,15 @@ class TestPopoverSongRowScoring:
         (lower idx) should win as the relevance signal."""
         import applemusic_mcp.applescript as asc
 
-        self._patch_applescript(monkeypatch, self._fixture([
-            (3, "Heaven", "Song · Talking Heads"),
-            (8, "Heaven", "Song · Talking Heads"),  # duplicate (rare but possible)
-        ]))
+        self._patch_applescript(
+            monkeypatch,
+            self._fixture(
+                [
+                    (3, "Heaven", "Song · Talking Heads"),
+                    (8, "Heaven", "Song · Talking Heads"),  # duplicate (rare but possible)
+                ]
+            ),
+        )
         result = asc._find_popover_song_row("Heaven", "Talking Heads")
         assert result == (3, "Talking Heads")
 
@@ -1406,10 +1563,15 @@ class TestPopoverSongRowScoring:
         supplied an artist constraint."""
         import applemusic_mcp.applescript as asc
 
-        self._patch_applescript(monkeypatch, self._fixture([
-            (3, "Heaven", "Song · The Walkmen"),
-            (5, "Heaven", "Song · Beyoncé"),
-        ]))
+        self._patch_applescript(
+            monkeypatch,
+            self._fixture(
+                [
+                    (3, "Heaven", "Song · The Walkmen"),
+                    (5, "Heaven", "Song · Beyoncé"),
+                ]
+            ),
+        )
         result = asc._find_popover_song_row("Heaven", "Talking Heads")
         assert result is None
 
@@ -1417,11 +1579,16 @@ class TestPopoverSongRowScoring:
         """Multiple artists with same title — picks the one matching artist."""
         import applemusic_mcp.applescript as asc
 
-        self._patch_applescript(monkeypatch, self._fixture([
-            (3, "Heaven", "Song · The Walkmen"),
-            (5, "Heaven", "Song · Talking Heads"),
-            (7, "Heaven", "Song · Beyoncé"),
-        ]))
+        self._patch_applescript(
+            monkeypatch,
+            self._fixture(
+                [
+                    (3, "Heaven", "Song · The Walkmen"),
+                    (5, "Heaven", "Song · Talking Heads"),
+                    (7, "Heaven", "Song · Beyoncé"),
+                ]
+            ),
+        )
         result = asc._find_popover_song_row("Heaven", "Talking Heads")
         assert result == (5, "Talking Heads")
 
@@ -1430,10 +1597,15 @@ class TestPopoverSongRowScoring:
         using row index as tiebreaker."""
         import applemusic_mcp.applescript as asc
 
-        self._patch_applescript(monkeypatch, self._fixture([
-            (3, "Heaven", "Song · The Walkmen"),
-            (5, "Heaven", "Song · Talking Heads"),
-        ]))
+        self._patch_applescript(
+            monkeypatch,
+            self._fixture(
+                [
+                    (3, "Heaven", "Song · The Walkmen"),
+                    (5, "Heaven", "Song · Talking Heads"),
+                ]
+            ),
+        )
         result = asc._find_popover_song_row("Heaven")
         assert result == (3, "The Walkmen")  # lower idx wins on tier-tie
 
@@ -1441,12 +1613,17 @@ class TestPopoverSongRowScoring:
         """Album, Artist, MusicVideo, Playlist all rejected — only Song scored."""
         import applemusic_mcp.applescript as asc
 
-        self._patch_applescript(monkeypatch, self._fixture([
-            (3, "Heaven", "Album · Talking Heads"),
-            (5, "Talking Heads", "Artist"),
-            (7, "Heaven", "Music Video · Talking Heads"),
-            (9, "Heaven Mix", "Playlist · Apple Music"),
-        ]))
+        self._patch_applescript(
+            monkeypatch,
+            self._fixture(
+                [
+                    (3, "Heaven", "Album · Talking Heads"),
+                    (5, "Talking Heads", "Artist"),
+                    (7, "Heaven", "Music Video · Talking Heads"),
+                    (9, "Heaven Mix", "Playlist · Apple Music"),
+                ]
+            ),
+        )
         result = asc._find_popover_song_row("Heaven", "Talking Heads")
         assert result is None
 
@@ -1454,9 +1631,14 @@ class TestPopoverSongRowScoring:
         """No-match-anywhere → None."""
         import applemusic_mcp.applescript as asc
 
-        self._patch_applescript(monkeypatch, self._fixture([
-            (3, "Something Else", "Song · Other Artist"),
-        ]))
+        self._patch_applescript(
+            monkeypatch,
+            self._fixture(
+                [
+                    (3, "Something Else", "Song · Other Artist"),
+                ]
+            ),
+        )
         result = asc._find_popover_song_row("Heaven", "Talking Heads")
         assert result is None
 
@@ -1473,13 +1655,25 @@ class TestPopoverSongRowScoring:
         a parenthetical-canonical Song should beat any non-canonical paren."""
         import applemusic_mcp.applescript as asc
 
-        for marker in ["Original Mix", "Album Version", "2014 Remaster",
-                       "Stereo Version", "Mono Version", "Single Version",
-                       "Radio Edit", "Studio Version"]:
-            self._patch_applescript(monkeypatch, self._fixture([
-                (3, f"Test ({marker})", "Song · X"),
-                (5, "Test (Live at Madison)", "Song · X"),  # non-canonical paren
-            ]))
+        for marker in [
+            "Original Mix",
+            "Album Version",
+            "2014 Remaster",
+            "Stereo Version",
+            "Mono Version",
+            "Single Version",
+            "Radio Edit",
+            "Studio Version",
+        ]:
+            self._patch_applescript(
+                monkeypatch,
+                self._fixture(
+                    [
+                        (3, f"Test ({marker})", "Song · X"),
+                        (5, "Test (Live at Madison)", "Song · X"),  # non-canonical paren
+                    ]
+                ),
+            )
             result = asc._find_popover_song_row("Test", "X")
             assert result == (3, "X"), f"marker {marker!r} should win tier 2"
 
@@ -1645,11 +1839,11 @@ class TestUIFlowsLive:
     # UX shift, not a code bug. The full-flow test handles this with a soft
     # skip when the button isn't directly present.
     CANDIDATES = [
-        ("Such Great Heights", "Iron and Wine"),       # Garden State soundtrack
-        ("The Night We Met", "Lord Huron"),            # 13 Reasons Why use, well-indexed
-        ("Holocene", "Bon Iver"),                      # For Emma, well-indexed
-        ("Skinny Love", "Bon Iver"),                   # Same artist fallback
-        ("Re: Stacks", "Bon Iver"),                    # Same artist fallback
+        ("Such Great Heights", "Iron and Wine"),  # Garden State soundtrack
+        ("The Night We Met", "Lord Huron"),  # 13 Reasons Why use, well-indexed
+        ("Holocene", "Bon Iver"),  # For Emma, well-indexed
+        ("Skinny Love", "Bon Iver"),  # Same artist fallback
+        ("Re: Stacks", "Bon Iver"),  # Same artist fallback
         ("Wandering", "Crooked Still"),
         ("Bee Pee Tee", "Hot 8 Brass Band"),
         ("Rainwater", "Penguin Cafe Orchestra"),
@@ -1711,9 +1905,7 @@ class TestUIFlowsLive:
             )
             asc.ui_clear_search()
             if not has_song:
-                skipped_reasons.append(
-                    f"{name}: not surfaced as Song row in Top Results today"
-                )
+                skipped_reasons.append(f"{name}: not surfaced as Song row in Top Results today")
                 continue
 
             # Criterion 3: Music.app's song-page row must show this as
@@ -1738,8 +1930,7 @@ class TestUIFlowsLive:
             pytest.skip(
                 "No candidate satisfied all three criteria (not in library + "
                 "surfaces as Song in Top Results + Music.app row shows fresh "
-                "Add to Library button):\n  - "
-                + "\n  - ".join(skipped_reasons)
+                "Add to Library button):\n  - " + "\n  - ".join(skipped_reasons)
             )
 
         # Always start the playlist fresh — prior failed runs may have left a
@@ -1781,9 +1972,7 @@ end tell""")
         if not cls.track_name:
             return
         try:
-            asc.remove_from_library(
-                track_name=cls.track_name, artist=cls.track_artist
-            )
+            asc.remove_from_library(track_name=cls.track_name, artist=cls.track_artist)
         except Exception:
             pass
 
@@ -1937,9 +2126,9 @@ class TestUIPlayLive:
         # current_track is dict {state, name, artist, ...}; check name loosely
         # because catalog can return live versions, remasters, etc.
         track_name = current_track.get("name", "") if isinstance(current_track, dict) else ""
-        assert "bohemian" in track_name.lower(), (
-            f"Expected Bohemian Rhapsody to be playing, got: {current_track}"
-        )
+        assert (
+            "bohemian" in track_name.lower()
+        ), f"Expected Bohemian Rhapsody to be playing, got: {current_track}"
 
 
 @pytest.mark.ui
@@ -2009,8 +2198,7 @@ end tell""")
                 "may have navigated away from Search view after clear."
             )
         assert value.strip() == "", (
-            f"ui_clear_search did not empty the search field — value is "
-            f"still {value.strip()!r}"
+            f"ui_clear_search did not empty the search field — value is " f"still {value.strip()!r}"
         )
 
     def test_popover_disambiguates_by_artist(self):

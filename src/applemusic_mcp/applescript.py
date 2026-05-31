@@ -15,6 +15,7 @@ Security Notes:
     - The osascript binary location is verified via shutil.which() before use.
 """
 
+import re
 import subprocess
 import sys
 import shutil
@@ -43,6 +44,69 @@ def _escape_for_applescript(s: str) -> str:
     # Strip control characters that could break out of string literals
     s = s.replace("\r\n", " ").replace("\r", " ").replace("\n", " ").replace("\t", " ")
     return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+# "Smart punctuation" the iTunes Store / typesetting interchanges with ASCII.
+# Music.app stores many titles with typographic glyphs — the right single
+# quote (U+2019, "That's a No No"), curly double quotes, or a one-character
+# ellipsis (U+2026, "Wait…") — while users and the model type the ASCII forms
+# ("That's", '"', "Wait..."). AppleScript's `contains` is glyph-exact for
+# punctuation — there is no "ignoring punctuation" — so a literal
+# `name contains "Wait..."` misses a title stored as "Wait…", and vice versa.
+# We sidestep the character entirely by splitting on every ambiguous form.
+#
+# Deliberately EXCLUDED: hyphens / en- & em-dashes. Hyphens are far too common
+# in ordinary titles ("Peek-A-Boo") — splitting on them would shatter the query
+# into tiny fragments that false-match unrelated tracks. The apostrophe,
+# double-quote, and ellipsis families above are the high-value, low-risk set.
+# See issue #26.
+_AMBIGUOUS_PUNCT = [
+    "...",  # multi-char first so it's preferred over any single char below
+    "'",
+    "’",
+    "‘",
+    "ʼ",
+    "‛",  # apostrophe family: U+0027 U+2019 U+2018 U+02BC U+201B
+    '"',
+    "“",
+    "”",  # double-quote family: U+0022 U+201C U+201D
+    "…",  # horizontal ellipsis U+2026 (ASCII equivalent is the "..." above)
+]
+_AMBIGUOUS_PUNCT_RE = re.compile("|".join(re.escape(p) for p in _AMBIGUOUS_PUNCT))
+
+
+def _name_contains_clause(track_name: str) -> str:
+    """Build a ``name contains …`` AppleScript clause robust to smart punctuation.
+
+    For a title containing punctuation that the store may have typeset, we never
+    match the punctuation glyph itself; instead we split on every ambiguous form
+    and require the name to contain each non-empty surrounding fragment::
+
+        "That's a No No" -> (name contains "That" and name contains "s a No No")
+        "Wait..."        -> name contains "Wait"   # also matches stored "Wait…"
+
+    That matches whether Music stored the ASCII form or the typographic one
+    (curly apostrophe/quotes, one-char ellipsis), and is also immune to the
+    glyph being normalized in transit between the client and this server.
+    Titles with no ambiguous punctuation produce the simple single-``contains``
+    clause unchanged.
+
+    The fragments are ANDed together (and, at the call sites, further ANDed
+    with an ``artist contains`` filter), so short fragments like ``"s"`` can't
+    cause a false match on their own.
+    """
+    fragments = [f for f in _AMBIGUOUS_PUNCT_RE.split(track_name) if f.strip()]
+    # No usable fragment (title was only punctuation/whitespace) — fall back to
+    # the original so we still produce a valid, if glyph-exact, clause.
+    if not fragments:
+        return f'name contains "{_escape_for_applescript(track_name)}"'
+    clauses = [f'name contains "{_escape_for_applescript(f)}"' for f in fragments]
+    # One surviving fragment (no ambiguous punctuation, or it was only at the
+    # edges) needs no parens; build from the FRAGMENT, not the original — the
+    # original may still carry the stripped glyph (e.g. "Wait..." -> "Wait").
+    if len(clauses) == 1:
+        return clauses[0]
+    return "(" + " and ".join(clauses) + ")"
 
 
 def _find_playlist_applescript(safe_name: str) -> str:
@@ -132,11 +196,11 @@ def _track_filter_clause(
     if track_id:
         return f'whose persistent ID is "{_escape_for_applescript(track_id)}"'
     if track_name:
-        safe_track = _escape_for_applescript(track_name)
+        name_clause = _name_contains_clause(track_name)
         if artist:
             safe_artist = _escape_for_applescript(artist)
-            return f'whose name contains "{safe_track}" and artist contains "{safe_artist}"'
-        return f'whose name contains "{safe_track}"'
+            return f'whose {name_clause} and artist contains "{safe_artist}"'
+        return f"whose {name_clause}"
     return None
 
 
@@ -149,14 +213,70 @@ def _library_track_query(track_name: str, artist: Optional[str] = None) -> str:
 
     Both inputs are escaped here; callers pass raw user-supplied strings.
     """
-    safe_track = _escape_for_applescript(track_name)
+    name_clause = _name_contains_clause(track_name)
     if artist:
         safe_artist = _escape_for_applescript(artist)
         return (
-            f'first track of library playlist 1 whose name contains "{safe_track}" '
+            f"first track of library playlist 1 whose {name_clause} "
             f'and artist contains "{safe_artist}"'
         )
-    return f'first track of library playlist 1 whose name contains "{safe_track}"'
+    return f"first track of library playlist 1 whose {name_clause}"
+
+
+def _resolve_library_track_applescript(track_name: str, artist: Optional[str] = None) -> str:
+    """Emit AppleScript that resolves ``targetTrack`` from library playlist 1.
+
+    Two-stage matcher (issue #26), embedded inside a
+    ``tell application "Music" … end tell`` block:
+
+    1. **Fast pass** — a glyph-exact ``whose`` filter (punctuation-robust via
+       :func:`_name_contains_clause`). Music resolves this in-engine at C speed
+       with no data transfer, so the common case never pays for stage 2.
+    2. **Fold fallback** — only on a miss. Bulk-fetch every track name (and
+       artist, when given) in a SINGLE Apple Event, then match in-memory under
+       ``ignoring punctuation and diacriticals``. That uses Apple's own Unicode
+       equivalence tables, so curly quotes, ellipses, and accents (é≈e) all
+       match their ASCII forms — generic, no hand-maintained glyph list.
+
+       The bulk-fetch is the crux: ``name of t`` *inside* a repeat is one Apple
+       Event per track (~17s on a 12k library), while ``get name of every
+       track`` is one event for the whole list (~0s). Music ignores AppleScript's
+       ``ignoring`` context inside a ``whose`` filter, so the fold must happen in
+       this in-memory loop, not in stage 1.
+
+    Emits ``set targetTrack to …`` on success, or
+    ``return "ERROR:Track not found: …"`` on a total miss. The returned snippet
+    is indented to sit directly under the ``tell`` line.
+    """
+    safe_track = _escape_for_applescript(track_name)
+    fast_query = _library_track_query(track_name, artist)
+    if artist:
+        safe_artist = _escape_for_applescript(artist)
+        artist_fetch = "\n            set allArtists to (get artist of every track of lib)"
+        match_cond = (
+            f'(((item i of allNames) as text) contains "{safe_track}") '
+            f'and (((item i of allArtists) as text) contains "{safe_artist}")'
+        )
+    else:
+        artist_fetch = ""
+        match_cond = f'((item i of allNames) as text) contains "{safe_track}"'
+    return f"""        try
+            set targetTrack to {fast_query}
+        on error
+            set lib to library playlist 1
+            set allNames to (get name of every track of lib){artist_fetch}
+            set idx to 0
+            ignoring punctuation and diacriticals
+                repeat with i from 1 to (count of allNames)
+                    if {match_cond} then
+                        set idx to i
+                        exit repeat
+                    end if
+                end repeat
+            end ignoring
+            if idx is 0 then return "ERROR:Track not found: {safe_track}"
+            set targetTrack to track idx of library playlist 1
+        end try"""
 
 
 def run_applescript(script: str) -> tuple[bool, str]:
@@ -995,13 +1115,13 @@ def track_exists_in_playlist(
         On failure, second element is error message.
     """
     safe_playlist = _escape_for_applescript(playlist_name)
-    safe_track = _escape_for_applescript(track_name)
+    name_clause = _name_contains_clause(track_name)
 
     if artist:
         safe_artist = _escape_for_applescript(artist)
-        track_filter = f'whose name contains "{safe_track}" and artist contains "{safe_artist}"'
+        track_filter = f'whose {name_clause} and artist contains "{safe_artist}"'
     else:
-        track_filter = f'whose name contains "{safe_track}"'
+        track_filter = f"whose {name_clause}"
 
     script = f"""
     tell application "Music"
@@ -1043,7 +1163,8 @@ def add_track_to_playlist(
 
     # Primary query uses `artist is` (exact); fallback (when artist is given)
     # relaxes to `artist contains` so partial matches still resolve.
-    conditions = [f'name contains "{safe_track}"']
+    name_clause = _name_contains_clause(track_name)
+    conditions = [name_clause]
     if artist:
         safe_artist = _escape_for_applescript(artist)
         conditions.append(f'artist is "{safe_artist}"')
@@ -1055,7 +1176,7 @@ def add_track_to_playlist(
 
     fallback_query = None
     if artist:
-        fallback_conditions = [f'name contains "{safe_track}"', f'artist contains "{safe_artist}"']
+        fallback_conditions = [name_clause, f'artist contains "{safe_artist}"']
         if album:
             fallback_conditions.append(f'album contains "{safe_album}"')
         fallback_query = (
@@ -1338,16 +1459,11 @@ def play_track(track_name: str, artist: Optional[str] = None) -> tuple[bool, str
     Returns:
         Tuple of (success, message or error)
     """
-    safe_track = _escape_for_applescript(track_name)
-    track_query = _library_track_query(track_name, artist)
+    track_resolve = _resolve_library_track_applescript(track_name, artist)
 
     script = f"""
     tell application "Music"
-        try
-            set targetTrack to {track_query}
-        on error
-            return "ERROR:Track not found: {safe_track}"
-        end try
+{track_resolve}
         play targetTrack
         return "Now playing: " & name of targetTrack & " by " & artist of targetTrack
     end tell
@@ -1603,9 +1719,14 @@ def _ensure_music_frontmost() -> None:
     for _ in range(20):
         try:
             r = subprocess.run(
-                ["osascript", "-e", 'tell application "System Events" to '
-                 '(name of processes) contains "Music"'],
-                capture_output=True, text=True, timeout=2,
+                [
+                    "osascript",
+                    "-e",
+                    'tell application "System Events" to ' '(name of processes) contains "Music"',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2,
             )
             if r.returncode == 0 and r.stdout.strip() == "true":
                 break
@@ -2182,16 +2303,11 @@ def love_track(track_name: str, artist: Optional[str] = None) -> tuple[bool, str
     Returns:
         Tuple of (success, message or error)
     """
-    safe_track = _escape_for_applescript(track_name)
-    track_query = _library_track_query(track_name, artist)
+    track_resolve = _resolve_library_track_applescript(track_name, artist)
 
     script = f"""
     tell application "Music"
-        try
-            set targetTrack to {track_query}
-        on error
-            return "ERROR:Track not found: {safe_track}"
-        end try
+{track_resolve}
         set loved of targetTrack to true
         set disliked of targetTrack to false
         return "Loved: " & name of targetTrack
@@ -2213,16 +2329,11 @@ def dislike_track(track_name: str, artist: Optional[str] = None) -> tuple[bool, 
     Returns:
         Tuple of (success, message or error)
     """
-    safe_track = _escape_for_applescript(track_name)
-    track_query = _library_track_query(track_name, artist)
+    track_resolve = _resolve_library_track_applescript(track_name, artist)
 
     script = f"""
     tell application "Music"
-        try
-            set targetTrack to {track_query}
-        on error
-            return "ERROR:Track not found: {safe_track}"
-        end try
+{track_resolve}
         set disliked of targetTrack to true
         set loved of targetTrack to false
         return "Disliked: " & name of targetTrack
@@ -2244,16 +2355,11 @@ def get_rating(track_name: str, artist: Optional[str] = None) -> tuple[bool, int
     Returns:
         Tuple of (success, rating 0-100 or error message string)
     """
-    safe_track = _escape_for_applescript(track_name)
-    track_query = _library_track_query(track_name, artist)
+    track_resolve = _resolve_library_track_applescript(track_name, artist)
 
     script = f"""
     tell application "Music"
-        try
-            set targetTrack to {track_query}
-        on error
-            return "ERROR:Track not found: {safe_track}"
-        end try
+{track_resolve}
         return rating of targetTrack as integer
     end tell
     """
@@ -2277,17 +2383,12 @@ def set_rating(track_name: str, rating: int, artist: Optional[str] = None) -> tu
     Returns:
         Tuple of (success, message or error)
     """
-    safe_track = _escape_for_applescript(track_name)
     rating = max(0, min(100, rating))
-    track_query = _library_track_query(track_name, artist)
+    track_resolve = _resolve_library_track_applescript(track_name, artist)
 
     script = f"""
     tell application "Music"
-        try
-            set targetTrack to {track_query}
-        on error
-            return "ERROR:Track not found: {safe_track}"
-        end try
+{track_resolve}
         set rating of targetTrack to {rating}
         return "Set rating to {rating} for: " & name of targetTrack
     end tell
@@ -2366,16 +2467,11 @@ def reveal_track(track_name: str, artist: Optional[str] = None) -> tuple[bool, s
     Returns:
         Tuple of (success, message or error)
     """
-    safe_track = _escape_for_applescript(track_name)
-    track_query = _library_track_query(track_name, artist)
+    track_resolve = _resolve_library_track_applescript(track_name, artist)
 
     script = f"""
     tell application "Music"
-        try
-            set targetTrack to {track_query}
-        on error
-            return "ERROR:Track not found: {safe_track}"
-        end try
+{track_resolve}
         reveal targetTrack
         activate
         return "Revealed: " & name of targetTrack
@@ -2746,9 +2842,7 @@ def _verify_track_playing(name: str, timeout: float = 2.0) -> tuple[bool, str]:
     now_playing = ""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        ok, now_playing = run_applescript(
-            'tell application "Music" to get name of current track'
-        )
+        ok, now_playing = run_applescript('tell application "Music" to get name of current track')
         if ok and now_playing and target in now_playing.lower():
             return True, now_playing.strip()
         time.sleep(0.15)
@@ -2840,9 +2934,7 @@ end tell""")
     return False, "Search popover did not appear within 2.5s"
 
 
-def _find_popover_song_row(
-    name: str, artist: str = ""
-) -> Optional[tuple[int, str]]:
+def _find_popover_song_row(name: str, artist: str = "") -> Optional[tuple[int, str]]:
     """Walk the autocomplete pop-over and pick the best canonical Song match.
 
     Score-and-pick over Song rows only. Album rows are rejected — clicking
@@ -2899,8 +2991,14 @@ end tell""")
     # (THREE-PER-EM SPACE), sometimes U+00A0 (NBSP). Normalize to ASCII.
     SONG_PREFIX = "song · "
     CANONICAL_PAREN_MARKERS = (
-        "original", "album version", "remaster", "stereo",
-        "mono", "single version", "radio edit", "studio version",
+        "original",
+        "album version",
+        "remaster",
+        "stereo",
+        "mono",
+        "single version",
+        "radio edit",
+        "studio version",
     )
 
     # Parse rows into (idx, v1_lower, v2_lower, v2_norm).
@@ -2927,7 +3025,7 @@ end tell""")
         if v1_lower == safe_name:
             tier = 2000
         elif v1_lower.startswith(safe_name + " ("):
-            rest = v1_lower[len(safe_name) + 2:]
+            rest = v1_lower[len(safe_name) + 2 :]
             tier = 1700 if any(rest.startswith(m) for m in CANONICAL_PAREN_MARKERS) else 800
         elif safe_name in v1_lower:
             tier = 400
@@ -2942,7 +3040,7 @@ end tell""")
     scored.sort(key=lambda x: (-x[0][0], -x[0][1], x[0][2]))
     _best_score, best_row = scored[0]
     idx, _v1, _v2l, v2_norm = best_row
-    return idx, v2_norm[len(SONG_PREFIX):].strip()
+    return idx, v2_norm[len(SONG_PREFIX) :].strip()
 
 
 def _click_popover_row(idx: int) -> tuple[bool, str]:
@@ -3017,7 +3115,7 @@ end tell""")
         if ok and found_idx.strip().isdigit() and int(found_idx.strip()) > 0:
             i = int(found_idx.strip())
             return (
-                f'first group of list {i} of list 1 of scroll area 2 of '
+                f"first group of list {i} of list 1 of scroll area 2 of "
                 f'splitter group 1 of window 1 whose description is "{safe_name}"'
             )
         time.sleep(0.2)
@@ -3356,8 +3454,7 @@ def ui_add_to_playlist(playlist_name: str, query: str, artist: str = "") -> tupl
         ok, lib_results = search_library(track_name.replace("́", ""), "songs")
         if ok and lib_results:
             if not track_artist or any(
-                track_artist.lower() in (t.get("artist") or "").lower()
-                for t in lib_results
+                track_artist.lower() in (t.get("artist") or "").lower() for t in lib_results
             ):
                 library_visible = True
                 break
