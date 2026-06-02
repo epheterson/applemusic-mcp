@@ -2147,6 +2147,100 @@ def get_library_songs(limit: int = 100) -> tuple[bool, list[dict]]:
     return True, tracks
 
 
+def get_loved_songs(limit: int = 0) -> tuple[bool, list[dict]]:
+    """Get loved / Favorite songs from the library.
+
+    Music.app renamed "Loved" to "Favorite" and the corresponding track
+    property changed accordingly: newer versions expose ``favorited`` while
+    older ones use ``loved``. Worse, even where ``loved`` works for direct
+    access (``set loved of t to true``), using it inside a ``whose`` filter
+    can fail at runtime with "The variable loved is not defined" depending on
+    the Music.app version.
+
+    To stay robust across versions we try, in order:
+      1. ``whose favorited is true`` (fast, native; modern property)
+      2. ``whose loved is true`` (fast, native; legacy property)
+      3. a manual scan reading ``favorited``/``loved`` per track (slow but
+         works when neither property is filterable)
+    Each step is wrapped in ``try`` so an unsupported property falls through
+    instead of aborting the whole script.
+
+    Args:
+        limit: Maximum number of songs to return (default 0 for all)
+
+    Returns:
+        Tuple of (success, list of track dicts or error)
+    """
+    if limit < 0:
+        return False, "limit must be >= 0 (use 0 for all songs)"
+    limit_clause = f"if resultCount >= {limit} then exit repeat" if limit > 0 else ""
+
+    script = f"""
+    tell application "Music"
+        set output to ""
+        set resultCount to 0
+        set lovedTracks to {{}}
+        try
+            set lovedTracks to (every track of library playlist 1 whose favorited is true)
+        on error
+            try
+                set lovedTracks to (every track of library playlist 1 whose loved is true)
+            on error
+                -- whose-filter unsupported for both property names; scan manually
+                set lovedTracks to {{}}
+                repeat with t in (every track of library playlist 1)
+                    set isFav to false
+                    try
+                        set isFav to favorited of t
+                    on error
+                        try
+                            set isFav to loved of t
+                        end try
+                    end try
+                    if isFav then set end of lovedTracks to t
+                end repeat
+            end try
+        end try
+        repeat with t in lovedTracks
+            {limit_clause}
+            try
+                set tName to name of t
+                set tArtist to artist of t
+                set tAlbum to album of t
+                set tDuration to duration of t
+                set tId to persistent ID of t
+                try
+                    set tGenre to genre of t
+                on error
+                    set tGenre to ""
+                end try
+                try
+                    set tYear to year of t as string
+                on error
+                    set tYear to ""
+                end try
+                try
+                    set tExplicit to explicit of t
+                on error
+                    set tExplicit to false
+                end try
+                set output to output & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & tDuration & "|||" & tGenre & "|||" & tYear & "|||" & tId & "|||" & tExplicit & "\\n"
+                set resultCount to resultCount + 1
+            on error
+                -- skip inaccessible tracks (broken file references, error -1728)
+            end try
+        end repeat
+        return output
+    end tell
+    """
+    success, output = run_applescript(script)
+    if not success:
+        return False, output
+
+    tracks = [t for t in (_parse_library_track_line(line) for line in output.split("\n")) if t]
+    return True, tracks
+
+
 def get_library_songs_page(offset: int, limit: int) -> tuple[bool, list[dict], int, str]:
     """Get a single page of songs from the library using O(limit) range access.
 

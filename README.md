@@ -219,16 +219,17 @@ playlist(action="rename", folder="Summer", new_name="Summer 2026")
 playlist(action="add", playlist="Road Trip", track="Hey Jude", artist="Beatles")
 ```
 
-**Unified `track` parameter** auto-detects: names, IDs (catalog/library/persistent), CSV, or JSON arrays. Add entire albums with `album` parameter.
+**Unified `track` parameter** auto-detects and batches: a single name/ID, a comma-separated CSV, a newline-separated list (one per line — safe for titles containing commas), or a JSON array (`["A","B"]` or `[{"name":"A","artist":"X"}]`). Add entire albums with `album` parameter.
 
 ### `library(action=...)`
-Library management - search, add, browse, rate, recently played/added, remove (macOS), snapshot (macOS)
+Library management - search, add, browse, favorites (macOS), rate, recently played/added, remove (macOS), snapshot (macOS)
 
 | Action | Parameters | Description | Platform |
 |--------|-----------|-------------|----------|
 | `search` | `query`, `types`, `limit`, `format`, `export`, `full`, `fetch_explicit`, `clean_only` | Search your library (fast local on macOS) | All |
 | `add` | `track`, `album`, `artist` | Add tracks/albums from catalog | All |
 | `browse` | `item_type`, `limit`, `offset`, `format`, `export`, `full`, `fetch_explicit`, `clean_only` | List songs/albums/artists/videos | All |
+| `favorites` | `limit`, `offset`, `format`, `export`, `full`, `fetch_explicit`, `clean_only` | List songs marked Favorite (loved) | macOS |
 | `recently_played` | `limit`, `format`, `export`, `full` | Recent listening history | All |
 | `recently_added` | `limit`, `format`, `export`, `full` | Recently added content | All |
 | `rate` | `rate_action`, `track`, `artist`, `stars` | Love/dislike/clear/get/set ratings | All (stars/clear: macOS) |

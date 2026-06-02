@@ -3550,6 +3550,128 @@ class TestLibraryBrowseNoTokenLeakOnAsFailure:
         assert "Developer token not found" not in result
 
 
+class TestResolveTrackBatch:
+    """_resolve_track / _resolve_input batch parsing: newline, CSV, JSON,
+    single. Newline support is the fix for callers that paste one song per
+    line — previously the whole blob was treated as a single track name."""
+
+    def test_newline_separated_names(self):
+        blob = "\n".join(f"Song {i}" for i in range(1, 15))
+        results = server._resolve_track(blob)
+        assert len(results) == 14
+        assert [r.value for r in results] == [f"Song {i}" for i in range(1, 15)]
+        assert all(r.error is None for r in results)
+
+    def test_newline_preserves_commas_in_titles(self):
+        # Newline split must NOT further split on commas inside a title.
+        results = server._resolve_track("Take Me Home, Country Roads\nImagine")
+        assert [r.value for r in results] == ["Take Me Home, Country Roads", "Imagine"]
+
+    def test_newline_skips_blank_lines(self):
+        results = server._resolve_track("Hey Jude\n\n  \nLet It Be\n")
+        assert [r.value for r in results] == ["Hey Jude", "Let It Be"]
+
+    def test_newline_applies_artist_to_each(self):
+        results = server._resolve_track("Hey Jude\nLet It Be", artist="Beatles")
+        assert [r.artist for r in results] == ["Beatles", "Beatles"]
+
+    def test_csv_still_works(self):
+        results = server._resolve_track("Hey Jude, Let It Be")
+        assert [r.value for r in results] == ["Hey Jude", "Let It Be"]
+
+    def test_json_array_still_works(self):
+        results = server._resolve_track('[{"name":"A","artist":"X"},{"name":"B","artist":"Y"}]')
+        assert [(r.value, r.artist) for r in results] == [("A", "X"), ("B", "Y")]
+
+    def test_single_name_still_works(self):
+        results = server._resolve_track("Yesterday")
+        assert len(results) == 1
+        assert results[0].value == "Yesterday"
+
+
+class TestLibraryFavorites:
+    """library(action="favorites") lists loved (Favorite) songs via the
+    AppleScript `whose loved is true` filter."""
+
+    def _loved_songs(self):
+        return [
+            {
+                "name": "Loved One",
+                "artist": "Artist A",
+                "album": "Album A",
+                "duration": "3:21",
+                "genre": "Pop",
+                "year": "2020",
+                "id": "loved1",
+                "explicit": "No",
+            },
+            {
+                "name": "Loved Two",
+                "artist": "Artist B",
+                "album": "Album B",
+                "duration": "4:05",
+                "genre": "Rock",
+                "year": "2021",
+                "id": "loved2",
+                "explicit": "No",
+            },
+        ]
+
+    def test_lists_loved_songs(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        mock_asc = MagicMock()
+        mock_asc.get_loved_songs.return_value = (True, self._loved_songs())
+        monkeypatch.setattr(server, "asc", mock_asc)
+
+        result = server.library(action="favorites")
+        assert "Loved One" in result
+        assert "Loved Two" in result
+        mock_asc.get_loved_songs.assert_called_once()
+
+    def test_loved_alias(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        mock_asc = MagicMock()
+        mock_asc.get_loved_songs.return_value = (True, self._loved_songs())
+        monkeypatch.setattr(server, "asc", mock_asc)
+
+        result = server.library(action="loved")
+        assert "Loved One" in result
+
+    def test_empty_library(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        mock_asc = MagicMock()
+        mock_asc.get_loved_songs.return_value = (True, [])
+        monkeypatch.setattr(server, "asc", mock_asc)
+
+        result = server.library(action="favorites")
+        assert "No favorite songs" in result
+
+    def test_requires_macos(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        result = server.library(action="favorites")
+        assert "requires macOS" in result
+
+    def test_applescript_failure_surfaces_actionable(self, monkeypatch):
+        from applemusic_mcp import applescript as real_asc
+
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        mock_asc = MagicMock()
+        mock_asc.get_loved_songs.return_value = (
+            False,
+            "execution error: Music got an error: Connection is invalid. (-609)",
+        )
+        mock_asc.classify_error = real_asc.classify_error
+        mock_asc.ERROR_UNKNOWN = real_asc.ERROR_UNKNOWN
+        mock_asc.ERROR_AUTOMATION_DENIED = real_asc.ERROR_AUTOMATION_DENIED
+        mock_asc.ERROR_MUSIC_NOT_RUNNING = real_asc.ERROR_MUSIC_NOT_RUNNING
+        mock_asc.ERROR_TIMEOUT = real_asc.ERROR_TIMEOUT
+        mock_asc.ERROR_SYNTAX = real_asc.ERROR_SYNTAX
+        monkeypatch.setattr(server, "asc", mock_asc)
+
+        result = server.library(action="favorites")
+        assert "Music.app isn't running" in result
+
+
 class TestNotAllowedOvermatchFix:
     """Reviewer flagged that bare 'not allowed' was promoting Music.app
     logic-level errors (e.g. 'editing not allowed for smart playlist')

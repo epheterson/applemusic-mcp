@@ -1180,8 +1180,9 @@ def _resolve_input(
 
     Detection order for single values:
     1. Starts with '[' → JSON array of objects
-    2. Contains comma → CSV of names
-    3. Otherwise → single value (ID or name auto-detected)
+    2. Contains newline → one entry per line (safe for titles with commas)
+    3. Contains comma → CSV of names
+    4. Otherwise → single value (ID or name auto-detected)
 
     Args:
         value: Raw input - ID, name, CSV, or JSON
@@ -1269,7 +1270,30 @@ def _resolve_input(
                 )
             ]
 
-    # 2. CSV detection (contains comma, not JSON, and no artist specified)
+    # 2. Newline-delimited detection (one entry per line).
+    # Newlines are an unambiguous separator: unlike commas they never appear
+    # inside a track/album title, so this is the safe way to batch names that
+    # themselves contain commas (e.g. "Take Me Home, Country Roads"). A single
+    # `artist` still applies to every line for disambiguation.
+    if "\n" in value:
+        for item in value.splitlines():
+            item = item.strip()
+            if item:
+                input_type = _detect_input_type(item)
+                results.append(
+                    ResolvedInput(input_type=input_type, value=item, artist=artist, raw=item)
+                )
+        return (
+            results
+            if results
+            else [
+                ResolvedInput(
+                    input_type=InputType.NAME, value="", raw=value, error="Empty newline list"
+                )
+            ]
+        )
+
+    # 3. CSV detection (contains comma, not JSON, and no artist specified)
     # When artist is provided the input is a single track/album name — commas
     # are part of the title (e.g. "Take Me Home, Country Roads"), not separators.
     if "," in value and not artist:
@@ -1286,7 +1310,7 @@ def _resolve_input(
             else [ResolvedInput(input_type=InputType.NAME, value="", raw=value, error="Empty CSV")]
         )
 
-    # 3. Single value - detect type
+    # 4. Single value - detect type
     input_type = _detect_input_type(value)
     return [ResolvedInput(input_type=input_type, value=value, artist=artist, raw=value)]
 
@@ -3788,7 +3812,7 @@ def library(
     rate_action: str = "",
     stars: int = 0,
 ) -> str:
-    """Your library. Actions: search, add, recently_played, recently_added, browse, rate, remove (macOS), snapshot. action='search' searches the user's local library only — for catalog (Apple Music's full library) use catalog(action='search'). action='add' on tokenless macOS uses Music.app UI automation (Accessibility permissions required) to add catalog tracks; with an API token, uses the REST API."""
+    """Your library. Actions: search, add, recently_played, recently_added, browse, favorites (macOS), rate, remove (macOS), snapshot. action='search' searches the user's local library only — for catalog (Apple Music's full library) use catalog(action='search'). action='favorites' lists songs marked Favorite (loved) in Music.app. action='add' on tokenless macOS uses Music.app UI automation (Accessibility permissions required) to add catalog tracks; with an API token, uses the REST API."""
     action = action.lower().strip().replace("-", "_")
 
     if action == "search":
@@ -3807,6 +3831,10 @@ def library(
         return _library_browse(
             item_type, limit, offset, format, export, full, fetch_explicit, clean_only
         )
+    elif action in ("favorites", "loved"):
+        if err := _macos_only("favorites"):
+            return err
+        return _library_favorites(limit, offset, format, export, full, fetch_explicit, clean_only)
     elif action == "rate":
         if not rate_action:
             return "Error: rate_action required (love, dislike, get, set)"
@@ -3832,7 +3860,7 @@ def library(
         else:
             return _library_snapshot_default()
     else:
-        return f"Unknown action: {action}. Use: search, add, recently_played, recently_added, browse, rate, remove, snapshot"
+        return f"Unknown action: {action}. Use: search, add, recently_played, recently_added, browse, favorites, rate, remove, snapshot"
 
 
 def _library_search(
@@ -4779,6 +4807,45 @@ def _library_browse(
         return f"API Error: {str(e)}"
     except (FileNotFoundError, ValueError) as e:
         return str(e)
+
+
+def _library_favorites(
+    limit: int = 25,
+    offset: int = 0,
+    format: str = "text",
+    export: str = "none",
+    full: bool = False,
+    fetch_explicit: Optional[bool] = None,
+    clean_only: Optional[bool] = None,
+) -> str:
+    """List songs marked Favorite (loved) in Music.app.
+
+    macOS-only: relies on AppleScript's ``whose loved is true`` filter, so
+    Music.app does the selection natively. Loved status isn't exposed by the
+    catalog REST API, hence no cross-platform fallback.
+    """
+    prefs = get_user_preferences()
+    if fetch_explicit is None:
+        fetch_explicit = prefs["fetch_explicit"]
+    if clean_only is None:
+        clean_only = prefs["clean_only"]
+
+    success, as_songs = asc.get_loved_songs(0)
+    if not success:
+        as_error = str(as_songs) if as_songs else "AppleScript get_loved_songs failed"
+        return f"Error listing favorites: {_format_applescript_error(as_error, 'list favorites')}"
+    if not as_songs:
+        return "No favorite songs in library"
+
+    data = _build_library_track_data(as_songs, fetch_explicit, clean_only)
+    if not data:
+        return "No favorite songs in library"
+    data, total_count, error = _apply_pagination(data, limit, offset)
+    if error:
+        return error
+    return format_output(
+        data, format, export, full, "songs", total_count=total_count, offset=offset
+    )
 
 
 # ============ DISCOVERY & PERSONALIZATION ============
