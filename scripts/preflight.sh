@@ -32,8 +32,13 @@ echo "[3/3] Live UI integration suite (real Music.app, TEST_UI=1)…"
 # live gate actually runs. Capture output so we can guard against a false-green
 # where every live test SKIPPED (e.g. env half-ready) and pytest still exits 0.
 set +e
+# Only the OS-aware live suite gates the release: it auto-selects the right add
+# surface per macOS version and version-gates the surface-specific tests. (The
+# older tests/test_applescript.py::TestUI*Live are pop-over-specific and would
+# false-fail on macOS 15 where the pop-over isn't in the AX tree; run those via
+# `make test-all` on a macOS 26 box, not as the gate.)
 out="$(TEST_UI=1 "$PY" -m pytest -o addopts="" -m ui \
-        tests/test_live_integration.py tests/test_applescript.py -v 2>&1)"
+        tests/test_live_integration.py -v 2>&1)"
 rc=$?
 set -e
 echo "$out"
@@ -44,14 +49,20 @@ if [ "$rc" -ne 0 ]; then
   exit 1
 fi
 
-# Guard: a release gate that silently ran zero tests is worse than none.
-if ! echo "$out" | grep -qE "[1-9][0-9]* passed"; then
-  echo
-  echo "❌ Live suite ran 0 PASSING tests (everything skipped?)."
-  echo "   The gate is NOT satisfied — verify Music.app is signed in with an"
-  echo "   active subscription and a fresh test track is available, then re-run."
-  exit 1
-fi
+# Guard: the gate is only satisfied if the cross-OS add flows actually PASSED.
+# A run where they SKIPPED (no fresh candidate / not signed in) but some other
+# test passed must NOT read as green — that's a false-green worse than no gate.
+for t in test_library_add_full_flow test_add_to_playlist_full_flow; do
+  if ! echo "$out" | grep -q "$t PASSED"; then
+    echo
+    echo "❌ $t did not PASS (skipped or failed) — gate NOT satisfied."
+    echo "   Ensure Music.app is signed in with an active subscription and that"
+    echo "   a fresh (not-already-in-library) test track is available, then re-run."
+    echo "   (If candidates are exhausted by repeated runs, let iCloud settle so"
+    echo "   just-removed tracks stop reading as in-library.)"
+    exit 1
+  fi
+done
 
 echo
 echo "✅ Pre-release gate PASSED — safe to bump version + release."

@@ -72,20 +72,59 @@ pytestmark = [
 ]
 
 
-# Deliberately obscure-but-indexed tracks: unlikely to be in the tester's
-# library (so the add is observable) and stable on Apple Music. The fixture
-# walks this list and uses the first one that's (a) not already in the library
-# and (b) resolvable via the free iTunes Search API.
+# Deliberately obscure-but-indexed ALBUM tracks (deep cuts, not lead singles):
+# unlikely to be in the tester's library (so the add is observable), stable on
+# Apple Music, and — importantly — tracks on multi-song albums so the song page
+# exposes a per-row "Add to Library" button. The fixture additionally PROBES
+# each candidate's page (see `_candidate_is_addable`) and skips any that don't
+# expose a row-level add control (e.g. standalone singles, whose add is
+# album-level) or whose row shows a stale "Download" from a prior run.
+# Genre/era-diverse so they're unlikely to ALL be in any one tester's library
+# (the fixture skips owned tracks; too narrow a list exhausts on a big library).
 _CANDIDATES = [
-    ("Re: Stacks", "Bon Iver"),
-    ("Such Great Heights", "Iron & Wine"),
-    ("Casimir Pulaski Day", "Sufjan Stevens"),
-    ("Mykonos", "Fleet Foxes"),
-    ("Emmylou", "First Aid Kit"),
-    ("Rainwater", "Penguin Cafe Orchestra"),
-    ("Wandering", "Crooked Still"),
-    ("Sleeping Lessons", "The Shins"),
+    ("Casimir Pulaski Day", "Sufjan Stevens"),  # Illinois (22 tracks)
+    ("The Boy in the Bubble", "Paul Simon"),  # Graceland
+    ("Sleeping Lessons", "The Shins"),  # Wincing the Night Away
+    ("Mykonos", "Fleet Foxes"),  # Sun Giant EP
+    ("Bigmouth Strikes Again", "The Smiths"),  # The Queen Is Dead
+    ("Emmylou", "First Aid Kit"),  # The Lion's Roar
+    ("Cath...", "Death Cab for Cutie"),  # Narrow Stairs
+    ("Naeem", "Bon Iver"),  # i,i
+    ("Digital Witness", "St. Vincent"),  # St. Vincent
+    ("Gosh", "Jamie xx"),  # In Colour
+    ("Bubblegum", "Clairo"),  # diary 001
+    ("Seventeen Going Under", "Sam Fender"),  # newer
+    ("Brother", "Lord Huron"),  # Lonesome Dreams
+    ("Nara", "alt-J"),  # This Is All Yours
+    ("Avant Gardener", "Courtney Barnett"),  # The Double EP
+    ("Three Rings", "TV on the Radio"),  # Seeds
 ]
+
+
+def _candidate_is_addable(resolved: dict) -> bool:
+    """Navigate to the resolved track's page and confirm a per-row
+    'Add to Library' button is present after hover.
+
+    Filters out (a) standalone singles whose add control is album-level (no
+    row button) and (b) candidates whose row shows a stale 'Download' from a
+    prior add/remove cycle (iCloud cache lag). Mirrors the freshness probe the
+    older TestUIFlowsLive uses — without it, one bad candidate fails the gate."""
+    ok, _ = asc.open_catalog_song(resolved["url"])
+    if not ok:
+        return False
+    asc._ensure_music_frontmost()
+    pos = None
+    for _ in range(8):
+        pos = asc._find_highlighted_track_position()
+        if pos:
+            break
+        time.sleep(1.0)
+    if pos is None:
+        return False
+    asc._hover_with_nudge(pos[0], pos[1])
+    time.sleep(0.8)
+    # Require a fresh, row-level Add button (not album-level, not stale Download).
+    return asc._find_add_button_in_highlighted_row("Add to Library") is not None
 
 
 def _delete_from_library(name: str, artist: str) -> None:
@@ -100,8 +139,8 @@ tell application "Music"
 end tell""")
 
 
-def _verify_in_library(name: str, artist: str, timeout: float = 12.0) -> bool:
-    """Poll the local library for the track (covers iCloud index lag)."""
+def _in_library_index(name: str, artist: str, timeout: float = 8.0) -> bool:
+    """Poll the local library index (`library playlist 1`) for the track."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         found, _ = asc.find_library_track(name, artist)
@@ -109,6 +148,30 @@ def _verify_in_library(name: str, artist: str, timeout: float = 12.0) -> bool:
             return True
         time.sleep(1.0)
     return False
+
+
+def _in_library_via_current_page(name: str) -> bool:
+    """Confirm on the CURRENTLY-DISPLAYED song page that the track is in the
+    library: its row's add control has flipped from 'Add to Library' to
+    'Download'. This is Music's IMMEDIATE signal (no iCloud round-trip) and —
+    crucially — needs no navigation, so it works on macOS 26 too (where
+    deep-links no longer navigate). Both add paths leave Music on the song page,
+    so we read it where the add just happened."""
+    group_path = asc._wait_for_song_page(name, timeout=3.0)
+    if group_path is None:
+        return False
+    found, _ = asc._hover_and_find_button(group_path, "Download")
+    return found
+
+
+def _confirm_added(resolved: dict, artist: str) -> bool:
+    """Robustly confirm a track landed in the library. Tries the fast local
+    index first, then falls back to the immediate current-page 'Download' signal
+    — so a genuine add is never a false failure (iCloud index lag), but a no-op
+    add (nothing landed by either signal) still fails the gate."""
+    if _in_library_index(resolved["name"], artist):
+        return True
+    return _in_library_via_current_page(resolved["name"])
 
 
 @pytest.fixture
@@ -122,6 +185,10 @@ def fresh_track():
             continue
         resolved = server._resolve_catalog_track_itunes(name, artist)
         if not resolved or not resolved.get("url"):
+            continue
+        if not _candidate_is_addable(resolved):
+            # Single (album-level add) or stale-cached row — try the next one.
+            asc.ui_clear_search()
             continue
         try:
             yield name, artist, resolved
@@ -178,7 +245,7 @@ class TestTokenlessAddLive:
         name, artist, resolved = fresh_track
         ok, msg = server._library_add_track_via_ui(name, artist)
         assert ok, f"tokenless library-add reported failure: {msg}"
-        assert _verify_in_library(resolved["name"], artist), (
+        assert _confirm_added(resolved, artist), (
             f"add reported success ({msg!r}) but {resolved['name']!r} never "
             f"appeared in the library within the sync window"
         )
@@ -223,8 +290,8 @@ class TestSurfaceSpecificLive:
         name, artist, resolved = fresh_track
         ok, msg = asc.ui_add_to_library_via_url(resolved["name"], resolved["url"], artist)
         assert ok, f"deep-link add reported failure: {msg}"
-        assert _verify_in_library(
-            resolved["name"], artist
+        assert _confirm_added(
+            resolved, artist
         ), f"deep-link add reported success ({msg!r}) but the track never landed"
 
     @pytest.mark.skipif(
@@ -237,6 +304,6 @@ class TestSurfaceSpecificLive:
         name, artist, resolved = fresh_track
         ok, msg = asc.ui_add_to_library(resolved["name"], artist)
         assert ok, f"pop-over add reported failure: {msg}"
-        assert _verify_in_library(
-            resolved["name"], artist
+        assert _confirm_added(
+            resolved, artist
         ), f"pop-over add reported success ({msg!r}) but the track never landed"
