@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-06-02
+
+### Fixed
+
+- **Tokenless library-add now works for obscure tracks on macOS 26 / new Music**
+  ([#28]). The add flow resolved a track's canonical title via the free iTunes
+  Search API but then queried Music's search autocomplete with the *raw* user
+  query — and Apple's autocomplete is ranking-sensitive, so a vague query
+  ("Lemons" / "Brye") surfaced popular homonyms and never the target. It now
+  queries the pop-over with the **canonical title** ("LEMONS (feat. Cavetown)"),
+  which makes the exact row appear. Validated end-to-end on macOS 26.5.
+- **Wrong-track resolution when an artist was named.** The iTunes resolver
+  weighted exact-title over artist, so `library(action="add", track="Lemons",
+  artist="Brye")` could silently resolve to "Lemons" by *Hairitage* (exact
+  title, wrong artist). Scoring is now **artist-primary**: a named artist is the
+  strong signal, and a different artist's identically-titled song is rejected
+  outright rather than added silently.
+- **False-failure on a successful add.** The post-add verify checked only the
+  local `library playlist 1`, which lags the iCloud add by ~3 s, so a real add
+  could be reported as failed (and wrongly fall through to the macOS-15
+  deep-link path, which can't navigate on macOS 26). The pop-over UI is now
+  trusted as the authoritative success signal, with the library lookup as
+  confirmation rather than a gate; the verify retry window was widened (3→6
+  attempts) to outlast the index lag.
+- **"Already in library" misreported as a failure.** When a track is already in
+  the library, Music shows a "Download" button where "Add to Library" would be;
+  the flow treated the missing Add button as an error. It now recognizes the
+  Download button as "already in the library" (success).
+
+### Changed
+
+- The macOS UI surface for catalog→library add is now **version-aware**: the
+  search autocomplete pop-over on macOS 26 / new Music (in the accessibility
+  tree there), and the resolved-URL deep-link on macOS 15 / old Music (where the
+  pop-over is not in the accessibility tree but deep-links still navigate). Apple
+  changed catalog deep-link handling in the new Music app so it no longer
+  navigates to a browsable page — hence the split.
+
 ## [0.11.0] - 2026-05-30
 
 ### Fixed
@@ -45,6 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single core remains a follow-up.
 
 [#26]: https://github.com/epheterson/applemusic-mcp/issues/26
+[#28]: https://github.com/epheterson/applemusic-mcp/issues/28
 
 ## [0.10.5] - 2026-05-13
 

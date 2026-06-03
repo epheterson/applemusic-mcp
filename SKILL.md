@@ -421,13 +421,21 @@ Recipes for replicating applemusic-mcp's catalog features without an API token. 
 
 If the user gave a single combined string like `"Silvera - GOJIRA"`, split on ` - ` before searching so the catalog query gets a clean name.
 
-1. UI search for the target (§ Search via UI)
-2. Pick the first `Song` result whose name + artist match — do not fall back to a non-Song result; fail cleanly if no Song matched. Stale search state can lead to wrong-result clicks otherwise.
-3. Get the result's element position via System Events
-4. Move the mouse there via CoreGraphics to trigger hover — the hidden "Add to Library" button becomes reachable in the accessibility tree
-5. Click it via System Events
+**Step 0 — resolve the canonical title FIRST (do not skip this).** Hit the free, tokenless iTunes Search API (`https://itunes.apple.com/search?term=<name>+<artist>&entity=song&country=<storefront>`) and pick the best match, scoring **artist-primary**: when the user named an artist, a result by a *different* artist is the wrong track even if its title is an exact match — reject it rather than risk a silent wrong-add (e.g. "Lemons"/"Brye" must resolve to Brye's "LEMONS (feat. Cavetown)", **not** "Lemons" by Hairitage). Use the resolved **canonical title** for the UI query below. This matters because Apple's autocomplete is ranking-sensitive: a vague query ("Lemons") surfaces popular homonyms and misses obscure tracks, while the canonical title ("LEMONS (feat. Cavetown)") makes the exact row appear.
+
+Then, **version-dependent surface**:
+
+- **macOS 26 / new Music (Music ≥ 1.6.x):** the search autocomplete pop-over IS in the accessibility tree, and catalog deep-links no longer navigate. Use the pop-over:
+  1. UI search with the **canonical title** (§ Search via UI)
+  2. Pick the first `Song` result whose name + artist match — do not fall back to a non-Song result; fail cleanly if no Song matched. Stale search state can lead to wrong-result clicks otherwise.
+  3. Click the row → it navigates to the song detail page
+  4. Hover the track row via CoreGraphics — the hidden "Add to Library" button becomes reachable. **If you find a "Download" button instead, the track is already in the library** (that's success, not failure).
+  5. Click "Add to Library" via a real CoreGraphics click (SwiftUI buttons ignore AXPress)
+- **macOS 15 / old Music (Music ≤ 1.5.x):** the autocomplete pop-over is **not** in the accessibility tree, but `open`-ing the resolved `music://…?i=…` deep-link DOES navigate to the album page. Deep-link to the resolved URL, find the highlighted track row, hover, and click its "Add to Library" button there.
+
+Finally:
 6. Clear the search field so the next call starts from fresh state
-7. Poll `search_library` via AppleScript until the track is visible locally (typical 0.5–8 s; iCloud can stall longer — cap at ~18 s, then give up cleanly)
+7. Verify the add. The pop-over UI is authoritative for the iCloud library — trust its success even if the next step lags. Poll `search_library` / a direct `library playlist 1` lookup until the track is visible locally (first appears ~3 s; iCloud can stall longer — cap at ~18 s). A verify miss after a UI-confirmed add means "still syncing," not "failed."
 
 ### Add a catalog song to a specific playlist
 
