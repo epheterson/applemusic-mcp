@@ -32,7 +32,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **"Already in library" misreported as a failure.** When a track is already in
   the library, Music shows a "Download" button where "Add to Library" would be;
   the flow treated the missing Add button as an error. It now recognizes the
-  Download button as "already in the library" (success).
+  Download button as "already in the library" (success) — on both the pop-over
+  and deep-link paths.
+- **macOS 15 deep-link add was completely broken by a reserved word.** The
+  highlighted-row button finder used `set {bx, by} to position of b`, but `by`
+  is an AppleScript reserved word (`repeat … by`), so the script was a silent
+  syntax error and the finder returned None every time — the macOS-15 add never
+  worked. Fixed (and guarded with a regression test); validated live on
+  macOS 15.7.3 (Music 1.5.6). The hover→find and click steps were also made
+  resilient (retry the hover-reveal; a second insurance click).
 
 ### Changed
 

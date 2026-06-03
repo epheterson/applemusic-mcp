@@ -2334,3 +2334,44 @@ class TestRowHasButton:
         monkeypatch.setattr(asc, "run_applescript", capture)
         asc._row_has_button("the row", "Download")
         assert 'description is "Download"' in seen["script"]
+
+
+class TestFindAddButtonInHighlightedRow:
+    """`_find_add_button_in_highlighted_row` locates the hover-revealed button on
+    the deep-link highlighted (?i=) row — the macOS-15 add path's click target."""
+
+    def _capture(self, monkeypatch, ret=(True, "NOT_FOUND")):
+        seen = {}
+        monkeypatch.setattr(
+            asc,
+            "run_applescript",
+            lambda s: (seen.__setitem__("script", s), ret)[1],
+        )
+        return seen
+
+    def test_no_reserved_word_by_variable(self, monkeypatch):
+        # REGRESSION: 'by' is a reserved word in AppleScript (repeat ... by).
+        # `set {bx, by} to position of b` is a syntax error that silently made
+        # this finder return None every time, breaking the whole macOS-15 add.
+        seen = self._capture(monkeypatch)
+        asc._find_add_button_in_highlighted_row()
+        assert "{bx, by}" not in seen["script"]
+        assert "bposx" in seen["script"] and "bposy" in seen["script"]
+
+    def test_default_targets_add_to_library(self, monkeypatch):
+        seen = self._capture(monkeypatch)
+        asc._find_add_button_in_highlighted_row()
+        assert 'description of b is "Add to Library"' in seen["script"]
+
+    def test_desc_param_injected(self, monkeypatch):
+        seen = self._capture(monkeypatch)
+        asc._find_add_button_in_highlighted_row("Download")
+        assert 'description of b is "Download"' in seen["script"]
+
+    def test_parses_center_coords(self, monkeypatch):
+        monkeypatch.setattr(asc, "run_applescript", lambda _: (True, "100.0,200.0"))
+        assert asc._find_add_button_in_highlighted_row() == (100.0, 200.0)
+
+    def test_none_when_not_found(self, monkeypatch):
+        monkeypatch.setattr(asc, "run_applescript", lambda _: (True, "NOT_FOUND"))
+        assert asc._find_add_button_in_highlighted_row() is None

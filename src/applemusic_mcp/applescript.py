@@ -3269,17 +3269,21 @@ end tell""")
     return False, None
 
 
-def _find_add_button_in_highlighted_row() -> Optional[tuple[float, float]]:
-    """Return the center coords of the "Add to Library" button on the highlighted
-    (``?i=``) track row's group, or None.
+def _find_add_button_in_highlighted_row(
+    desc: str = "Add to Library",
+) -> Optional[tuple[float, float]]:
+    """Return the center coords of the ``desc`` button (default "Add to Library")
+    on the highlighted (``?i=``) track row's group, or None.
 
     Call AFTER hovering the row (the button is hover-revealed). Mirrors
     :func:`_find_highlighted_track_position`'s cross-version group walk — finding
     the row by the "Favorite" button Music adds to the ``?i=`` track — so it works
-    on both old and new Music. Returns None if the row has no Add button (already
-    in library, or a single whose add control is album-level).
+    on both old and new Music. Returns None if the row has no such button.
+
+    Pass ``desc="Download"`` to detect the already-in-library state: Music swaps
+    "Add to Library" for "Download" once a track is in the library.
     """
-    ok, result = run_applescript("""
+    ok, result = run_applescript(f"""
 tell application "System Events"
     tell process "Music"
         set sg to splitter group 1 of window "Music"
@@ -3293,10 +3297,14 @@ tell application "System Events"
                     end repeat
                     if hasFav then
                         repeat with b in (every button of g)
-                            if description of b is "Add to Library" then
-                                set {bx, by} to position of b
-                                set {bw, bh} to size of b
-                                return ((bx + bw / 2) as text) & "," & ((by + bh / 2) as text)
+                            if description of b is "{desc}" then
+                                -- NB: 'by' is a reserved word in AppleScript
+                                -- (repeat ... by); using it as a variable is a
+                                -- syntax error that silently killed this whole
+                                -- finder. Use bposx/bposy.
+                                set {{bposx, bposy}} to position of b
+                                set {{bw, bh}} to size of b
+                                return ((bposx + bw / 2) as text) & "," & ((bposy + bh / 2) as text)
                             end if
                         end repeat
                         return "NO_ADD"
@@ -3400,20 +3408,48 @@ def ui_add_to_library_via_url(name: str, song_url: str, artist: str = "") -> tup
         cx, cy, _desc = pos
 
     # Hover (nudge first to guarantee a mouseMoved event) to reveal the row's
-    # Add to Library button, then click it for real.
-    _ensure_music_frontmost()
-    if not _hover_with_nudge(cx, cy):
-        return False, "Failed to hover the track row."
-    time.sleep(1.5)
-    bpos = _find_add_button_in_highlighted_row()
+    # Add to Library button, then click it for real. The button is hover-revealed
+    # and the reveal is racy — a single hover+query intermittently misses (the
+    # query can run before the button renders, or the row shifts after a prior
+    # search attempt left the window scrolled). Retry hover+find a few times,
+    # re-finding the row position each round in case it moved. Mirrors the
+    # pop-over path's _hover_and_find_button resilience.
+    bpos = None
+    for _attempt in range(4):
+        _ensure_music_frontmost()
+        if not _hover_with_nudge(cx, cy):
+            continue
+        time.sleep(0.8)
+        bpos = _find_add_button_in_highlighted_row()
+        if bpos is not None:
+            break
+        repos = _find_highlighted_track_position()
+        if repos is not None:
+            cx, cy, _desc = repos
     if bpos is None:
+        # No "Add to Library" button. If the row shows "Download" instead, the
+        # track is already in the library (success), not a failure — mirror the
+        # pop-over path's disambiguation.
+        if _find_add_button_in_highlighted_row("Download") is not None:
+            suffix = f" by {artist!r}" if artist else ""
+            return True, f"{name!r}{suffix} already in library"
         return False, (
             f"{name!r}: no 'Add to Library' button on the track row — it may "
-            f"already be in your library, or be a single whose add control is "
-            f"album-level."
+            f"be a single whose add control is album-level, or the page didn't "
+            f"fully render."
         )
+    # Click the validated button. A second click is cheap insurance against the
+    # occasional CoreGraphics click that lands a frame before the hover-revealed
+    # SwiftUI button is interactive — but we do NOT gate success on the button
+    # flipping to "Download", because that flip can lag the add by several
+    # seconds (iCloud) and a slow flip would otherwise false-negative a real add.
+    # The caller's library-verify (with trust-on-lag) is the source of truth.
     if not _jxa_mouse_click(*bpos):
         return False, "CoreGraphics click on 'Add to Library' failed."
+    time.sleep(0.8)
+    if _find_add_button_in_highlighted_row("Add to Library") is not None:
+        # Button still present — the first click may not have registered; re-click.
+        _jxa_mouse_click(*bpos)
 
     suffix = f" by {artist!r}" if artist else ""
     return True, f"Added {name!r}{suffix} to library"
