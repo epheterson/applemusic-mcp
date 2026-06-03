@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-06-03
+
+### Fixed
+
+- **Intermittent pop-over search failure on macOS 26** (`"Can't get group 1 of
+  toolbar 1 of window Music"`). `_open_search_popover` (the catalog→library add
+  path) cached the toolbar search-field path but, unlike the results-page search
+  path, never self-healed when that cached path went stale for the current view
+  (e.g. after a prior op left Music on a playlist/detail view). It now
+  invalidates the cache and re-navigates once on such an error. Surfaced by the
+  new live pre-release gate.
+- **Add-to-playlist could fail on a slow iCloud sync.** `ui_add_to_playlist`
+  waited only 12 s for a freshly-added track to appear in the local library
+  before the playlist `duplicate` step; the iCloud index can lag a fresh add by
+  tens of seconds. Widened to 30 s so a slow-but-successful add isn't reported
+  as a failure.
+
+### Added
+
+- **Local pre-release integration gate** (`make preflight` / `scripts/preflight.sh`
+  / `tests/test_live_integration.py` / `RELEASING.md`). GitHub CI can't sign into
+  Music.app, so the tokenless add paths were never validated before release —
+  this runs them on a real signed-in Mac and refuses to pass if the cross-OS add
+  flows didn't actually run. It immediately caught both fixes above.
+
 ## [0.12.0] - 2026-06-02
 
 ### Fixed
