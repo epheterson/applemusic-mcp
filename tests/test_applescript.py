@@ -2375,3 +2375,58 @@ class TestFindAddButtonInHighlightedRow:
     def test_none_when_not_found(self, monkeypatch):
         monkeypatch.setattr(asc, "run_applescript", lambda _: (True, "NOT_FOUND"))
         assert asc._find_add_button_in_highlighted_row() is None
+
+
+class TestOpenSearchPopoverSelfHeal:
+    """`_open_search_popover` must self-heal a stale search-field cache: when the
+    cached toolbar path no longer resolves in the current view (a hard
+    "Can't get group 1 of toolbar 1…" error), it invalidates the cache and
+    retries once. Regression guard — the pop-over path lacked this self-heal that
+    its sibling search path has, so it hard-failed intermittently on macOS 26."""
+
+    def test_invalidates_cache_and_retries_on_path_error(self, monkeypatch):
+        monkeypatch.setattr(asc, "_ensure_music_frontmost", lambda: None)
+        monkeypatch.setattr(asc, "_get_search_field", lambda: "FIELD")
+        monkeypatch.setattr(asc, "check_ui_accessible", lambda: (True, ""))
+        monkeypatch.setattr(asc, "_search_field_cache", "stale-path")
+
+        emits = {"n": 0}
+
+        def fake_run(script):
+            if "click FIELD" in script:
+                emits["n"] += 1
+                if emits["n"] == 1:
+                    # First attempt: cached path no longer resolves.
+                    return (False, "Can't get group 1 of toolbar 1 of window Music. (-1728)")
+                return (True, "")  # retry succeeds
+            if "first pop over" in script:
+                return (True, "true")  # pop-over appears
+            return (True, "")  # navigation steps
+
+        monkeypatch.setattr(asc, "run_applescript", fake_run)
+
+        ok, err = asc._open_search_popover("some query")
+        assert ok, f"self-heal should have recovered, got: {err}"
+        assert emits["n"] == 2, "the field interaction should have been retried once"
+        assert asc._search_field_cache is None, "stale cache must be invalidated"
+
+    def test_no_retry_on_non_path_error(self, monkeypatch):
+        # A non-path error (e.g. genuinely empty results) must NOT trigger the
+        # cache-invalidate retry — only "path no longer resolves" errors do.
+        monkeypatch.setattr(asc, "_ensure_music_frontmost", lambda: None)
+        monkeypatch.setattr(asc, "_get_search_field", lambda: "FIELD")
+        monkeypatch.setattr(asc, "check_ui_accessible", lambda: (True, ""))
+
+        emits = {"n": 0}
+
+        def fake_run(script):
+            if "click FIELD" in script:
+                emits["n"] += 1
+                return (False, "some unrelated AppleScript failure")
+            return (True, "")
+
+        monkeypatch.setattr(asc, "run_applescript", fake_run)
+
+        ok, _err = asc._open_search_popover("some query")
+        assert not ok
+        assert emits["n"] == 1, "must not retry on a non-path error"

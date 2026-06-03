@@ -2954,12 +2954,18 @@ def _open_search_popover(query: str) -> tuple[bool, str]:
 
     _ensure_music_frontmost()
 
-    # Step 1: navigate to Search context FIRST. Sidebar click forces global
-    # Search (so Cmd+F opens catalog search, not a per-playlist filter).
-    # Don't resolve the search field path yet — when Music is on a song-
-    # detail page the toolbar layout is different and the path probe would
-    # return the wrong fallback.
-    run_applescript("""
+    # Errors meaning "the cached search-field UI path no longer resolves in this
+    # view state" (vs environmental causes like a locked screen). When we see
+    # one, invalidate the cache and re-navigate once — the same self-heal the
+    # results-page search path (_run_search) uses. Without it, a stale cache
+    # (e.g. after a prior op left Music on a playlist/detail view) makes the
+    # `click {field}` hard-fail with "Can't get group 1 of toolbar 1…".
+    _PATH_ERROR_MARKERS = ("Can't get", "AppleEvent handler failed", "-10000", "-1728")
+
+    def _navigate_and_type() -> tuple[bool, str]:
+        # Step 1: navigate to Search context FIRST. Sidebar click forces global
+        # Search (so Cmd+F opens catalog search, not a per-playlist filter).
+        run_applescript("""
 tell application "System Events"
     tell process "Music"
         try
@@ -2971,15 +2977,11 @@ tell application "System Events"
         delay 0.6
     end tell
 end tell""")
-
-    # Step 2: NOW resolve the search field path. Music is in Search view,
-    # so the toolbar variants probe should hit on this macOS build.
-    search_field_path = _get_search_field()
-
-    # Step 3: focus the field + type via keystroke (not `set value of`,
-    # which silently updates the field without triggering the autocomplete
-    # suggestions provider).
-    ok, err = run_applescript(f"""
+        # Step 2: resolve the search field path (cached after first success).
+        search_field_path = _get_search_field()
+        # Step 3: focus + type via keystroke (not `set value of`, which updates
+        # the field without triggering the autocomplete suggestions provider).
+        return run_applescript(f"""
 tell application "System Events"
     tell process "Music"
         click {search_field_path}
@@ -2987,6 +2989,12 @@ tell application "System Events"
         keystroke "{_escape_for_applescript(query)}"
     end tell
 end tell""")
+
+    ok, err = _navigate_and_type()
+    if not ok and any(m in err for m in _PATH_ERROR_MARKERS):
+        global _search_field_cache
+        _search_field_cache = None
+        ok, err = _navigate_and_type()
     if not ok:
         accessible, access_reason = check_ui_accessible()
         if not accessible:
@@ -3727,17 +3735,21 @@ def ui_add_to_playlist(
     track_name = name
     track_artist = artist
     library_visible = False
-    sync_deadline = time.monotonic() + 12.0
+    # The playlist `duplicate` (step 4) needs the track present in
+    # `library playlist 1` first, and the iCloud index can lag a fresh add by
+    # tens of seconds (variable; worst cases observed well past 12s on macOS 26).
+    # Wait generously — a slow add that eventually lands beats a false failure.
+    sync_deadline = time.monotonic() + 30.0
     while time.monotonic() < sync_deadline:
         ok, _info = find_library_track(track_name, track_artist)
         if ok:
             library_visible = True
             break
-        time.sleep(0.4)
+        time.sleep(0.5)
     if not library_visible:
         return False, (
             f"Added '{track_name}' to library but it didn't appear in the local "
-            f"library within 12s — iCloud Library sync may be delayed."
+            f"library within 30s — iCloud Library sync may be delayed; try again."
         )
 
     # Step 4: Add to playlist via existing AppleScript backend
