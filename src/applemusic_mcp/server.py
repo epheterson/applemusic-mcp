@@ -4001,7 +4001,7 @@ def _resolve_catalog_track_itunes(name: str, artist: str = "") -> Optional[dict]
             s = 10  # artist match dominates title exactness
             if _loose_equals(name, rn):
                 s += 3  # exact canonical title
-            elif rn.lower().startswith(name.lower()):
+            elif _normalize_for_match(rn).startswith(_normalize_for_match(name)):
                 s += 1  # title carries a suffix (feat./remaster/version)
             return s
         # No artist given: only trust an exact title match — a bare substring
