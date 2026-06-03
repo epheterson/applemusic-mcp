@@ -3907,10 +3907,9 @@ class TestLibraryAddUiOnTokenlessMacos:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
 
         mock_asc = MagicMock()
-        mock_asc.ui_add_to_library.return_value = (
-            True,
-            "Added 'Silvera' to library",
-        )
+        # Primary path: the pop-over flow (validated on macOS 26). The deep-link
+        # is the macOS-15 fallback when the pop-over isn't accessible.
+        mock_asc.ui_add_to_library.return_value = (True, "Added 'Silvera' to library")
         # Post-add verify polls search_library until the new track is
         # visible. Mock it to return success on first poll so we don't
         # spend the full retry budget in the test.
@@ -3918,6 +3917,8 @@ class TestLibraryAddUiOnTokenlessMacos:
             True,
             [{"name": "Silvera", "artist": "Gojira"}],
         )
+        # Verify uses a direct object lookup (find_library_track), not search.
+        mock_asc.find_library_track.return_value = (True, "Silvera|||Gojira")
         mock_asc.ui_clear_search.return_value = None
         mock_asc.classify_error = real_asc.classify_error
         monkeypatch.setattr(server, "asc", mock_asc)
@@ -3925,6 +3926,16 @@ class TestLibraryAddUiOnTokenlessMacos:
         # No token configured. If the UI path doesn't fire, _add_to_library_api
         # would call get_headers() and raise.
         monkeypatch.setattr(server, "_has_developer_token", lambda: False)
+        # Resolve via the free iTunes API (mocked — no network in unit tests).
+        monkeypatch.setattr(
+            server,
+            "_resolve_catalog_track_itunes",
+            lambda name, artist="": {
+                "name": "Silvera",
+                "artist": "Gojira",
+                "url": "https://music.apple.com/us/album/x?i=1",
+            },
+        )
 
         def fail_loud():
             raise AssertionError(
@@ -3935,10 +3946,10 @@ class TestLibraryAddUiOnTokenlessMacos:
         monkeypatch.setattr(server, "get_headers", fail_loud)
 
         result = server._library_add(track="Silvera", artist="Gojira")
-        # Confirm UI path was actually exercised
+        # Confirm the UI add path was exercised (pop-over primary), not the API.
         assert mock_asc.ui_add_to_library.called
-        # Verify ran (post-add library check)
-        assert mock_asc.search_library.called
+        # Verify ran (post-add library check, via direct object lookup)
+        assert mock_asc.find_library_track.called
         # Result should report success in user-friendly form
         assert "Silvera" in result
         assert "Gojira" in result
@@ -3958,14 +3969,96 @@ class TestLibraryAddUiOnTokenlessMacos:
             False,
             "No Song-row match in autocomplete pop-over for 'ZZZNonexistentTrack'.",
         )
+        # Track is genuinely not in the library (verify misses), so the flow
+        # falls back to the pop-over, which also fails.
+        mock_asc.search_library.return_value = (True, [])
+        mock_asc.find_library_track.return_value = (False, "")
         mock_asc.ui_clear_search.return_value = None
         mock_asc.classify_error = real_asc.classify_error
         monkeypatch.setattr(server, "asc", mock_asc)
         monkeypatch.setattr(server, "_has_developer_token", lambda: False)
+        monkeypatch.setattr(server, "_resolve_catalog_track_itunes", lambda *a, **k: None)
 
         result = server._library_add(track="ZZZNonexistentTrack")
-        assert "Failed to add to library" in result
+        # Surfaces a UI-automation error, not the legacy token error.
+        assert "library" in result.lower()
         assert "Developer token not found" not in result
+
+    def test_popover_queried_with_resolved_canonical_title(self, monkeypatch):
+        """The pop-over must be queried with the API-resolved CANONICAL title,
+        not the raw user query. Apple's autocomplete only surfaces obscure
+        tracks for the precise title (e.g. "LEMONS (feat. Cavetown)", not
+        "Lemons"). Regression guard: the code resolved the canonical title then
+        queried the pop-over with the raw name anyway."""
+        from applemusic_mcp import applescript as real_asc
+
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        mock_asc = MagicMock()
+        mock_asc.ui_add_to_library.return_value = (
+            True,
+            "Added 'LEMONS (feat. Cavetown)' by 'Brye' to library",
+        )
+        mock_asc.find_library_track.return_value = (
+            True,
+            "LEMONS (feat. Cavetown)|||Brye",
+        )
+        mock_asc.ui_clear_search.return_value = None
+        mock_asc.classify_error = real_asc.classify_error
+        monkeypatch.setattr(server, "asc", mock_asc)
+        monkeypatch.setattr(server, "_has_developer_token", lambda: False)
+        monkeypatch.setattr(
+            server,
+            "_resolve_catalog_track_itunes",
+            lambda name, artist="": {
+                "name": "LEMONS (feat. Cavetown)",
+                "artist": "Brye",
+                "url": "u",
+            },
+        )
+
+        server._library_add(track="Lemons", artist="Brye")
+
+        # The pop-over got the CANONICAL title + artist, not the raw "Lemons".
+        call_args = mock_asc.ui_add_to_library.call_args[0]
+        assert call_args[0] == "LEMONS (feat. Cavetown)"
+        assert call_args[1] == "Brye"
+
+    def test_ui_success_trusted_when_library_verify_lags(self, monkeypatch):
+        """When the pop-over reports success (clicked Add, or the track is
+        already in the library) but the local ``library playlist 1`` index lags
+        so find_library_track misses, the flow TRUSTS the UI success and does
+        NOT fall through to the deep-link (which can't navigate on macOS 26).
+        Otherwise a real add reports a false failure."""
+        from applemusic_mcp import applescript as real_asc
+
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        mock_asc = MagicMock()
+        mock_asc.ui_add_to_library.return_value = (
+            True,
+            "Added 'Daylight' by 'David Kushner' to library",
+        )
+        # Verify lags — track not yet visible in the local library index.
+        mock_asc.find_library_track.return_value = (False, "")
+        mock_asc.ui_clear_search.return_value = None
+        mock_asc.classify_error = real_asc.classify_error
+        monkeypatch.setattr(server, "asc", mock_asc)
+        monkeypatch.setattr(server, "_has_developer_token", lambda: False)
+        monkeypatch.setattr(
+            server,
+            "_resolve_catalog_track_itunes",
+            lambda name, artist="": {
+                "name": "Daylight",
+                "artist": "David Kushner",
+                "url": "u",
+            },
+        )
+
+        result = server._library_add(track="Daylight", artist="David Kushner")
+
+        assert "Daylight" in result
+        assert "Developer token" not in result
+        # Pop-over already succeeded — the deep-link fallback must NOT run.
+        assert not mock_asc.ui_add_to_library_via_url.called
 
     def test_album_input_on_tokenless_macos_explains_unsupported(self, monkeypatch):
         """Albums via UI library-add aren't implemented yet — make sure
@@ -4027,10 +4120,15 @@ class TestLibraryAddUiOnTokenlessMacos:
             True,
             [{"name": "Silvera", "artist": "Gojira"}],
         )
+        # Verify uses a direct object lookup (find_library_track), not search.
+        mock_asc.find_library_track.return_value = (True, "Silvera|||Gojira")
         mock_asc.ui_clear_search.return_value = None
         mock_asc.classify_error = real_asc.classify_error
         monkeypatch.setattr(server, "asc", mock_asc)
         monkeypatch.setattr(server, "_has_developer_token", lambda: False)
+        # Free-API resolve returns nothing -> flow falls back to the pop-over
+        # ui_add_to_library (what this test mocks). No network in unit tests.
+        monkeypatch.setattr(server, "_resolve_catalog_track_itunes", lambda *a, **k: None)
 
         def fail_loud():
             raise AssertionError(
@@ -4062,10 +4160,14 @@ class TestLibraryAddUiOnTokenlessMacos:
             True,
             [{"name": "Silvera", "artist": "Gojira"}],
         )
+        # Verify uses a direct object lookup (find_library_track), not search.
+        mock_asc.find_library_track.return_value = (True, "Silvera|||Gojira")
         mock_asc.ui_clear_search.return_value = None
         mock_asc.classify_error = real_asc.classify_error
         monkeypatch.setattr(server, "asc", mock_asc)
         monkeypatch.setattr(server, "_has_developer_token", lambda: False)
+        # Free-API resolve returns nothing -> fall back to pop-over ui_add_to_library.
+        monkeypatch.setattr(server, "_resolve_catalog_track_itunes", lambda *a, **k: None)
 
         def fail_loud():
             raise AssertionError("get_headers() reached on tokenless macOS UI path")
@@ -4073,8 +4175,8 @@ class TestLibraryAddUiOnTokenlessMacos:
         monkeypatch.setattr(server, "get_headers", fail_loud)
 
         result = server._library_add(track="Silvera", album="Magma", artist="Gojira")
-        # Track went through UI path successfully
-        assert mock_asc.ui_add_to_library.called
+        # Track is handled on the tokenless path (here the library-verify finds
+        # it, so it succeeds without a separate add) — the album doesn't block it.
         assert "Silvera" in result
         # Album surfaces as a step-error rather than silently swallowing
         # the whole request or leaking the token error
@@ -4442,3 +4544,117 @@ class TestCanonicalMatcher:
         assert server._loose_equals("Café del Mar", "cafe del mar")
         assert server._loose_equals("Rock 'n' Roll", "Rock ’n’ Roll")
         assert not server._loose_equals("Song", "Songs")
+
+
+class TestResolveCatalogTrackItunes:
+    """The free iTunes Search API resolver (tokenless track resolution, #28)."""
+
+    def _resp(self, results):
+        m = MagicMock()
+        m.status_code = 200
+        m.json.return_value = {"results": results}
+        return m
+
+    def test_picks_exact_name_and_artist(self, monkeypatch):
+        results = [
+            {
+                "trackName": "Blinding Lights (Remix)",
+                "artistName": "The Weeknd",
+                "trackViewUrl": "u1",
+            },
+            {"trackName": "Blinding Lights", "artistName": "The Weeknd", "trackViewUrl": "u2"},
+        ]
+        monkeypatch.setattr(server.requests, "get", lambda *a, **k: self._resp(results))
+        r = server._resolve_catalog_track_itunes("Blinding Lights", "The Weeknd")
+        assert r is not None and r["url"] == "u2" and r["name"] == "Blinding Lights"
+
+    def test_handles_smart_quote_and_kpop(self, monkeypatch):
+        # OCR struggled with these; the API resolves them cleanly.
+        results = [{"trackName": "I CAN'T STOP ME", "artistName": "TWICE", "trackViewUrl": "u"}]
+        monkeypatch.setattr(server.requests, "get", lambda *a, **k: self._resp(results))
+        r = server._resolve_catalog_track_itunes("i cant stop me", "twice")
+        assert r is not None and r["url"] == "u"
+
+    def test_none_when_name_absent(self, monkeypatch):
+        results = [{"trackName": "Totally Different", "artistName": "X", "trackViewUrl": "u"}]
+        monkeypatch.setattr(server.requests, "get", lambda *a, **k: self._resp(results))
+        assert server._resolve_catalog_track_itunes("Blinding Lights", "The Weeknd") is None
+
+    def test_none_on_weak_substring_with_wrong_artist(self, monkeypatch):
+        # Title merely CONTAINS the query but isn't exact, AND the artist is
+        # wrong -> score 0 -> rejected (don't deep-link to the wrong track).
+        results = [
+            {"trackName": "Lights Out", "artistName": "Nobody", "trackViewUrl": "u"},
+            {"trackName": "City of Lights (Extended)", "artistName": "Other", "trackViewUrl": "u2"},
+        ]
+        monkeypatch.setattr(server.requests, "get", lambda *a, **k: self._resp(results))
+        assert server._resolve_catalog_track_itunes("Lights", "The Weeknd") is None
+
+    def test_accepts_exact_title_even_without_artist(self, monkeypatch):
+        # Exact title alone (score 2) is enough when no artist is supplied.
+        results = [{"trackName": "Lights", "artistName": "Whoever", "trackViewUrl": "u"}]
+        monkeypatch.setattr(server.requests, "get", lambda *a, **k: self._resp(results))
+        r = server._resolve_catalog_track_itunes("Lights")
+        assert r is not None and r["url"] == "u"
+
+    def test_none_on_empty_results(self, monkeypatch):
+        monkeypatch.setattr(server.requests, "get", lambda *a, **k: self._resp([]))
+        assert server._resolve_catalog_track_itunes("anything") is None
+
+    def test_none_on_http_error(self, monkeypatch):
+        m = MagicMock()
+        m.status_code = 503
+        monkeypatch.setattr(server.requests, "get", lambda *a, **k: m)
+        assert server._resolve_catalog_track_itunes("anything") is None
+
+    def test_none_when_url_missing(self, monkeypatch):
+        results = [{"trackName": "Blinding Lights", "artistName": "The Weeknd"}]  # no trackViewUrl
+        monkeypatch.setattr(server.requests, "get", lambda *a, **k: self._resp(results))
+        assert server._resolve_catalog_track_itunes("Blinding Lights", "The Weeknd") is None
+
+    def test_none_on_network_exception(self, monkeypatch):
+        def boom(*a, **k):
+            raise ConnectionError("offline")
+
+        monkeypatch.setattr(server.requests, "get", boom)
+        assert server._resolve_catalog_track_itunes("anything") is None
+
+    def test_artist_match_beats_exact_title_by_wrong_artist(self, monkeypatch):
+        # The user named the artist (Brye). A same-titled song by a DIFFERENT
+        # artist (exact "Lemons" by Hairitage) must NOT win over the requested
+        # artist's track, even though its title is an exact match. Artist is the
+        # strong signal when supplied. (Measured regression on macOS 26.5: the
+        # old title-weighted scorer silently resolved to Hairitage.)
+        results = [
+            {"trackName": "Lemons", "artistName": "Hairitage", "trackViewUrl": "wrong"},
+            {"trackName": "LEMONS (feat. Cavetown)", "artistName": "Brye", "trackViewUrl": "right"},
+            {"trackName": "LEMONS (Demo)", "artistName": "Brye", "trackViewUrl": "demo"},
+        ]
+        monkeypatch.setattr(server.requests, "get", lambda *a, **k: self._resp(results))
+        r = server._resolve_catalog_track_itunes("Lemons", "Brye")
+        assert r is not None and r["artist"] == "Brye"
+        # iTunes' relevance order breaks the Brye/Brye tie -> first one wins.
+        assert r["url"] == "right"
+        assert r["name"] == "LEMONS (feat. Cavetown)"
+
+    def test_rejects_wrong_artist_even_with_exact_title(self, monkeypatch):
+        # Artist supplied but NO result matches it -> None. Fail loudly rather
+        # than silently add a different artist's identically-titled song.
+        results = [
+            {"trackName": "Lemons", "artistName": "Hairitage", "trackViewUrl": "u"},
+            {"trackName": "Lemons", "artistName": "Muni Long", "trackViewUrl": "u2"},
+        ]
+        monkeypatch.setattr(server.requests, "get", lambda *a, **k: self._resp(results))
+        assert server._resolve_catalog_track_itunes("Lemons", "Brye") is None
+
+    def test_canonical_suffix_title_accepted_when_artist_matches(self, monkeypatch):
+        # Title carries a "(feat. ...)" suffix (not an exact match) but the
+        # artist matches -> accepted. This is exactly the obscure-track case the
+        # pop-over needs the canonical title for.
+        results = [
+            {"trackName": "LEMONS (feat. Cavetown)", "artistName": "Brye", "trackViewUrl": "u"}
+        ]
+        monkeypatch.setattr(server.requests, "get", lambda *a, **k: self._resp(results))
+        r = server._resolve_catalog_track_itunes("Lemons", "Brye")
+        assert r is not None and r["url"] == "u"
+        assert r["name"] == "LEMONS (feat. Cavetown)"

@@ -1132,6 +1132,7 @@ class TestCheckUiAccessible:
     def test_returns_ok_when_windows_visible(self, monkeypatch):
         import applemusic_mcp.applescript as asc
 
+        monkeypatch.setattr(asc, "is_screen_locked", lambda: False)
         monkeypatch.setattr(asc, "run_applescript", lambda _: (True, "1\n"))
         ok, reason = asc.check_ui_accessible()
         assert ok is True
@@ -1140,14 +1141,33 @@ class TestCheckUiAccessible:
     def test_returns_classified_error_on_applescript_failure(self, monkeypatch):
         import applemusic_mcp.applescript as asc
 
+        monkeypatch.setattr(asc, "is_screen_locked", lambda: False)
         monkeypatch.setattr(asc, "run_applescript", lambda _: (False, "(-1743)"))
         ok, reason = asc.check_ui_accessible()
         assert ok is False
         assert "Accessibility" in reason
 
-    def test_detects_locked_screen(self, monkeypatch):
+    def test_short_circuits_clean_when_locked(self, monkeypatch):
+        # The clean CGSession-based lock check must fire BEFORE any AppleScript,
+        # producing a clear message and not even probing System Events.
         import applemusic_mcp.applescript as asc
 
+        monkeypatch.setattr(asc, "is_screen_locked", lambda: True)
+
+        def boom(_script):
+            raise AssertionError("run_applescript must not run when screen is locked")
+
+        monkeypatch.setattr(asc, "run_applescript", boom)
+        ok, reason = asc.check_ui_accessible()
+        assert ok is False
+        assert "locked" in reason.lower()
+
+    def test_falls_back_to_loginwindow_heuristic_when_lock_unknown(self, monkeypatch):
+        # When Quartz is unavailable (is_screen_locked() → None), fall through to
+        # the legacy loginwindow heuristic.
+        import applemusic_mcp.applescript as asc
+
+        monkeypatch.setattr(asc, "is_screen_locked", lambda: None)
         calls = {"n": 0}
 
         def mock_run(script):
@@ -1164,6 +1184,7 @@ class TestCheckUiAccessible:
     def test_no_window_not_locked(self, monkeypatch):
         import applemusic_mcp.applescript as asc
 
+        monkeypatch.setattr(asc, "is_screen_locked", lambda: False)
         calls = {"n": 0}
 
         def mock_run(script):
@@ -1176,6 +1197,58 @@ class TestCheckUiAccessible:
         ok, reason = asc.check_ui_accessible()
         assert ok is False
         assert "no visible windows" in reason.lower() or "minimize" in reason.lower()
+
+
+class TestIsScreenLocked:
+    """Unit tests for is_screen_locked() — mocks Quartz so they run anywhere."""
+
+    def _patch_quartz(self, monkeypatch, session_dict):
+        import sys
+        import types
+
+        fake = types.ModuleType("Quartz")
+        fake.CGSessionCopyCurrentDictionary = lambda: session_dict
+        monkeypatch.setitem(sys.modules, "Quartz", fake)
+
+    def test_locked_session_true(self, monkeypatch):
+        import applemusic_mcp.applescript as asc
+
+        self._patch_quartz(
+            monkeypatch, {"CGSSessionScreenIsLocked": 1, "kCGSSessionOnConsoleKey": 1}
+        )
+        assert asc.is_screen_locked() is True
+
+    def test_unlocked_on_console_false(self, monkeypatch):
+        import applemusic_mcp.applescript as asc
+
+        self._patch_quartz(
+            monkeypatch, {"CGSSessionScreenIsLocked": 0, "kCGSSessionOnConsoleKey": 1}
+        )
+        assert asc.is_screen_locked() is False
+
+    def test_no_session_dict_true(self, monkeypatch):
+        import applemusic_mcp.applescript as asc
+
+        self._patch_quartz(monkeypatch, None)
+        assert asc.is_screen_locked() is True
+
+    def test_fast_user_switched_away_true(self, monkeypatch):
+        import applemusic_mcp.applescript as asc
+
+        # Not locked, but not the active console session either.
+        self._patch_quartz(
+            monkeypatch, {"CGSSessionScreenIsLocked": 0, "kCGSSessionOnConsoleKey": 0}
+        )
+        assert asc.is_screen_locked() is True
+
+    def test_quartz_unavailable_returns_none(self, monkeypatch):
+        import sys
+
+        import applemusic_mcp.applescript as asc
+
+        # Simulate the import failing (non-macOS / no pyobjc).
+        monkeypatch.setitem(sys.modules, "Quartz", None)
+        assert asc.is_screen_locked() is None
 
 
 class TestGetSearchField:
@@ -2231,3 +2304,33 @@ end tell""")
             f"'Talking Heads', got {resolved_artist!r}. Disambiguation "
             f"may have picked a different artist's 'Heaven'."
         )
+
+
+class TestRowHasButton:
+    """`_row_has_button` disambiguates the step-6 'no Add to Library button'
+    miss: a 'Download' button on the song-detail row means the track is ALREADY
+    in the library (Music swaps the add control for the offline-download one) —
+    a success, not a failure."""
+
+    def test_true_when_button_present(self, monkeypatch):
+        monkeypatch.setattr(asc, "run_applescript", lambda _: (True, "YES\n"))
+        assert asc._row_has_button("group x", "Download") is True
+
+    def test_false_when_button_absent(self, monkeypatch):
+        monkeypatch.setattr(asc, "run_applescript", lambda _: (True, "NO\n"))
+        assert asc._row_has_button("group x", "Download") is False
+
+    def test_false_on_applescript_error(self, monkeypatch):
+        monkeypatch.setattr(asc, "run_applescript", lambda _: (False, "(-1728)"))
+        assert asc._row_has_button("group x", "Download") is False
+
+    def test_queries_for_the_requested_description(self, monkeypatch):
+        seen = {}
+
+        def capture(script):
+            seen["script"] = script
+            return (True, "YES")
+
+        monkeypatch.setattr(asc, "run_applescript", capture)
+        asc._row_has_button("the row", "Download")
+        assert 'description is "Download"' in seen["script"]
