@@ -1874,12 +1874,26 @@ def _unified_auto_search_to_playlist(
 
     if APPLESCRIPT_AVAILABLE:
         query = f"{search_name} {search_artist}".strip() if search_artist else search_name
-        ok, msg = asc.ui_add_to_playlist(playlist_name, query, search_artist)
+        # Resolve tokenlessly via the free iTunes Search API so the macOS-15
+        # deep-link add path is used (the search pop-over isn't accessible
+        # there). ui_add_to_playlist deep-links when given a URL, else uses the
+        # pop-over flow (macOS 26).
+        resolved = _resolve_catalog_track_itunes(search_name, search_artist)
+        verify_name, verify_artist = search_name, search_artist
+        if resolved:
+            verify_name = resolved["name"]
+            verify_artist = resolved["artist"] or search_artist
+            steps.append(f"Resolved via iTunes Search API → {verify_name!r} by {verify_artist!r}")
+            ok, msg = asc.ui_add_to_playlist(
+                playlist_name, resolved["name"], verify_artist, song_url=resolved["url"]
+            )
+        else:
+            ok, msg = asc.ui_add_to_playlist(playlist_name, query, search_artist)
         if ok:
-            if _verify_track_in_playlist(playlist_name, search_name, search_artist):
+            if _verify_track_in_playlist(playlist_name, verify_name, verify_artist):
                 return True, msg, steps
             ui_error = (
-                f"UI path reported success but '{search_name}' is not in "
+                f"UI path reported success but '{verify_name}' is not in "
                 f"'{playlist_name}' — likely clicked wrong result"
             )
             steps.append(ui_error)
@@ -3947,34 +3961,156 @@ def _library_search(
         return msg
 
 
+def _resolve_catalog_track_itunes(name: str, artist: str = "") -> Optional[dict]:
+    """Resolve a track to a catalog entry via the FREE iTunes Search API.
+
+    ``itunes.apple.com/search`` is public — no developer token, no $99/yr
+    Apple Developer account (issue #24/#28). It returns catalog metadata plus an
+    ``music.apple.com`` URL, which the macOS-15 add path deep-links to. This is
+    the tokenless resolver for "find a song and add it": it replaces scraping
+    Music's search UI to *find* the track (the part that breaks on macOS 15.x
+    where the autocomplete pop-over isn't in the accessibility tree).
+
+    Returns ``{"name", "artist", "url"}`` of the best canonical match, or None.
+    """
+    term = f"{name} {artist}".strip()
+    try:
+        resp = requests.get(
+            "https://itunes.apple.com/search",
+            params={"term": term, "entity": "song", "limit": 8, "country": get_storefront()},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code != 200:
+            return None
+        results = resp.json().get("results", [])
+    except Exception:
+        return None
+
+    def score(r: dict) -> Optional[int]:
+        rn = r.get("trackName", "")
+        ra = r.get("artistName", "")
+        if not _loose_contains(name, rn):  # the requested name must be present
+            return None
+        if artist:
+            # The user named an artist — that's the STRONG signal. A different
+            # artist's same-titled song is the wrong track, so reject it rather
+            # than risk a silent wrong-add. (Measured: "Lemons"/"Brye" must NOT
+            # resolve to "Lemons" by Hairitage just because the title is exact.)
+            if not _loose_contains(artist, ra):
+                return None
+            s = 10  # artist match dominates title exactness
+            if _loose_equals(name, rn):
+                s += 3  # exact canonical title
+            elif rn.lower().startswith(name.lower()):
+                s += 1  # title carries a suffix (feat./remaster/version)
+            return s
+        # No artist given: only trust an exact title match — a bare substring
+        # with an unknown artist is too weak to deep-link to confidently.
+        return 2 if _loose_equals(name, rn) else None
+
+    # Keep iTunes' relevance order as the tie-breaker (lower index = more
+    # relevant), so equal-scoring variants (e.g. "(feat. X)" vs "(Demo)") pick
+    # the one Apple ranks first.
+    scored = [(s, i, r) for i, r in enumerate(results) if (s := score(r)) is not None]
+    if not scored:
+        return None
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    best = scored[0][2]
+    if not best.get("trackViewUrl"):
+        return None
+    return {
+        "name": best.get("trackName", name),
+        "artist": best.get("artistName", artist),
+        "url": best["trackViewUrl"],
+    }
+
+
+def _verify_in_library(name: str, artist: str) -> Optional[tuple[str, str]]:
+    """Poll the local library for a track matching ``name`` (+ optional
+    ``artist``); return (matched_name, matched_artist) or None.
+
+    A short retry covers the brief iCloud-sync lag after a UI library-add. Used
+    as the source of truth for "is the track in the library now" — whether it
+    was just added or was already there.
+
+    The retry window must outlast the library-index lag: measured on macOS 26.5,
+    a freshly UI-added track first appeared in ``library playlist 1`` at ~+3s, so
+    a 3-attempt (0/1/2s) window false-negatived a real success. Six attempts
+    (~5s of coverage) clears it with margin.
+    """
+    for attempt in range(6):
+        if attempt > 0:
+            time.sleep(1.0)
+        # Direct object lookup (not the native search index, which lags after a
+        # fresh UI add) — finds the track the instant it lands in the library.
+        ok, info = asc.find_library_track(name, artist)
+        if ok and "|||" in info:
+            n, a = info.split("|||", 1)
+            return n, a
+    return None
+
+
 def _library_add_track_via_ui(query: str, search_artist: str) -> tuple[bool, str]:
     """Tokenless macOS path for ``library(action="add", track=...)``.
 
-    Delegates to ``asc.ui_add_to_library``'s popover-canonical flow, which
-    handles (name, artist) matching internally.
+    Tries the pop-over-canonical flow first (``asc.ui_add_to_library``) — the
+    validated path on macOS 26 / new Music, where the search autocomplete is in
+    the accessibility tree. If that doesn't land the track in the library
+    (macOS 15 / old Music, where the pop-over isn't accessible), it resolves the
+    track tokenlessly via the free iTunes Search API and deep-links to its album
+    page to click ``Add to Library`` there (:func:`asc.ui_add_to_library_via_url`).
+    A library-verify after each attempt is the source of truth and transparently
+    covers the "already in library" case.
     """
-    ok, msg = asc.ui_add_to_library(query, search_artist)
-    if not ok:
-        return False, f"Failed to add to library: {msg}"
-    # Verify the track actually appears in the local library before reporting
-    # success. iCloud sync from the UI add is normally near-instantaneous,
-    # but a brief poll covers slow sync. Without this, a downstream playlist-
-    # add would fail with the more confusing "Track not found in library" error.
-    for attempt in range(3):
-        if attempt > 0:
-            time.sleep(1.0)
-        lib_ok, lib_results = asc.search_library(query, "songs")
-        if lib_ok and lib_results:
-            for r in lib_results:
-                if not _loose_contains(query, r.get("name", "")):
-                    continue
-                if search_artist and not _loose_contains(search_artist, r.get("artist", "")):
-                    continue
-                return True, f"{r.get('name', query)} by {r.get('artist', search_artist)}"
+    resolved = _resolve_catalog_track_itunes(query, search_artist)
+    name, artist = query, search_artist
+    if resolved:
+        name = resolved["name"]
+        artist = resolved["artist"] or search_artist
+
+    # Try the pop-over flow first — the validated path on macOS 26 (new Music),
+    # where the search autocomplete is in the accessibility tree. Then verify
+    # against the library: this confirms the add AND transparently handles the
+    # "already in library" case (the pop-over reports no Add button, but the
+    # track is there) — without falling through to the deep-link unnecessarily.
+    #
+    # Query the pop-over with the API-resolved CANONICAL title, not the raw
+    # user query. Apple's autocomplete is ranking-sensitive: a vague query
+    # ("Lemons" / "Brye") surfaces popular homonyms but not the target, while
+    # the canonical title ("LEMONS (feat. Cavetown)") makes the exact track
+    # surface. The free iTunes Search API gives us that canonical title for
+    # free, so obscure tracks resolve without a developer token. (Measured on
+    # macOS 26.5: raw query missed Brye entirely; canonical query added +
+    # verified it.)
+    ok, msg = asc.ui_add_to_library(name, artist)
+    if ok:
+        # The pop-over UI is authoritative for the iCloud library: a True here
+        # means it either clicked "Add to Library" or saw the track already in
+        # the library (Download button). Confirm against the local library when
+        # we can, but DON'T gate on it — `library playlist 1` lags the cloud add
+        # by a few seconds, so a verify miss after a UI-confirmed add means
+        # "still syncing," not "failed." Gating on it would wrongly fall through
+        # to the deep-link (which can't navigate on macOS 26).
+        found = _verify_in_library(name, artist)
+        if found:
+            return True, f"{found[0]} by {found[1]}"
+        return True, msg
+
+    # Pop-over genuinely failed — absent (macOS 15 / old Music, not in the AX
+    # tree) or no canonical row surfaced. Deep-link to the album page via the
+    # free-API-resolved URL and click Add to Library there (the macOS-15 path).
+    if resolved:
+        ok, msg = asc.ui_add_to_library_via_url(name, resolved["url"], artist)
+        if ok:
+            found = _verify_in_library(name, artist)
+            if found:
+                return True, f"{found[0]} by {found[1]}"
+            return True, msg
+
     return False, (
-        f"Add to Library button was clicked for '{query}' but the track "
-        f"did not appear in the local library after retry. iCloud Library sync "
-        f"may be paused or this track may not be available for library-add."
+        f"Could not add {name!r} to library via UI automation "
+        f"({msg or 'no Add button found'}). The track may be unavailable for "
+        f"library-add, or iCloud Library sync may be paused."
     )
 
 

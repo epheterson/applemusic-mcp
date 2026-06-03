@@ -1449,6 +1449,37 @@ def play_playlist(playlist_name: str, shuffle: bool = False) -> tuple[bool, str]
     return success, output
 
 
+def find_library_track(name: str, artist: str = "") -> tuple[bool, str]:
+    """Direct lookup of a library track by name (+ optional artist), via the
+    Music object model.
+
+    Unlike :func:`search_library` (which runs Music's native ``search`` command
+    and depends on the search index), this is a ``whose name contains`` object
+    query, so it finds a track the instant it lands in the library — without
+    waiting for the index to update after a UI add. Used to verify add-to-library
+    succeeded. Apostrophe/quote-robust via :func:`_name_contains_clause`.
+
+    Returns (True, "name|||artist") on a match, else (False, "").
+    """
+    if not name.strip():
+        return False, ""
+    cond = _name_contains_clause(name)
+    if artist:
+        cond = f'{cond} and artist contains "{_escape_for_applescript(artist)}"'
+    ok, out = run_applescript(f"""
+    tell application "Music"
+        try
+            set t to (first track of library playlist 1 whose {cond})
+            return (name of t) & "|||" & (artist of t)
+        on error
+            return "NOT_FOUND"
+        end try
+    end tell""")
+    if ok and "|||" in out.strip():
+        return True, out.strip()
+    return False, ""
+
+
 def play_track(track_name: str, artist: Optional[str] = None) -> tuple[bool, str]:
     """Play a specific track from library.
 
@@ -1633,6 +1664,40 @@ def _classify_as_error(error_text: str) -> str:
     )
 
 
+def is_screen_locked() -> Optional[bool]:
+    """Whether the login session's screen is locked / not on the active console.
+
+    UI automation fundamentally cannot work on a locked screen: the window
+    server stops vending app windows, so System Events reports zero windows,
+    the AX tree collapses, menu items go disabled, and window captures come
+    back blank. Detecting this up front turns those confusing, flaky, hang-prone
+    symptoms into one clear, actionable error.
+
+    Uses Quartz ``CGSessionCopyCurrentDictionary`` — the canonical, instant
+    signal (``CGSSessionScreenIsLocked``), far more reliable than probing the
+    loginwindow process via AppleScript (which the old heuristic did and which
+    breaks across macOS versions).
+
+    Returns True if locked / fast-user-switched away / no GUI session,
+    False if unlocked and on-console, and None if Quartz isn't available
+    (caller should fall back to a heuristic rather than assume either way).
+    """
+    try:
+        import Quartz
+    except Exception:
+        return None
+    d = Quartz.CGSessionCopyCurrentDictionary()
+    if not d:
+        # No GUI session dictionary at all — not an automatable desktop.
+        return True
+    if d.get("CGSSessionScreenIsLocked", 0):
+        return True
+    # Session exists but isn't the active console session (fast-user-switched
+    # to another login) — UI automation would target a background session.
+    on_console = d.get("kCGSSessionOnConsoleKey", 1)
+    return not on_console
+
+
 def check_ui_accessible() -> tuple[bool, str]:
     """Check whether Music.app's UI windows are accessible via System Events.
 
@@ -1640,6 +1705,14 @@ def check_ui_accessible() -> tuple[bool, str]:
     with a concrete, actionable explanation when it cannot — distinguishing
     locked screen from missing Accessibility permission from no open window.
     """
+    # Cleanest signal first: a locked / inactive session can't be automated at
+    # all, and probing it via AppleScript just produces misleading errors.
+    if is_screen_locked() is True:
+        return False, (
+            "Screen is locked (or no active desktop session). UI automation "
+            "requires the Mac to be unlocked and logged in on the active "
+            "display. Unlock the screen and try again."
+        )
     ok, result = run_applescript(
         'tell application "System Events" to tell process "Music" to return count of windows'
     )
@@ -3196,6 +3269,156 @@ end tell""")
     return False, None
 
 
+def _find_add_button_in_highlighted_row() -> Optional[tuple[float, float]]:
+    """Return the center coords of the "Add to Library" button on the highlighted
+    (``?i=``) track row's group, or None.
+
+    Call AFTER hovering the row (the button is hover-revealed). Mirrors
+    :func:`_find_highlighted_track_position`'s cross-version group walk — finding
+    the row by the "Favorite" button Music adds to the ``?i=`` track — so it works
+    on both old and new Music. Returns None if the row has no Add button (already
+    in library, or a single whose add control is album-level).
+    """
+    ok, result = run_applescript("""
+tell application "System Events"
+    tell process "Music"
+        set sg to splitter group 1 of window "Music"
+        set sa to scroll area 2 of sg
+        repeat with subList in (every list of list 1 of sa)
+            repeat with g in (every group of subList)
+                try
+                    set hasFav to false
+                    repeat with b in (every button of g)
+                        if description of b is "Favorite" then set hasFav to true
+                    end repeat
+                    if hasFav then
+                        repeat with b in (every button of g)
+                            if description of b is "Add to Library" then
+                                set {bx, by} to position of b
+                                set {bw, bh} to size of b
+                                return ((bx + bw / 2) as text) & "," & ((by + bh / 2) as text)
+                            end if
+                        end repeat
+                        return "NO_ADD"
+                    end if
+                end try
+            end repeat
+        end repeat
+        return "NOT_FOUND"
+    end tell
+end tell""")
+    if ok and "," in (result or ""):
+        try:
+            x, y = [float(v) for v in result.strip().split(",")]
+            return x, y
+        except ValueError:
+            pass
+    return None
+
+
+def _row_has_button(group_path: str, desc: str) -> bool:
+    """Return True if the song-detail row at ``group_path`` exposes a button
+    whose description is exactly ``desc`` (e.g. "Download").
+
+    Used to disambiguate the step-6 miss: when "Add to Library" isn't present,
+    a "Download" button means the track is ALREADY in the library (the add
+    control is replaced by the offline-download control) — a success, not a
+    failure. Call after hovering the row so hover-revealed controls are live.
+    """
+    ok, result = run_applescript(f"""
+tell application "System Events"
+    tell process "Music"
+        try
+            if exists (first button of ({group_path}) whose description is "{desc}") then
+                return "YES"
+            end if
+            return "NO"
+        on error
+            return "NO"
+        end try
+    end tell
+end tell""")
+    return ok and result.strip() == "YES"
+
+
+def ui_add_to_library_via_url(name: str, song_url: str, artist: str = "") -> tuple[bool, str]:
+    """Add a catalog track to the library by deep-linking to its album page and
+    clicking the hover-revealed "Add to Library" button on the highlighted row.
+
+    Used as the macOS-15 add path (where the search autocomplete pop-over isn't
+    in the accessibility tree, so :func:`ui_add_to_library` can't work). The
+    caller resolves the track tokenlessly via the iTunes Search API and passes
+    its Apple Music ``song_url``; ``?i=`` makes Music highlight that track on the
+    album page.
+
+    Reuses the SAME proven, cross-version row finder as play-by-URL
+    (:func:`_find_highlighted_track_position` — locates the row by the "Favorite"
+    button Music marks the highlighted track with, not by text, so it works on
+    both old and new Music), then hovers it and CoreGraphics-clicks the
+    "Add to Library" button (a real click, since the SwiftUI button's ``AXPress``
+    doesn't fire).
+
+    Returns (success, message).
+    """
+    if not name.strip():
+        return False, "Empty track name"
+    if not song_url.strip():
+        return False, "Empty track URL"
+    if is_screen_locked() is True:
+        return False, (
+            "Screen is locked — UI automation needs the Mac unlocked and on the active display."
+        )
+
+    ok, msg = open_catalog_song(song_url)
+    if not ok:
+        return False, f"Could not open track: {msg}"
+    _ensure_music_frontmost()
+
+    # Poll for the highlighted track row to render (catalog pages can take a few
+    # seconds to load — same adaptive wait play-by-URL uses).
+    deadline = time.monotonic() + 12.0
+    pos = _find_highlighted_track_position()
+    while pos is None and time.monotonic() < deadline:
+        time.sleep(1.0)
+        pos = _find_highlighted_track_position()
+    if pos is None:
+        return False, (
+            f"Could not find {name!r} on its album page — the highlighted track "
+            f"row never appeared (page may not have loaded, or the URL didn't "
+            f"resolve to a track)."
+        )
+    cx, cy, _desc = pos
+
+    # Scroll the row into view if it's below the fold, then re-find it.
+    win_bottom = _get_window_bottom()
+    if win_bottom and cy > win_bottom - 30:
+        _ensure_music_frontmost()
+        _jxa_scroll_down(cx, win_bottom - 200, amount=10)
+        pos = _find_highlighted_track_position()
+        if pos is None:
+            return False, "Lost the track row after scrolling it into view."
+        cx, cy, _desc = pos
+
+    # Hover (nudge first to guarantee a mouseMoved event) to reveal the row's
+    # Add to Library button, then click it for real.
+    _ensure_music_frontmost()
+    if not _hover_with_nudge(cx, cy):
+        return False, "Failed to hover the track row."
+    time.sleep(1.5)
+    bpos = _find_add_button_in_highlighted_row()
+    if bpos is None:
+        return False, (
+            f"{name!r}: no 'Add to Library' button on the track row — it may "
+            f"already be in your library, or be a single whose add control is "
+            f"album-level."
+        )
+    if not _jxa_mouse_click(*bpos):
+        return False, "CoreGraphics click on 'Add to Library' failed."
+
+    suffix = f" by {artist!r}" if artist else ""
+    return True, f"Added {name!r}{suffix} to library"
+
+
 # -----------------------------------------------------------------------------
 # Public ui_* entrypoints — thin compositions of the primitives above.
 # -----------------------------------------------------------------------------
@@ -3327,6 +3550,15 @@ def ui_add_to_library(name: str, artist: str = "") -> tuple[bool, str]:
     # Step 6: hover + validate Add to Library button is present
     ok, btn_pos = _hover_and_find_button(group_path, "Add to Library")
     if not ok:
+        # No "Add to Library" button. Two very different causes:
+        #   (a) the track is ALREADY in the library — Music replaces the add
+        #       control with a "Download" (offline) button. That's a success;
+        #       report it so the caller's library-verify confirms instead of
+        #       falling through to the (slower, lossy) deep-link path.
+        #   (b) a genuine hover/timing miss with no button at all — a real
+        #       failure the caller should surface.
+        if _row_has_button(group_path, "Download"):
+            return True, f"'{name}' already in library"
         return False, (
             f"'Add to Library' button not visible after hover on {name!r}. "
             f"Track may already be in library (button would be 'Download' "
@@ -3400,7 +3632,9 @@ def ui_play_result_by_query(query: str) -> tuple[bool, str]:
     return ok, msg
 
 
-def ui_add_to_playlist(playlist_name: str, query: str, artist: str = "") -> tuple[bool, str]:
+def ui_add_to_playlist(
+    playlist_name: str, query: str, artist: str = "", song_url: str = ""
+) -> tuple[bool, str]:
     """Add a catalog track to a playlist via UI automation (no API required).
 
     Composite flow that uses popover-canonical-match for the catalog lookup,
@@ -3439,30 +3673,35 @@ def ui_add_to_playlist(playlist_name: str, query: str, artist: str = "") -> tupl
         if len(parts) == 2:
             name, artist = parts[0].strip(), parts[1].strip()
 
-    # Step 1+2: Add to library via popover-canonical flow
+    # Step 1+2: Add to library. Try the pop-over flow first — it's the validated
+    # path on macOS 26 (new Music), where the search autocomplete IS in the
+    # accessibility tree. If the pop-over isn't accessible (macOS 15 / old Music)
+    # and the caller resolved a catalog URL, deep-link to the album page instead.
     ok, msg = ui_add_to_library(name, artist)
+    if not ok and song_url:
+        ok, msg = ui_add_to_library_via_url(name, song_url, artist)
     if not ok:
         return False, f"Failed to add to library: {msg}"
 
-    # Step 3: Verify track in library before playlist add. iCloud sync from
-    # the UI add is usually <1s; 12s is the worst-case budget.
+    # Step 3: Verify the track is in the library before the playlist add, using
+    # a DIRECT object lookup (find_library_track) rather than the native search
+    # index — the index lags noticeably after a fresh UI add (a just-added track
+    # can be missing from `search` for >12s while the object query already finds
+    # it). Poll briefly to cover any genuine sync lag.
     track_name = name
     track_artist = artist
     library_visible = False
     sync_deadline = time.monotonic() + 12.0
     while time.monotonic() < sync_deadline:
-        ok, lib_results = search_library(track_name.replace("́", ""), "songs")
-        if ok and lib_results:
-            if not track_artist or any(
-                track_artist.lower() in (t.get("artist") or "").lower() for t in lib_results
-            ):
-                library_visible = True
-                break
+        ok, _info = find_library_track(track_name, track_artist)
+        if ok:
+            library_visible = True
+            break
         time.sleep(0.4)
     if not library_visible:
         return False, (
-            f"Added '{track_name}' to library but it didn't appear in local "
-            f"library search within 12s — iCloud sync may be delayed."
+            f"Added '{track_name}' to library but it didn't appear in the local "
+            f"library within 12s — iCloud Library sync may be delayed."
         )
 
     # Step 4: Add to playlist via existing AppleScript backend
