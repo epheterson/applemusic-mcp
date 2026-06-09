@@ -1,6 +1,7 @@
 """Authentication and token management for Apple Music API."""
 
 import json
+import os
 import time
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -95,6 +96,7 @@ def generate_developer_token(expiry_days: int = 180) -> str:
     }
     with open(token_file, "w") as f:
         json.dump(token_data, f, indent=2)
+    os.chmod(token_file, 0o600)
 
     return token
 
@@ -142,6 +144,7 @@ def save_user_token(token: str) -> None:
     }
     with open(token_file, "w") as f:
         json.dump(data, f, indent=2)
+    os.chmod(token_file, 0o600)
 
 
 def create_auth_html(developer_token: str, port: int) -> str:
@@ -275,16 +278,21 @@ def create_success_html() -> str:
 </html>'''
 
 
+_MAX_POST_BYTES = 65_536  # 64 KB — Apple Music tokens are well under 1 KB
+
+
 def run_auth_server(port: int = 8765) -> Optional[str]:
     """Run a local server for browser-based authorization with automatic token capture."""
     config_dir = get_config_dir()
     developer_token = get_developer_token()
+    cors_origin = f"http://localhost:{port}"
 
-    # Write auth HTML
+    # Write auth HTML with restricted permissions (contains developer token)
     auth_html = create_auth_html(developer_token, port)
     auth_file = config_dir / "auth.html"
     with open(auth_file, "w", encoding="utf-8") as f:
         f.write(auth_html)
+    os.chmod(auth_file, 0o600)
 
     # Token storage for callback
     captured_token = {"value": None}
@@ -307,7 +315,18 @@ def run_auth_server(port: int = 8765) -> Optional[str]:
 
         def do_POST(self):
             if self.path == "/save-token":
-                content_length = int(self.headers["Content-Length"])
+                raw_length = self.headers.get("Content-Length", "0")
+                try:
+                    content_length = int(raw_length)
+                except ValueError:
+                    self.send_response(400)
+                    self.end_headers()
+                    return
+                if content_length > _MAX_POST_BYTES:
+                    self.send_response(413)
+                    self.end_headers()
+                    return
+
                 post_data = self.rfile.read(content_length).decode("utf-8")
                 params = parse_qs(post_data)
 
@@ -319,7 +338,7 @@ def run_auth_server(port: int = 8765) -> Optional[str]:
 
                     self.send_response(200)
                     self.send_header("Content-type", "text/html")
-                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.send_header("Access-Control-Allow-Origin", cors_origin)
                     self.end_headers()
                     self.wfile.write(create_success_html().encode())
                 else:
@@ -330,9 +349,9 @@ def run_auth_server(port: int = 8765) -> Optional[str]:
                 self.end_headers()
 
         def do_OPTIONS(self):
-            # Handle CORS preflight
+            # CORS preflight — restricted to localhost origin only
             self.send_response(200)
-            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Origin", cors_origin)
             self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
@@ -362,6 +381,11 @@ def run_auth_server(port: int = 8765) -> Optional[str]:
         return None
     finally:
         server.server_close()
+        # Remove auth.html — it contains the developer token
+        try:
+            auth_file.unlink(missing_ok=True)
+        except OSError:
+            pass
 
     if captured_token["value"]:
         print("✓ Token saved successfully!")

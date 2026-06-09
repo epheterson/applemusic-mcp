@@ -6,6 +6,6 @@
     "fetch_explicit": true,
     "reveal_on_library_miss": true,
     "clean_only": false,
-    "auto_search": true
+    "auto_search": false
   }
 }
