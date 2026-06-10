@@ -27,9 +27,12 @@ their upstream releases before merge.
   flow completes, instead of lingering in `~/.config/applemusic-mcp/`.
 - **Content-Length cap (`auth.py`).** The `/save-token` handler now rejects
   bodies over 64 KB (tokens are <1 KB), closing a local memory-DoS vector.
-- **GitHub Actions pinned to commit SHA.** `checkout`, `setup-uv`,
-  `upload/download-artifact`, and `gh-action-pypi-publish` are pinned to verified
-  SHAs (with version comments) instead of mutable tags.
+- **Third-party GitHub Actions pinned to commit SHA.** `checkout`, `setup-uv`,
+  and `upload/download-artifact` are pinned to verified SHAs (with version
+  comments) instead of mutable tags. `pypa/gh-action-pypi-publish` is left on its
+  maintained `release/v1` branch on purpose — it's PyPA's first-party action
+  using OIDC (no long-lived secret) and `release/v1` is where PyPA ships security
+  patches; pinning it would opt out of those for little gain.
 - **`config.example.json`:** `auto_search` set to `false` to match the safe code
   default (was `true`, which could surprise users copying the example verbatim).
 

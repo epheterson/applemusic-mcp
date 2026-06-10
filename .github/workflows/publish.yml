@@ -51,4 +51,10 @@ jobs:
           path: dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
+        # Intentionally tracks the maintained release/v1 branch (NOT a pinned
+        # SHA): this is PyPA's first-party publish action using OIDC trusted
+        # publishing (no long-lived secret), and release/v1 is the channel PyPA
+        # ships security patches on. Pinning it would opt out of those patches
+        # for little gain and add manual-bump toil. The other actions stay
+        # SHA-pinned.
+        uses: pypa/gh-action-pypi-publish@release/v1
