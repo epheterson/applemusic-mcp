@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.2] - 2026-06-09
+
+### Security
+
+External security audit + fixes contributed by **Timo Prager-Mai (@777Timo)**
+([#32]) — thank you. Each fix verified and the pinned Action SHAs checked against
+their upstream releases before merge.
+
+- **CORS hardening (`auth.py`).** The temporary local auth server sent
+  `Access-Control-Allow-Origin: *`, so during the short authorization window any
+  webpage open in the browser could `POST localhost:{port}/save-token` and read
+  back the Music User Token. Restricted to the exact `http://localhost:{port}`
+  origin. (The same change also fixes a latent crash on a missing/malformed
+  `Content-Length` header.)
+- **Token files written `0o600` (`auth.py`).** `developer_token.json` and
+  `music_user_token.json` are now owner-read/write only, so other users on a
+  multi-user machine can't read the tokens.
+- **`auth.html` cleanup (`auth.py`).** The auth page embeds the developer token;
+  it's now `chmod 600` while it exists and deleted in a `finally` block after the
+  flow completes, instead of lingering in `~/.config/applemusic-mcp/`.
+- **Content-Length cap (`auth.py`).** The `/save-token` handler now rejects
+  bodies over 64 KB (tokens are <1 KB), closing a local memory-DoS vector.
+- **GitHub Actions pinned to commit SHA.** `checkout`, `setup-uv`,
+  `upload/download-artifact`, and `gh-action-pypi-publish` are pinned to verified
+  SHAs (with version comments) instead of mutable tags.
+- **`config.example.json`:** `auto_search` set to `false` to match the safe code
+  default (was `true`, which could surprise users copying the example verbatim).
+
 ## [0.12.1] - 2026-06-03
 
 ### Fixed
@@ -117,6 +145,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [#26]: https://github.com/epheterson/applemusic-mcp/issues/26
 [#28]: https://github.com/epheterson/applemusic-mcp/issues/28
+[#32]: https://github.com/epheterson/applemusic-mcp/issues/32
 
 ## [0.10.5] - 2026-05-13
 

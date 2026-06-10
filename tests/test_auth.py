@@ -1,6 +1,7 @@
 """Tests for auth module."""
 
 import json
+import os
 import time
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -17,6 +18,7 @@ class TestGetConfigDir:
         """Should create config directory if it doesn't exist."""
         # Remove the directory first
         import shutil
+
         shutil.rmtree(mock_config_dir)
         assert not mock_config_dir.exists()
 
@@ -177,6 +179,27 @@ class TestSaveUserToken:
 
         assert data["music_user_token"] == mock_user_token
         assert "created" in data
+
+    @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes only")
+    def test_token_file_is_owner_only_readable(self, mock_config_dir, mock_user_token):
+        """The Music User Token file must be chmod 600 — on a multi-user box other
+        users could otherwise read the token (security issue #32)."""
+        auth.save_user_token(mock_user_token)
+        token_file = mock_config_dir / "music_user_token.json"
+        mode = token_file.stat().st_mode & 0o777
+        assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
+
+
+class TestConfigExample:
+    """The shipped config.example.json must not enable surprising behavior when
+    copied verbatim (security issue #32)."""
+
+    def test_auto_search_defaults_off(self):
+        example = Path(__file__).resolve().parent.parent / "config.example.json"
+        data = json.loads(example.read_text())
+        assert data.get("preferences", {}).get("auto_search") is False, (
+            "config.example.json must ship auto_search=false to match the safe " "code default"
+        )
 
 
 class TestCreateAuthHtml:
