@@ -13,11 +13,18 @@ External security audit + fixes contributed by **Timo Prager-Mai (@777Timo)**
 ([#32]) — thank you. Each fix verified and the pinned Action SHAs checked against
 their upstream releases before merge.
 
-- **CORS hardening (`auth.py`).** The temporary local auth server sent
-  `Access-Control-Allow-Origin: *`, so during the short authorization window any
-  webpage open in the browser could `POST localhost:{port}/save-token` and read
-  back the Music User Token. Restricted to the exact `http://localhost:{port}`
-  origin. (The same change also fixes a latent crash on a missing/malformed
+- **Forged-token injection blocked on the local auth server (`auth.py`).**
+  Follow-up analysis of the audit's CORS finding: the `Access-Control-Allow-Origin`
+  header (tightened from `*` to the exact localhost origin per the audit) cannot
+  by itself stop a cross-origin form POST — simple requests skip CORS preflight
+  and are processed regardless; the header only gates response *reads*. So a
+  malicious webpage open during the auth window could still inject a forged
+  Music User Token into `/save-token`, silently rerouting subsequent library
+  writes to an attacker-readable Apple Music account. Added a server-side
+  **Host + Origin gate** (403 on any non-localhost Host or foreign Origin) on
+  both endpoints — this also blocks DNS-rebinding reads of the auth page (which
+  embeds the developer token). The audit's header fix is kept as defense-in-depth.
+  (The same handler rewrite also fixes a latent crash on a missing/malformed
   `Content-Length` header.)
 - **Token files written `0o600` (`auth.py`).** `developer_token.json` and
   `music_user_token.json` are now owner-read/write only, so other users on a
@@ -27,12 +34,13 @@ their upstream releases before merge.
   flow completes, instead of lingering in `~/.config/applemusic-mcp/`.
 - **Content-Length cap (`auth.py`).** The `/save-token` handler now rejects
   bodies over 64 KB (tokens are <1 KB), closing a local memory-DoS vector.
-- **Third-party GitHub Actions pinned to commit SHA.** `checkout`, `setup-uv`,
-  and `upload/download-artifact` are pinned to verified SHAs (with version
-  comments) instead of mutable tags. `pypa/gh-action-pypi-publish` is left on its
-  maintained `release/v1` branch on purpose — it's PyPA's first-party action
-  using OIDC (no long-lived secret) and `release/v1` is where PyPA ships security
-  patches; pinning it would opt out of those for little gain.
+- **Third-party GitHub Actions pinned to commit SHA.** Adopted the same policy
+  as GitHub's own MCP server: true third parties (`astral-sh/setup-uv`) are
+  pinned to a verified commit SHA (tag mutation on a compromised third-party
+  repo is the real supply-chain risk), while first-party orgs stay on their
+  maintained tags/branches (`actions/*` on tags, `pypa/gh-action-pypi-publish`
+  on `release/v1`) — those channels auto-deliver the org's own security patches,
+  which a stale SHA pin would silently opt out of.
 - **`config.example.json`:** `auto_search` set to `false` to match the safe code
   default (was `true`, which could surprise users copying the example verbatim).
 

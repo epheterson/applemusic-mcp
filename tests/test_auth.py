@@ -190,6 +190,59 @@ class TestSaveUserToken:
         assert mode == 0o600, f"expected 0o600, got {oct(mode)}"
 
 
+class TestIsTrustedLocalRequest:
+    """Server-side Host/Origin gate for the local auth server (issue #32).
+
+    The CORS response header alone cannot stop a cross-origin form POST from
+    being processed (simple requests skip preflight) — this server-side check
+    is what actually blocks forged-token injection and DNS rebinding."""
+
+    PORT = 8765
+
+    def _headers(self, host=None, origin=None):
+        h = {}
+        if host is not None:
+            h["Host"] = host
+        if origin is not None:
+            h["Origin"] = origin
+        return h
+
+    def test_same_origin_post_allowed(self):
+        h = self._headers(host="localhost:8765", origin="http://localhost:8765")
+        assert auth._is_trusted_local_request(h, self.PORT) is True
+
+    def test_same_origin_navigation_without_origin_allowed(self):
+        # Same-origin GET navigations omit the Origin header.
+        h = self._headers(host="localhost:8765")
+        assert auth._is_trusted_local_request(h, self.PORT) is True
+
+    def test_loopback_ip_variant_allowed(self):
+        h = self._headers(host="127.0.0.1:8765", origin="http://127.0.0.1:8765")
+        assert auth._is_trusted_local_request(h, self.PORT) is True
+
+    def test_cross_origin_post_rejected(self):
+        # A malicious page POSTing a forged token: browser sends its Origin.
+        h = self._headers(host="localhost:8765", origin="https://evil.example")
+        assert auth._is_trusted_local_request(h, self.PORT) is False
+
+    def test_dns_rebinding_rejected(self):
+        # evil.example resolving to 127.0.0.1 — browser sends the FOREIGN host.
+        h = self._headers(host="evil.example:8765", origin=None)
+        assert auth._is_trusted_local_request(h, self.PORT) is False
+
+    def test_missing_host_rejected(self):
+        assert auth._is_trusted_local_request(self._headers(), self.PORT) is False
+
+    def test_wrong_port_rejected(self):
+        h = self._headers(host="localhost:9999", origin="http://localhost:9999")
+        assert auth._is_trusted_local_request(h, self.PORT) is False
+
+    def test_null_origin_rejected(self):
+        # Sandboxed iframes / data: URLs send the literal string "null".
+        h = self._headers(host="localhost:8765", origin="null")
+        assert auth._is_trusted_local_request(h, self.PORT) is False
+
+
 class TestConfigExample:
     """The shipped config.example.json must not enable surprising behavior when
     copied verbatim (security issue #32)."""

@@ -52,7 +52,9 @@ def get_user_preferences() -> dict:
         "fetch_explicit": prefs.get("fetch_explicit", False),
         "reveal_on_library_miss": prefs.get("reveal_on_library_miss", False),
         "clean_only": prefs.get("clean_only", False),
-        "auto_search": prefs.get("auto_search", False),  # Default FALSE (don't modify library without permission)
+        "auto_search": prefs.get(
+            "auto_search", False
+        ),  # Default FALSE (don't modify library without permission)
         "storefront": prefs.get("storefront", "us"),  # Apple Music region (default: US)
     }
 
@@ -69,9 +71,7 @@ def generate_developer_token(expiry_days: int = 180) -> str:
     """Generate a developer token (JWT) valid for up to 180 days."""
     config = load_config()
     if not config:
-        raise FileNotFoundError(
-            "No config.json found. Run: applemusic-mcp init"
-        )
+        raise FileNotFoundError("No config.json found. Run: applemusic-mcp init")
     key_path = get_private_key_path(config)
 
     with open(key_path) as f:
@@ -105,9 +105,7 @@ def get_developer_token() -> str:
     """Get existing developer token or raise if not found/expired."""
     token_file = get_config_dir() / "developer_token.json"
     if not token_file.exists():
-        raise FileNotFoundError(
-            "Developer token not found. Run: applemusic-mcp generate-token"
-        )
+        raise FileNotFoundError("Developer token not found. Run: applemusic-mcp generate-token")
 
     with open(token_file) as f:
         data = json.load(f)
@@ -125,9 +123,7 @@ def get_user_token() -> str:
     """Get the music user token or raise if not found."""
     token_file = get_config_dir() / "music_user_token.json"
     if not token_file.exists():
-        raise FileNotFoundError(
-            "Music user token not found. Run: applemusic-mcp authorize"
-        )
+        raise FileNotFoundError("Music user token not found. Run: applemusic-mcp authorize")
 
     with open(token_file) as f:
         data = json.load(f)
@@ -149,7 +145,7 @@ def save_user_token(token: str) -> None:
 
 def create_auth_html(developer_token: str, port: int) -> str:
     """Generate the HTML for browser-based authorization with auto-submit."""
-    return f'''<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html>
 <head>
     <title>Apple Music Authorization</title>
@@ -247,12 +243,12 @@ def create_auth_html(developer_token: str, port: int) -> str:
         }}
     </script>
 </body>
-</html>'''
+</html>"""
 
 
 def create_success_html() -> str:
     """Generate success page HTML."""
-    return '''<!DOCTYPE html>
+    return """<!DOCTYPE html>
 <html>
 <head>
     <title>Authorization Complete</title>
@@ -275,10 +271,37 @@ def create_success_html() -> str:
     <p>Your Music User Token has been saved.</p>
     <p>You can close this window.</p>
 </body>
-</html>'''
+</html>"""
 
 
 _MAX_POST_BYTES = 65_536  # 64 KB — Apple Music tokens are well under 1 KB
+
+
+def _is_trusted_local_request(headers, port: int) -> bool:
+    """Server-side trust check for requests to the local auth server.
+
+    The CORS ``Access-Control-Allow-Origin`` header alone does NOT protect the
+    ``/save-token`` endpoint: a form-encoded POST is a CORS "simple request" —
+    browsers send it without a preflight and the server processes it regardless
+    of that header (CORS only gates whether cross-origin JS can read the
+    response). So a malicious webpage could inject a forged Music User Token
+    during the auth window. This closes that hole server-side:
+
+    - **Host check** (always present): must be our exact localhost host:port.
+      Also defeats DNS rebinding (evil.com resolving to 127.0.0.1 would carry
+      ``Host: evil.com:{port}``).
+    - **Origin check** (browsers send it on all cross-origin POSTs): when
+      present, must be our exact localhost origin. Absent is allowed —
+      same-origin GET navigations omit it.
+    """
+    allowed_hosts = (f"localhost:{port}", f"127.0.0.1:{port}")
+    if headers.get("Host", "") not in allowed_hosts:
+        return False
+    origin = headers.get("Origin")
+    allowed_origins = tuple(f"http://{h}" for h in allowed_hosts)
+    if origin is not None and origin not in allowed_origins:
+        return False
+    return True
 
 
 def run_auth_server(port: int = 8765) -> Optional[str]:
@@ -303,6 +326,13 @@ def run_auth_server(port: int = 8765) -> Optional[str]:
             pass  # Suppress logs
 
         def do_GET(self):
+            # Host/Origin gate: the auth page embeds the developer token, so a
+            # DNS-rebinding page (same-origin from the browser's view, but with
+            # a foreign Host header) must not be able to read it.
+            if not _is_trusted_local_request(self.headers, port):
+                self.send_response(403)
+                self.end_headers()
+                return
             if self.path == "/auth.html" or self.path == "/":
                 self.send_response(200)
                 self.send_header("Content-type", "text/html; charset=utf-8")
@@ -314,6 +344,14 @@ def run_auth_server(port: int = 8765) -> Optional[str]:
                 self.end_headers()
 
         def do_POST(self):
+            # Server-side trust gate — the CORS header below does NOT stop a
+            # cross-origin simple POST from being processed; this does. Closes
+            # forged-token injection from a malicious webpage during the auth
+            # window (see _is_trusted_local_request).
+            if not _is_trusted_local_request(self.headers, port):
+                self.send_response(403)
+                self.end_headers()
+                return
             if self.path == "/save-token":
                 raw_length = self.headers.get("Content-Length", "0")
                 try:
