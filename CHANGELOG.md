@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-06-10
+
+### Added
+
+Both contributed by **@bluishoul** (#29) — thank you. Validated live on both
+old (1.5.6) and new (1.6.5) Music.app.
+
+- **`library(action="favorites")`** (alias `loved`): list songs marked Favorite
+  in Music.app — closes the long-standing gap where you could love a track via
+  `rate` but never retrieve the loved subset. Version-robust AppleScript:
+  `whose favorited is true` (modern) → `whose loved is true` (legacy) → manual
+  per-track scan, each step wrapped in `try` so an unsupported property name
+  falls through instead of aborting. macOS only (loved status isn't exposed by
+  the catalog REST API). Supports the standard `limit`/`offset`/`format`/
+  `export` parameters.
+- **Newline-separated batch input for the `track` parameter.** One entry per
+  line now batches — the safe separator for titles that contain commas (e.g.
+  "Take Me Home, Country Roads"). Previously a newline-delimited blob was
+  treated as a single track name. CSV and JSON-array inputs unchanged.
+
 ## [0.12.2] - 2026-06-09
 
 ### Security

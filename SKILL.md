@@ -226,8 +226,13 @@ tell application "Music"
     -- By rating
     tracks of library playlist 1 whose rating > 60  -- 3+ stars
 
-    -- Loved tracks
-    tracks of library playlist 1 whose loved is true
+    -- Favorite (loved) tracks. Music.app renamed Loved -> Favorite and the
+    -- property with it: newer versions use `favorited`, older use `loved`,
+    -- and the unsupported name can fail INSIDE a whose-filter with "The
+    -- variable loved is not defined". Try `whose favorited is true` first,
+    -- fall back to `whose loved is true`, each wrapped in `try`.
+    tracks of library playlist 1 whose favorited is true
+    tracks of library playlist 1 whose loved is true  -- legacy Music versions
 
     -- Recently played (sort by played date)
     tracks of library playlist 1 whose played date > (current date) - 7 * days
