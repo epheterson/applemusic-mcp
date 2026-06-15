@@ -1,8 +1,6 @@
 """Shared test fixtures."""
 
 import json
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -22,46 +20,82 @@ def mock_audit_log_for_all_tests(tmp_path):
         yield log_path
 
 
-# Clean up test playlists after all tests
-@pytest.fixture(scope="session", autouse=True)
-def cleanup_test_playlists():
-    """Remove test debris from the user's Music library at session end.
+# Test debris markers. A playlist/folder is debris if its name starts with
+# one of these prefixes, or exactly matches one of the legacy single names.
+_TEST_NAME_PREFIXES = ("_TEST_", "_VERIFY", "_UI_TEST_", "_SNAPSHOT_TEST_")
+_TEST_NAME_EXACT = ("__TEST_PLAYLIST__", "🧪 Integration Test Playlist")
 
-    Sweeps known test markers used across test classes:
-    - Single names (legacy): __TEST_PLAYLIST__, 🧪 Integration Test Playlist
-    - Prefixed: _TEST_*, _VERIFY*, _UI_TEST_, _SNAPSHOT_TEST_
 
-    Each test ideally cleans up its own debris (per-test setUp/tearDown),
-    but interrupted runs and intermittent iCloud sync hiccups leave behind
-    playlists/folders that pollute the user's library. This is the safety
-    net.
+def _sweep_test_debris():
+    """Delete all test playlists AND folders from the live Music library.
+
+    Idempotent and duplicate-safe: Music.app cheerfully allows duplicate
+    names, so the sweep matches by prefix and deletes every hit.
+
+    Covers BOTH collections. `folder playlist` is a *separate* collection
+    that `every user playlist` does NOT include — the earlier teardown
+    looped only user playlists, so every test folder (`_TEST_RENAME_FOLDER_`
+    et al.) leaked forever. Folders are swept first so deleting a folder
+    also takes any test playlists nested inside it.
     """
-    yield  # Run tests first
-
     if not asc.is_available():
         return
 
     # Single-name targets to delete unconditionally if present.
-    for name in ("__TEST_PLAYLIST__", "🧪 Integration Test Playlist"):
+    for name in _TEST_NAME_EXACT:
         try:
             asc.delete_playlist(name)
         except Exception:
             pass
 
-    # Prefix-match targets: enumerate user playlists + folders and delete
-    # any whose name starts with a known test marker. Wrapped in a single
-    # AppleScript for efficiency (one shell-out instead of N).
-    asc.run_applescript("""
+    # Prefix-match sweep over folders then user playlists, in one shell-out.
+    conds = " or ".join(f'(pn starts with "{p}")' for p in _TEST_NAME_PREFIXES)
+    asc.run_applescript(f"""
 tell application "Music"
+    repeat with p in (every folder playlist)
+        try
+            set pn to name of p
+            if {conds} then
+                try
+                    delete p
+                end try
+            end if
+        end try
+    end repeat
     repeat with p in (every user playlist)
-        set pn to name of p
-        if (pn starts with "_TEST_") or (pn starts with "_VERIFY") or (pn starts with "_UI_TEST_") or (pn starts with "_SNAPSHOT_TEST_") then
-            try
-                delete p
-            end try
-        end if
+        try
+            set pn to name of p
+            if {conds} then
+                try
+                    delete p
+                end try
+            end if
+        end try
     end repeat
 end tell""")
+
+
+# Clean up test playlists/folders before AND after the test session.
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_test_playlists():
+    """Safety net that keeps the user's Music library free of test debris.
+
+    Sweeps known test markers across all test classes:
+    - Single names (legacy): __TEST_PLAYLIST__, 🧪 Integration Test Playlist
+    - Prefixed: _TEST_*, _VERIFY*, _UI_TEST_, _SNAPSHOT_TEST_
+
+    Runs the sweep TWICE:
+    - Pre-clean (before yield) heals debris left by a previously interrupted
+      run (Ctrl-C, timeout, crash) so this run starts from a clean library.
+    - Teardown (after yield) removes this run's debris.
+
+    Each test should still clean up its own debris inline, but an assertion
+    failure aborts a test before its inline cleanup runs — so without this
+    net the library slowly fills with `_TEST_*` junk.
+    """
+    _sweep_test_debris()  # pre-clean
+    yield
+    _sweep_test_debris()  # teardown
 
 
 @pytest.fixture
@@ -76,6 +110,7 @@ def temp_config_dir(tmp_path):
 def mock_config_dir(temp_config_dir, monkeypatch):
     """Patch get_config_dir to use temp directory."""
     from applemusic_mcp import auth
+
     monkeypatch.setattr(auth, "DEFAULT_CONFIG_DIR", temp_config_dir)
     return temp_config_dir
 
@@ -86,7 +121,7 @@ def sample_config():
     return {
         "team_id": "TEST_TEAM_ID",
         "key_id": "TEST_KEY_ID",
-        "private_key_path": "~/.config/applemusic-mcp/AuthKey_TEST.p8"
+        "private_key_path": "~/.config/applemusic-mcp/AuthKey_TEST.p8",
     }
 
 
