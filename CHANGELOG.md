@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`library(action="search")` now honors `limit` on macOS.** The AppleScript
+  search path ignored `limit` and always returned up to 100 hits, so `limit=5`
+  still produced a full screenful. It now returns exactly the requested count.
+
+### Added
+
+- **Paging for `library(action="search")`.** `offset` pages through hits beyond
+  the first screenful (previously capped at the first 100 with no way to reach
+  the rest), and the text header shows `start-end of total` so it's clear when
+  more results remain. Backed by O(limit) AppleScript range access, mirroring
+  `action="browse"`.
+
 ## [0.13.0] - 2026-06-10
 
 ### Added

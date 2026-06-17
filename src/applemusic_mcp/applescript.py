@@ -2388,35 +2388,73 @@ def get_library_songs_page(offset: int, limit: int) -> tuple[bool, list[dict], i
     return True, tracks, total, ""
 
 
-def search_library(query: str, types: str = "all") -> tuple[bool, list[dict]]:
-    """Search the local library.
+def _library_search_source(query: str, types: str) -> str:
+    """Build the AppleScript expression that yields the ``searchResults`` list.
+
+    For ``types="genre"`` we filter on the track's genre field directly. Music.app's
+    ``search … for`` full-text command never looks at the genre field, so routing a
+    genre name through it would false-match tracks merely *named* after the genre
+    (e.g. searching "Rock" returning a pop song titled "Rock Your Body"). The other
+    types keep the existing full-text search with its kind modifier.
 
     Args:
-        query: Search query
-        types: Type of search - "all", "artists", "albums", "songs"
+        query: Search query (genre name for ``types="genre"``)
+        types: "all", "artists", "albums", "songs", or "genre"
 
     Returns:
-        Tuple of (success, list of track dicts or error)
+        An AppleScript expression assignable to ``searchResults``.
     """
-    safe_query = _escape_for_applescript(query)
+    safe = _escape_for_applescript(query)
+    if types == "genre":
+        return f'(every track of library playlist 1 whose genre contains "{safe}")'
 
-    # Map search types to AppleScript search kinds
+    # Map search types to AppleScript full-text search kinds
     search_map = {
         "all": "",
         "artists": "only artists",
         "albums": "only albums",
         "songs": "only songs",
     }
-    search_modifier = search_map.get(types, "")
+    modifier = search_map.get(types, "")
+    return f'search library playlist 1 for "{safe}" {modifier}'
 
+
+def search_library_page(
+    query: str, types: str = "all", offset: int = 0, limit: int = 100
+) -> tuple[bool, list[dict], int, str]:
+    """Search the local library, returning one offset/limit page plus the total hit count.
+
+    Mirrors :func:`get_library_songs_page`: Music runs its native search (or the
+    genre filter), then we slice the result list with O(limit) range access
+    (``items start through end``) so paging past the first screenful of hits is
+    cheap. The legacy path capped output at the first 100 hits with no way to
+    reach the rest.
+
+    Args:
+        query: Search query (genre name for ``types="genre"``)
+        types: "all", "artists", "albums", "songs", or "genre"
+        offset: Zero-based starting position
+        limit: Number of hits to return (must be > 0)
+
+    Returns:
+        Tuple of (success, tracks, total_count, error)
+    """
+    if limit <= 0:
+        return False, [], 0, "limit must be > 0"
+
+    start_pos = offset + 1
+    end_pos = offset + limit
     script = f"""
     tell application "Music"
-        set searchResults to search library playlist 1 for "{safe_query}" {search_modifier}
-        set output to ""
-        set maxResults to 100
-        set resultCount to 0
-        repeat with t in searchResults
-            if resultCount >= maxResults then exit repeat
+        set searchResults to {_library_search_source(query, types)}
+        set total to count of searchResults
+        set output to "total:" & total & "\\n"
+        if total is 0 or {offset} >= total then
+            return output
+        end if
+        set endPos to {end_pos}
+        if endPos > total then set endPos to total
+        repeat with t in items {start_pos} through endPos of searchResults
             try
                 set tName to name of t
                 set tArtist to artist of t
@@ -2439,7 +2477,6 @@ def search_library(query: str, types: str = "all") -> tuple[bool, list[dict]]:
                     set tExplicit to false
                 end try
                 set output to output & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & tDuration & "|||" & tGenre & "|||" & tYear & "|||" & tId & "|||" & tExplicit & "\\n"
-                set resultCount to resultCount + 1
             on error
                 -- skip inaccessible tracks (broken file references, error -1728)
             end try
@@ -2449,9 +2486,40 @@ def search_library(query: str, types: str = "all") -> tuple[bool, list[dict]]:
     """
     success, output = run_applescript(script)
     if not success:
-        return False, output
+        return False, [], 0, output
 
-    tracks = [t for t in (_parse_library_track_line(line) for line in output.split("\n")) if t]
+    total = 0
+    tracks = []
+    for line in output.split("\n"):
+        if line.startswith("total:"):
+            try:
+                total = int(line[6:].strip())
+            except ValueError:
+                pass
+            continue
+        parsed = _parse_library_track_line(line)
+        if parsed:
+            tracks.append(parsed)
+    return True, tracks, total, ""
+
+
+def search_library(query: str, types: str = "all") -> tuple[bool, list[dict]]:
+    """Search the local library (first 100 hits).
+
+    Thin wrapper over :func:`search_library_page` for callers that only need
+    matches to resolve or verify a track and never page. Preserves the
+    ``(success, tracks)`` shape that existing callers unpack.
+
+    Args:
+        query: Search query
+        types: Type of search - "all", "artists", "albums", "songs", "genre"
+
+    Returns:
+        Tuple of (success, list of track dicts or error message string)
+    """
+    success, tracks, _total, error = search_library_page(query, types, offset=0, limit=100)
+    if not success:
+        return False, error
     return True, tracks
 
 

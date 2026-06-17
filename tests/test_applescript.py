@@ -357,6 +357,36 @@ class TestLibrarySearch:
             assert "id" in t
 
 
+class TestGenreSearch:
+    """Searching the local library by genre.
+
+    Music.app's ``search … for`` full-text command does NOT look at the genre
+    field, so passing a genre name through it false-matches tracks whose
+    name/album merely contain that word. ``types="genre"`` must instead filter
+    on the genre field itself via ``whose genre contains …``.
+    """
+
+    def test_genre_search_filters_by_genre_field(self):
+        """types='genre' selects by the genre field, not full-text search."""
+        source = asc._library_search_source("Rock", "genre")
+        assert 'whose genre contains "Rock"' in source
+        # The whole point: must NOT fall back to full-text search, which would
+        # match songs/albums named "...Rock..." regardless of their genre.
+        assert "search library playlist 1 for" not in source
+
+    def test_genre_search_escapes_query(self):
+        """A genre containing a quote is escaped (no AppleScript injection)."""
+        source = asc._library_search_source('Rock" & evil', "genre")
+        assert '\\"' in source
+        assert 'search library playlist 1 for' not in source
+
+    def test_non_genre_search_still_uses_fulltext(self):
+        """Non-genre types keep the existing full-text search behavior."""
+        source = asc._library_search_source("love", "songs")
+        assert 'search library playlist 1 for "love"' in source
+        assert "only songs" in source
+
+
 class TestGetLibrarySongsPage:
     """Integration tests for get_library_songs_page (O(limit) range access)."""
 

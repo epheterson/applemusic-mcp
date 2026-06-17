@@ -3826,14 +3826,14 @@ def library(
     rate_action: str = "",
     stars: int = 0,
 ) -> str:
-    """Your library. Actions: search, add, recently_played, recently_added, browse, favorites (macOS), rate, remove (macOS), snapshot. action='search' searches the user's local library only — for catalog (Apple Music's full library) use catalog(action='search'). action='favorites' lists songs marked Favorite (loved) in Music.app. action='add' on tokenless macOS uses Music.app UI automation (Accessibility permissions required) to add catalog tracks; with an API token, uses the REST API."""
+    """Your library. Actions: search, add, recently_played, recently_added, browse, favorites (macOS), rate, remove (macOS), snapshot. action='search' searches the user's local library only — for catalog (Apple Music's full library) use catalog(action='search'). For search, types can be 'songs' (default), 'artists', 'albums', 'all', or 'genre' — types='genre' lists the user's own tracks whose genre matches query (e.g. query='Rock'); genre filtering is macOS-only (local Music app). Search returns one page: limit (default 25) caps results and offset pages through larger result sets — the text header shows 'start-end of total' so you know when more remain. action='favorites' lists songs marked Favorite (loved) in Music.app. action='add' on tokenless macOS uses Music.app UI automation (Accessibility permissions required) to add catalog tracks; with an API token, uses the REST API."""
     action = action.lower().strip().replace("-", "_")
 
     if action == "search":
         if not query:
             return "Error: query is required for search action"
         return _library_search(
-            query, types, limit, format, export, full, fetch_explicit, clean_only
+            query, types, limit, offset, format, export, full, fetch_explicit, clean_only
         )
     elif action == "add":
         return _library_add(track, album, artist)
@@ -3881,6 +3881,7 @@ def _library_search(
     query: str,
     types: str = "songs",
     limit: int = 25,
+    offset: int = 0,
     format: str = "text",
     export: str = "none",
     full: bool = False,
@@ -3895,10 +3896,18 @@ def _library_search(
     if clean_only is None:
         clean_only = prefs["clean_only"]
 
+    # Search returns one offset/limit page; "all" isn't supported because a broad
+    # query can match thousands of tracks. Normalize non-positive limits so they
+    # page instead of erroring out in the AppleScript range access.
+    if limit <= 0:
+        limit = 25
+
     # Try AppleScript on macOS (faster for local searches)
     asc_error: Optional[str] = None
     if APPLESCRIPT_AVAILABLE:
-        success, results = asc.search_library(query, types)
+        success, results, total, as_err = asc.search_library_page(
+            query, types, offset=offset, limit=limit
+        )
         if success and results:
             # Enrich with explicit status if requested
             if fetch_explicit or clean_only:
@@ -3921,12 +3930,20 @@ def _library_search(
             if clean_only:
                 results = [t for t in results if t.get("explicit") != "Yes"]
 
-            return format_output(results, format, export, full, f"search_{query[:20]}")
+            return format_output(
+                results,
+                format,
+                export,
+                full,
+                f"search_{query[:20]}",
+                total_count=total,
+                offset=offset,
+            )
         if not success:
             # Capture so the API-fallback error path can surface what really
             # broke. Without this, an AS failure followed by missing-token
             # would only show "Developer token not found" — hiding the cause.
-            asc_error = str(results) if results else "AppleScript search failed"
+            asc_error = as_err or "AppleScript search failed"
         else:
             # AS succeeded with zero results — the song is genuinely not in
             # the user's library. On a tokenless macOS host, cascading to
@@ -3945,13 +3962,29 @@ def _library_search(
         # AppleScript failed or returned empty (and we have a token) - fall
         # through to API.
 
+    # Genre filtering is a local-library capability. The /me/library/search API
+    # has no genre filter, so a full-text fallback on the genre name would
+    # false-match (e.g. "Rock" hitting a song titled "Rock Your Body"). Stop with
+    # a clear message instead of silently degrading to wrong results.
+    if types == "genre":
+        hint = f" (AppleScript error: {asc_error})" if asc_error else ""
+        return (
+            "Searching the library by genre needs the local Music app on macOS; "
+            f"it isn't available through the Apple Music API.{hint}"
+        )
+
     # API fallback (or primary on non-macOS)
     try:
         headers = get_headers()
         response = requests.get(
             f"{BASE_URL}/me/library/search",
             headers=headers,
-            params={"term": query, "types": "library-songs", "limit": min(limit, 25)},
+            params={
+                "term": query,
+                "types": "library-songs",
+                "limit": min(limit, 25),
+                "offset": offset,
+            },
             timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()

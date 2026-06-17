@@ -427,6 +427,30 @@ class TestSearchLibrary:
         assert "Oasis" in result
         assert "i.abc123" in result
 
+    @responses.activate
+    def test_genre_search_does_not_fall_back_to_fulltext_api(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """Genre filtering is local-only; it must not degrade to the API full-text
+        search, which has no genre filter and would false-match on the genre name."""
+        # No AppleScript + a valid token is exactly the case that used to cascade
+        # into /me/library/search.
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+
+        dev_token_file = mock_config_dir / "developer_token.json"
+        with open(dev_token_file, "w") as f:
+            json.dump({"token": mock_developer_token, "expires": time.time() + 86400 * 60}, f)
+        user_token_file = mock_config_dir / "music_user_token.json"
+        with open(user_token_file, "w") as f:
+            json.dump({"music_user_token": mock_user_token}, f)
+
+        # Deliberately register NO /me/library/search mock: any call there would
+        # raise ConnectionError and surface as "API Error", failing the assert.
+        result = server.library(action="search", query="Rock", types="genre")
+
+        assert "API Error" not in result
+        assert "genre" in result.lower()
+
 
 class TestSearchCatalog:
     """Tests for search_catalog function."""
@@ -3154,6 +3178,73 @@ class TestAppleScriptPerTrackGuards:
         assert "limit must be > 0" in error
         assert ran == [], "AppleScript must not run when limit <= 0"
 
+    def test_search_library_page_parses_total_and_slice(self):
+        """search_library_page parses the total: header line and returns the page tracks."""
+        from applemusic_mcp import applescript as asc
+
+        fake_output = "total:42\nAlpha|||Artist A|||Album A|||180.0|||Rock|||2020|||PID1|||false\n"
+        with patch.object(asc, "run_applescript", lambda _: (True, fake_output)):
+            success, tracks, total, error = asc.search_library_page(
+                "alpha", "songs", offset=0, limit=10
+            )
+
+        assert success is True
+        assert total == 42
+        assert len(tracks) == 1
+        assert tracks[0]["name"] == "Alpha"
+        assert tracks[0]["id"] == "PID1"
+        assert error == ""
+
+    def test_search_library_page_script_uses_range_slice(self):
+        """search_library_page slices searchResults by offset/limit (O(limit) range
+        access) instead of always capping at the first 100 hits."""
+        from applemusic_mcp import applescript as asc
+
+        captured = {}
+
+        def fake_run(script):
+            captured["script"] = script
+            return True, "total:0\n"
+
+        with patch.object(asc, "run_applescript", fake_run):
+            asc.search_library_page("query", "songs", offset=10, limit=5)
+
+        s = captured["script"]
+        assert "search library playlist 1 for" in s
+        assert "count of searchResults" in s
+        assert "items 11 through" in s  # offset 10 -> 1-based start 11
+        assert "skip inaccessible tracks" in s
+
+    def test_search_library_page_guards_invalid_limit(self):
+        """search_library_page with limit <= 0 returns an error without running AppleScript."""
+        from applemusic_mcp import applescript as asc
+
+        ran = []
+        with patch.object(asc, "run_applescript", lambda _: ran.append(True) or (True, "")):
+            success, tracks, total, error = asc.search_library_page(
+                "q", "songs", offset=0, limit=0
+            )
+
+        assert success is False
+        assert tracks == []
+        assert total == 0
+        assert "limit must be > 0" in error
+        assert ran == [], "AppleScript must not run when limit <= 0"
+
+    def test_search_library_keeps_two_tuple_return(self):
+        """search_library must keep its (success, tracks) shape so the ~6 existing
+        callers that unpack two values don't break."""
+        from applemusic_mcp import applescript as asc
+
+        fake_output = "total:1\nAlpha|||Artist A|||Album A|||180.0|||Rock|||2020|||PID1|||false\n"
+        with patch.object(asc, "run_applescript", lambda _: (True, fake_output)):
+            result = asc.search_library("alpha", "songs")
+
+        assert len(result) == 2, "search_library must stay a 2-tuple"
+        success, tracks = result
+        assert success is True
+        assert tracks[0]["name"] == "Alpha"
+
     def test_search_library_script_wraps_per_track(self):
         from applemusic_mcp import applescript as asc
 
@@ -3185,6 +3276,98 @@ class TestAppleScriptPerTrackGuards:
         assert "skip inaccessible tracks" in s
 
 
+class TestLibrarySearchPagination:
+    """library(action='search') must honor limit and offset on macOS.
+
+    Regression guard: the original AppleScript path called search_library without
+    a limit and never sliced the result, so limit=N was silently ignored and the
+    caller always got up to 100 hits with no way to page past them.
+    """
+
+    @staticmethod
+    def _fake_page_factory(captured, total):
+        def fake_page(query, types, offset=0, limit=100):
+            captured["query"] = query
+            captured["types"] = types
+            captured["offset"] = offset
+            captured["limit"] = limit
+            tracks = [
+                {
+                    "name": f"S{i}",
+                    "artist": "A",
+                    "album": "Al",
+                    "duration": "3:00",
+                    "genre": "R",
+                    "year": "2020",
+                    "id": f"id{offset + i}",
+                    "explicit": "No",
+                }
+                for i in range(limit)
+            ]
+            return True, tracks, total, ""
+
+        return fake_page
+
+    def test_search_forwards_limit_and_offset_to_page(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        captured = {}
+        monkeypatch.setattr(
+            server.asc, "search_library_page", self._fake_page_factory(captured, total=100)
+        )
+
+        server.library(
+            action="search",
+            query="x",
+            types="songs",
+            limit=5,
+            offset=10,
+            fetch_explicit=False,
+            clean_only=False,
+        )
+
+        assert captured["limit"] == 5, "limit must reach the AppleScript page query"
+        assert captured["offset"] == 10, "offset must reach the AppleScript page query"
+
+    def test_search_returns_only_limit_results(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        captured = {}
+        monkeypatch.setattr(
+            server.asc, "search_library_page", self._fake_page_factory(captured, total=100)
+        )
+
+        result = server.library(
+            action="search",
+            query="x",
+            types="songs",
+            limit=5,
+            offset=0,
+            format="json",
+            fetch_explicit=False,
+            clean_only=False,
+        )
+
+        assert len(json.loads(result)) == 5, "limit=5 must yield exactly 5 results, not 100"
+
+    def test_search_shows_pagination_header(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        captured = {}
+        monkeypatch.setattr(
+            server.asc, "search_library_page", self._fake_page_factory(captured, total=100)
+        )
+
+        result = server.library(
+            action="search",
+            query="x",
+            types="songs",
+            limit=5,
+            offset=0,
+            fetch_explicit=False,
+            clean_only=False,
+        )
+
+        assert "of 100" in result, "text output should show total count for paging"
+
+
 class TestLibrarySearchSurfacesAppleScriptError:
     """When both AS and API fail, the message should expose BOTH causes."""
 
@@ -3194,10 +3377,10 @@ class TestLibrarySearchSurfacesAppleScriptError:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
 
         # AppleScript fails outright
-        def fake_search(query, types):
-            return False, "AppleScript exited with code 1"
+        def fake_page(query, types, offset=0, limit=100):
+            return False, [], 0, "AppleScript exited with code 1"
 
-        monkeypatch.setattr(server.asc, "search_library", fake_search)
+        monkeypatch.setattr(server.asc, "search_library_page", fake_page)
 
         # API path raises the legacy token error
         def fake_get_headers():
@@ -3228,10 +3411,10 @@ class TestLibrarySearchSurfacesAppleScriptError:
 
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
 
-        def fake_search(query, types):
-            return False, "Music app not running"
+        def fake_page(query, types, offset=0, limit=100):
+            return False, [], 0, "Music app not running"
 
-        monkeypatch.setattr(server.asc, "search_library", fake_search)
+        monkeypatch.setattr(server.asc, "search_library_page", fake_page)
 
         with resp_lib.RequestsMock() as r:
             r.add(
@@ -3903,7 +4086,7 @@ class TestLibrarySearchEmptyDoesNotLeakToken:
 
         mock_asc = MagicMock()
         # AS search succeeds but returns zero hits (song not in library)
-        mock_asc.search_library.return_value = (True, [])
+        mock_asc.search_library_page.return_value = (True, [], 0, "")
         mock_asc.classify_error = real_asc.classify_error
         mock_asc.ERROR_UNKNOWN = real_asc.ERROR_UNKNOWN
         mock_asc.ERROR_AUTOMATION_DENIED = real_asc.ERROR_AUTOMATION_DENIED
@@ -3950,7 +4133,7 @@ class TestLibrarySearchEmptyDoesNotLeakToken:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
 
         mock_asc = MagicMock()
-        mock_asc.search_library.return_value = (True, [])  # AS empty
+        mock_asc.search_library_page.return_value = (True, [], 0, "")  # AS empty
         from applemusic_mcp import applescript as real_asc
 
         mock_asc.classify_error = real_asc.classify_error
@@ -3989,7 +4172,7 @@ class TestLibrarySearchEmptyDoesNotLeakToken:
 
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         mock_asc = MagicMock()
-        mock_asc.search_library.return_value = (True, [])
+        mock_asc.search_library_page.return_value = (True, [], 0, "")
         mock_asc.classify_error = real_asc.classify_error
         monkeypatch.setattr(server, "asc", mock_asc)
         monkeypatch.setattr(server, "_has_developer_token", lambda: False)
@@ -4005,7 +4188,7 @@ class TestLibrarySearchEmptyDoesNotLeakToken:
 
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         mock_asc = MagicMock()
-        mock_asc.search_library.return_value = (True, [])
+        mock_asc.search_library_page.return_value = (True, [], 0, "")
         mock_asc.classify_error = real_asc.classify_error
         monkeypatch.setattr(server, "asc", mock_asc)
         monkeypatch.setattr(server, "_has_developer_token", lambda: False)
