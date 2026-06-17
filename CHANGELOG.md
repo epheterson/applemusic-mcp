@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Genre search for `library(action="search")`.** `types="genre"` lists your
+  own tracks whose genre matches the query (e.g. `query="Rock"`), filtering on
+  the track's genre field. macOS-only (local Music app); without it the call
+  reports that genre filtering isn't available through the Apple Music API.
+
 - **Paging for `library(action="search")`.** `offset` pages through hits beyond
   the first screenful (previously capped at the first 100 with no way to reach
   the rest), and the text header shows `start-end of total` so it's clear when
