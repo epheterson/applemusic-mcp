@@ -3953,6 +3953,14 @@ def _library_search(
             # misleading-message bug v0.9.3 and v0.9.4 fought against. Only
             # cascade when a token is actually configured (the API may see
             # cloud-synced tracks AS hasn't seen yet).
+            #
+            # Genre is local-only and never cascades to the API, so a zero
+            # result means zero — say so plainly. Without this, a configured
+            # token would fall through to the genre-unavailable message below
+            # and wrongly tell a macOS user genre search "isn't available"
+            # when it ran fine and simply matched nothing.
+            if types == "genre":
+                return f"No tracks found in library with genre matching " f"'{query}'."
             if not _has_developer_token():
                 return (
                     f"No {types} found in library. "

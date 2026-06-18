@@ -5,13 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- **`library(action="search")` now honors `limit` on macOS.** The AppleScript
-  search path ignored `limit` and always returned up to 100 hits, so `limit=5`
-  still produced a full screenful. It now returns exactly the requested count.
+## [0.14.0] - 2026-06-17
 
 ### Added
 
@@ -19,12 +13,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own tracks whose genre matches the query (e.g. `query="Rock"`), filtering on
   the track's genre field. macOS-only (local Music app); without it the call
   reports that genre filtering isn't available through the Apple Music API.
+  Thanks @Tosd0 (#35).
 
 - **Paging for `library(action="search")`.** `offset` pages through hits beyond
   the first screenful (previously capped at the first 100 with no way to reach
   the rest), and the text header shows `start-end of total` so it's clear when
   more results remain. Backed by O(limit) AppleScript range access, mirroring
-  `action="browse"`.
+  `action="browse"`. Thanks @Tosd0 (#35).
+
+### Fixed
+
+- **`library(action="search")` now honors `limit` on macOS.** The AppleScript
+  search path ignored `limit` and always returned up to 100 hits, so `limit=5`
+  still produced a full screenful. It now returns exactly the requested count.
+  Thanks @Tosd0 (#35).
+
+- **Genre search with zero matches no longer reports "not available."** On a
+  macOS host with a developer token configured, a genre search that genuinely
+  matched no tracks fell through to the API-fallback guard and wrongly claimed
+  genre filtering "isn't available through the Apple Music API." It now returns
+  a plain "No tracks found" — genre is local-only and never cascades to the API.
+
+### Internal
+
+- **Test suite no longer leaks `_TEST_*` folders into the user's library.** The
+  session cleanup fixture swept only `user playlist`; Music's `folder playlist`
+  is a separate collection, so every test folder leaked. The sweep now covers
+  folders and playlists and runs as both pre-clean and teardown.
 
 ## [0.13.0] - 2026-06-10
 
