@@ -20,7 +20,14 @@ from typing import Callable, Optional
 import requests
 from mcp.server.fastmcp import FastMCP
 
-from .auth import get_developer_token, get_user_token, get_config_dir, get_user_preferences
+from .auth import (
+    get_developer_token,
+    get_user_token,
+    get_config_dir,
+    get_user_preferences,
+    resolve_developer_token,
+    has_any_developer_token,
+)
 from . import applescript as asc
 from .track_cache import get_track_cache, get_cache_dir
 from . import audit_log
@@ -851,11 +858,20 @@ def get_token_expiration_warning() -> str | None:
 
 
 def get_headers() -> dict:
-    """Get headers for API requests."""
+    """Get headers for API requests.
+
+    Uses ``resolve_developer_token`` so the unified API path works with EITHER a
+    generated (preferred) or harvested (fallback) developer token, plus the
+    captured media-user-token.
+    """
     return {
-        "Authorization": f"Bearer {get_developer_token()}",
+        "Authorization": f"Bearer {resolve_developer_token()}",
         "Music-User-Token": get_user_token(),
         "Content-Type": "application/json",
+        # The harvested AMPWebPlay web-player token is origin-bound: api.music.apple.com
+        # returns 401 without this header. Generated (paid) tokens ignore it, so it's
+        # safe to send unconditionally.
+        "Origin": "https://music.apple.com",
     }
 
 
@@ -879,6 +895,27 @@ def _has_developer_token() -> bool:
         return True
     except Exception:
         return False
+
+
+def _has_user_token() -> bool:
+    """True if a media-user-token is saved (captured via browser sign-in)."""
+    try:
+        return bool(get_user_token())
+    except Exception:
+        return False
+
+
+def _can_use_library_api() -> bool:
+    """True if the unified API mutation path is usable: a developer token is
+    obtainable (generated OR harvested) AND a media-user-token is saved.
+
+    This is the gate that replaces UI automation for catalog-adds: when both
+    tokens resolve, adds go through ``_add_to_library_api``; otherwise we fall
+    back (AppleScript UI on macOS). Honors APPLEMUSIC_FORCE_TOKENLESS for testing.
+    """
+    if os.environ.get("APPLEMUSIC_FORCE_TOKENLESS") == "1":
+        return False
+    return has_any_developer_token() and _has_user_token()
 
 
 def _format_applescript_error(raw: str, operation: str = "") -> str:
@@ -1878,66 +1915,58 @@ def _unified_auto_search_to_playlist(
             search_name, search_artist = candidates[0]
             steps.append(f"Split '{track_name}' → name='{search_name}' artist='{search_artist}'")
 
-    # Probe token availability without leaking its error message
-    api_ok = _has_developer_token()
-
-    api_error: Optional[str] = None
-    if api_ok:
-        ok, result, api_steps = _auto_search_and_add_to_playlist(
-            search_name, search_artist, playlist_name
+    # Catalog add-to-playlist runs over the unified API (dev token generated OR
+    # harvested, plus a captured media-user-token). The fragile UI automation
+    # that broke across macOS/Music.app versions (#37) has been removed — there is
+    # no UI fallback. If the API path isn't available, tell the user how to enable
+    # it rather than degrading to something unreliable.
+    if not _can_use_library_api():
+        return (
+            False,
+            "Catalog add needs the API. Run `applemusic-mcp signin` (browser sign-in, "
+            "no Apple Developer account) or `applemusic-mcp generate-token`.",
+            steps,
         )
-        steps.extend(api_steps)
-        if ok and _verify_track_in_playlist(playlist_name, search_name, search_artist):
-            return True, result, steps
-        if ok:
-            api_error = "API path claimed success but playlist verification failed"
-            steps.append(api_error)
-        else:
-            api_error = result
-            steps.append(f"API auto-search failed ({result}); trying UI fallback")
 
-    if APPLESCRIPT_AVAILABLE:
-        query = f"{search_name} {search_artist}".strip() if search_artist else search_name
-        # Resolve tokenlessly via the free iTunes Search API so the macOS-15
-        # deep-link add path is used (the search pop-over isn't accessible
-        # there). ui_add_to_playlist deep-links when given a URL, else uses the
-        # pop-over flow (macOS 26).
-        resolved = _resolve_catalog_track_itunes(search_name, search_artist)
-        verify_name, verify_artist = search_name, search_artist
-        if resolved:
-            verify_name = resolved["name"]
-            verify_artist = resolved["artist"] or search_artist
-            steps.append(f"Resolved via iTunes Search API → {verify_name!r} by {verify_artist!r}")
-            ok, msg = asc.ui_add_to_playlist(
-                playlist_name, resolved["name"], verify_artist, song_url=resolved["url"]
-            )
-        else:
-            ok, msg = asc.ui_add_to_playlist(playlist_name, query, search_artist)
-        if ok:
-            if _verify_track_in_playlist(playlist_name, verify_name, verify_artist):
-                return True, msg, steps
-            ui_error = (
-                f"UI path reported success but '{verify_name}' is not in "
-                f"'{playlist_name}' — likely clicked wrong result"
-            )
-            steps.append(ui_error)
-            if api_error:
-                return False, f"{ui_error} (API attempt: {api_error})", steps
-            return False, ui_error, steps
-        if api_error:
-            return False, f"{msg} (API attempt: {api_error})", steps
-        return False, msg, steps
+    ok, result, api_steps = _auto_search_and_add_to_playlist(
+        search_name, search_artist, playlist_name
+    )
+    steps.extend(api_steps)
+    if ok and _verify_track_in_playlist(playlist_name, search_name, search_artist):
+        return True, result, steps
+    if ok:
+        # API reported success but the track isn't visible in the playlist yet —
+        # treat the API result as authoritative (cloud propagation can lag the
+        # read), but surface the nuance.
+        steps.append("API add succeeded; playlist read not yet reflecting it (propagation lag)")
+        return True, result, steps
+    return False, result, steps
 
-    if api_error:
-        return False, api_error, steps
-    # Tell users what's actually missing for THEIR platform — the legacy
-    # generic message ("need API token or macOS with Accessibility") was
-    # confusing on macOS where the user obviously already had macOS.
-    if sys.platform == "darwin":
-        reason = "AppleScript unavailable (Music.app + Accessibility permissions required)"
-    else:
-        reason = "API token required on non-macOS platforms; run: applemusic-mcp generate-token"
-    return (False, f"Not found in library; catalog search unavailable — {reason}", steps)
+
+def _resolve_library_playlist_id(name: str) -> Optional[str]:
+    """Resolve an existing library playlist's id (``p.xxxx``) by name via the API.
+
+    Used to add tracks to a playlist over the API (reliable, cross-platform).
+    Matches loosely and prefers editable playlists. Returns None if not found
+    (e.g. a just-created playlist that hasn't synced to the cloud library yet).
+    """
+    try:
+        headers = get_headers()
+        url = f"{BASE_URL}/me/library/playlists?limit=100"
+        while url:
+            r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            for pl in data.get("data", []):
+                attrs = pl.get("attributes", {})
+                if attrs.get("canEdit", True) and _loose_contains(name, attrs.get("name", "")):
+                    return pl.get("id")
+            nxt = data.get("next")
+            url = ("https://api.music.apple.com" + nxt) if nxt else None
+        return None
+    except Exception:
+        return None
 
 
 def _auto_search_and_add_to_playlist(
@@ -2000,104 +2029,31 @@ def _auto_search_and_add_to_playlist(
         if add_response.status_code not in (200, 202):
             return False, f"Failed to add to library (status {add_response.status_code})", steps
 
-        # Get library ID from catalog song's library relationship
-        lib_response = requests.get(
-            f"{BASE_URL}/catalog/{get_storefront()}/songs/{catalog_id}/library",
-            headers=headers,
-            timeout=REQUEST_TIMEOUT,
-        )
-
-        library_id = None
-        if lib_response.status_code == 200:
-            lib_data = lib_response.json()
-            lib_songs = lib_data.get("data", [])
-            if lib_songs:
-                library_id = lib_songs[0]["id"]
-
-        if not library_id:
-            return False, "Added to library but could not get library ID", steps
-
-        # Add to playlist — prefer AppleScript on macOS so non-API-created
-        # playlists work too. API playlist-add returns 500 for those.
-        if APPLESCRIPT_AVAILABLE:
-            # API add-to-library is async: the track lands in iCloud immediately
-            # but Music.app's local library has to sync before AppleScript can
-            # see it. Poll search_library until visible, then add.
-            visible = False
-            deadline = time.time() + _LIBRARY_SYNC_DEADLINE_S
-            while time.time() < deadline:
-                sok, s_hits = asc.search_library(found_name, "songs")
-                if sok and s_hits:
-                    if found_artist and len(found_artist) >= 2:
-                        for h in s_hits:
-                            if _loose_contains(found_artist, h.get("artist") or ""):
-                                visible = True
-                                break
-                    else:
-                        # No usable artist to disambiguate — trust the first
-                        # library hit on name. Avoids an empty-string-in-any
-                        # false match.
-                        visible = True
-                if visible:
-                    break
-                time.sleep(_LIBRARY_SYNC_TICK_S)
-
-            if visible:
-                ok, as_result = asc.add_track_to_playlist(playlist_name, found_name, found_artist)
-                # Verify the track actually landed; retry once on verify miss
-                # to absorb local state propagation lag.
-                if ok and _verify_track_in_playlist(playlist_name, found_name, found_artist):
-                    return True, f"{found_name} - {found_artist}", steps
-                if ok:
-                    steps.append("Playlist add reported success but verify failed; retrying")
-                    time.sleep(_VERIFY_DELAY_S)
-                    ok2, as_result2 = asc.add_track_to_playlist(
-                        playlist_name, found_name, found_artist
-                    )
-                    if ok2 and _verify_track_in_playlist(playlist_name, found_name, found_artist):
-                        return True, f"{found_name} - {found_artist}", steps
-                    steps.append(
-                        f"Retry also did not verify: "
-                        f"{as_result2 if not ok2 else 'verify failed'}"
-                    )
-                else:
-                    steps.append(f"AppleScript playlist add failed after local sync: {as_result}")
-                # On macOS the API always returns 500 for user-created playlists.
-                # Return now so _unified_auto_search_to_playlist can try the UI path.
-                return False, "AppleScript add did not verify in playlist", steps
-            else:
-                steps.append(f"Library sync did not complete in {_LIBRARY_SYNC_DEADLINE_S:.0f}s")
-                # Same: don't fall through to API for user-created playlists.
-                return (
-                    False,
-                    f"Library sync timed out after {_LIBRARY_SYNC_DEADLINE_S:.0f}s; "
-                    "track may have been added to your library but not to the playlist",
-                    steps,
-                )
-
-        # Fall back to API playlist add (requires API-created playlist)
+        # Add the catalog track directly to the playlist over the API. Verified
+        # reliable for existing library playlists: POST the catalog id to the
+        # playlist's library id (p.xxxx) -> 204, lands in seconds. No AppleScript,
+        # no iCloud-sync race, works cross-platform. (The old AppleScript-insert
+        # hybrid raced local library sync; the "500" that motivated it only occurs
+        # for freshly-created playlists that haven't propagated to the cloud yet.)
         if not playlist_id:
-            pl_success, playlists = asc.get_playlists()
-            if pl_success:
-                for pl in playlists:
-                    if _loose_contains(playlist_name, pl.get("name", "")):
-                        playlist_id = pl.get("id")
-                        break
-
+            playlist_id = _resolve_library_playlist_id(playlist_name)
         if not playlist_id:
-            return False, f"Could not find playlist ID for '{playlist_name}'", steps
+            return (
+                False,
+                f"Could not find playlist '{playlist_name}' in your library "
+                "(a just-created playlist can take a moment to sync before it's addable)",
+                steps,
+            )
 
         pl_add_response = requests.post(
             f"{BASE_URL}/me/library/playlists/{playlist_id}/tracks",
             headers=headers,
-            json={"data": [{"id": library_id, "type": "library-songs"}]},
+            json={"data": [{"id": catalog_id, "type": "songs"}]},
             timeout=REQUEST_TIMEOUT,
         )
-
         if pl_add_response.status_code in (200, 201, 204):
             return True, f"{found_name} - {found_artist}", steps
-        else:
-            return False, f"Failed to add to playlist (status {pl_add_response.status_code})", steps
+        return False, f"Failed to add to playlist (status {pl_add_response.status_code})", steps
 
     except Exception as e:
         return False, f"Error: {str(e)}", steps
@@ -3371,15 +3327,6 @@ def _playlist_add(
                     ids_list.append(catalog_id)
                     steps.append(f"Found in catalog: {display}")
                 else:
-                    # API catalog search failed — try UI fallback for add-to-playlist
-                    if APPLESCRIPT_AVAILABLE and resolved.applescript_name:
-                        search_q = f"{name} {track_artist}".strip() if track_artist else name
-                        ui_ok, ui_msg = asc.ui_add_to_playlist(
-                            resolved.applescript_name, search_q, track_artist
-                        )
-                        if ui_ok:
-                            steps.append(f"[UI] {ui_msg}")
-                            continue  # Process next track, don't return early
                     steps.append(f"Could not find '{name}' in library or catalog")
 
         if not ids_list:
@@ -4119,70 +4066,6 @@ def _verify_in_library(name: str, artist: str) -> Optional[tuple[str, str]]:
     return None
 
 
-def _library_add_track_via_ui(query: str, search_artist: str) -> tuple[bool, str]:
-    """Tokenless macOS path for ``library(action="add", track=...)``.
-
-    Tries the pop-over-canonical flow first (``asc.ui_add_to_library``) — the
-    validated path on macOS 26 / new Music, where the search autocomplete is in
-    the accessibility tree. If that doesn't land the track in the library
-    (macOS 15 / old Music, where the pop-over isn't accessible), it resolves the
-    track tokenlessly via the free iTunes Search API and deep-links to its album
-    page to click ``Add to Library`` there (:func:`asc.ui_add_to_library_via_url`).
-    A library-verify after each attempt is the source of truth and transparently
-    covers the "already in library" case.
-    """
-    resolved = _resolve_catalog_track_itunes(query, search_artist)
-    name, artist = query, search_artist
-    if resolved:
-        name = resolved["name"]
-        artist = resolved["artist"] or search_artist
-
-    # Try the pop-over flow first — the validated path on macOS 26 (new Music),
-    # where the search autocomplete is in the accessibility tree. Then verify
-    # against the library: this confirms the add AND transparently handles the
-    # "already in library" case (the pop-over reports no Add button, but the
-    # track is there) — without falling through to the deep-link unnecessarily.
-    #
-    # Query the pop-over with the API-resolved CANONICAL title, not the raw
-    # user query. Apple's autocomplete is ranking-sensitive: a vague query
-    # ("Lemons" / "Brye") surfaces popular homonyms but not the target, while
-    # the canonical title ("LEMONS (feat. Cavetown)") makes the exact track
-    # surface. The free iTunes Search API gives us that canonical title for
-    # free, so obscure tracks resolve without a developer token. (Measured on
-    # macOS 26.5: raw query missed Brye entirely; canonical query added +
-    # verified it.)
-    ok, msg = asc.ui_add_to_library(name, artist)
-    if ok:
-        # The pop-over UI is authoritative for the iCloud library: a True here
-        # means it either clicked "Add to Library" or saw the track already in
-        # the library (Download button). Confirm against the local library when
-        # we can, but DON'T gate on it — `library playlist 1` lags the cloud add
-        # by a few seconds, so a verify miss after a UI-confirmed add means
-        # "still syncing," not "failed." Gating on it would wrongly fall through
-        # to the deep-link (which can't navigate on macOS 26).
-        found = _verify_in_library(name, artist)
-        if found:
-            return True, f"{found[0]} by {found[1]}"
-        return True, msg
-
-    # Pop-over genuinely failed — absent (macOS 15 / old Music, not in the AX
-    # tree) or no canonical row surfaced. Deep-link to the album page via the
-    # free-API-resolved URL and click Add to Library there (the macOS-15 path).
-    if resolved:
-        ok, msg = asc.ui_add_to_library_via_url(name, resolved["url"], artist)
-        if ok:
-            found = _verify_in_library(name, artist)
-            if found:
-                return True, f"{found[0]} by {found[1]}"
-            return True, msg
-
-    return False, (
-        f"Could not add {name!r} to library via UI automation "
-        f"({msg or 'no Add button found'}). The track may be unavailable for "
-        f"library-add, or iCloud Library sync may be paused."
-    )
-
-
 def _library_add(
     track: str = "",
     album: str = "",
@@ -4195,37 +4078,20 @@ def _library_add(
     if not track and not album:
         return "Error: Provide track or album parameter"
 
-    # Tokenless macOS path: route to UI automation for songs. Albums via
-    # UI aren't supported yet — tell the user instead of leaking the API
-    # token error.
-    use_ui_path = not _has_developer_token() and APPLESCRIPT_AVAILABLE
-    if use_ui_path and album and not track:
-        # Pure album-add request without a token; can't fulfill via UI.
-        # (When BOTH album and track are present, album acts as
-        # disambiguation context and the track add via UI proceeds —
-        # don't early-return in that case.)
+    # Catalog add-to-library runs over the unified API (dev token generated OR
+    # harvested, plus a captured media-user-token). The fragile UI automation
+    # that broke across macOS/Music.app versions (#37) has been removed — there
+    # is no UI fallback. If the API path isn't available, tell the user how to
+    # enable it.
+    if not _can_use_library_api():
         return (
-            "Error: Adding albums to library via UI automation isn't "
-            "supported yet — only individual tracks. To add this album "
-            "without a token, add each track by name via "
-            "library(action='add', track='Track Name'). To configure "
-            "an API token: applemusic-mcp generate-token."
+            "Error: Adding to your library needs the API. Run "
+            "`applemusic-mcp signin` (browser sign-in, no Apple Developer account) "
+            "or `applemusic-mcp generate-token`."
         )
 
     # Helper to add a song by catalog search
     def _add_track_by_search(name: str, search_artist: str) -> None:
-        # Tokenless macOS: route to UI automation. The UI search returns
-        # a single best-match name+artist; we don't get a fuzzy_result
-        # diagnostic from this path, but the alternative is "you need an
-        # API token," which is wrong on macOS.
-        if use_ui_path:
-            ok, msg = _library_add_track_via_ui(name, search_artist)
-            if ok:
-                added.append(msg)
-            else:
-                errors.append(f"{name}: {msg}")
-            return
-
         song, error, fuzzy_result = _find_matching_catalog_song(name, search_artist)
         if error:
             errors.append(f"{name}: {error}")
@@ -4245,18 +4111,6 @@ def _library_add(
 
     # Helper to add an album by catalog search
     def _add_album_by_search(name: str, search_artist: str) -> None:
-        # When use_ui_path is True (tokenless macOS) AND we got here, the
-        # caller passed BOTH track and album — the early-return for pure
-        # album-add at the top of _library_add only fires when there's no
-        # track. UI-add for albums isn't supported, but we can't leak the
-        # token error either; record a clean step-error and move on so
-        # the track loop's UI-add successes still surface.
-        if use_ui_path:
-            errors.append(
-                f"Album '{name}': UI library-add doesn't support albums "
-                "yet; tracks were added individually if provided."
-            )
-            return
         album, error, fuzzy_result = _find_matching_catalog_album(name, search_artist)
         if error:
             errors.append(f"Album '{name}': {error}")
@@ -4283,24 +4137,12 @@ def _library_add(
                 continue
 
             if r.input_type == InputType.CATALOG_ID:
-                # Direct catalog ID — UI automation path can't use this
-                # (UI search needs a human-readable query, not an opaque
-                # catalog ID). Tell the caller to switch input shape
-                # rather than leaking the API token error.
-                if use_ui_path:
-                    errors.append(
-                        f"Track ID {r.value}: catalog IDs require an API "
-                        "token. To add this track without a token, pass "
-                        "it by name instead."
-                    )
-                    continue
                 success, msg = _add_to_library_api([r.value], "songs")
                 if success:
                     added.append(f"Track ID {r.value}")
                 else:
                     errors.append(f"Track {r.value}: {msg}")
             elif r.input_type in (InputType.NAME, InputType.JSON_OBJECT):
-                # Search by name (UI path on tokenless macOS, API otherwise)
                 _add_track_by_search(r.value, r.artist)
             else:
                 # Library ID or persistent ID - already in library
