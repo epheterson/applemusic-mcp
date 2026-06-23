@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "applemusic-mcp"
-version = "0.14.0"
+version = "0.15.0"
 description = "MCP server for Apple Music - playlist management, playback control (macOS), and library access"
 readme = "README.md"
 license = "MIT"
@@ -34,6 +34,11 @@ dependencies = [
     "pyjwt[crypto]>=2.8.0",
     "requests>=2.31.0",
     "cryptography>=41.0.0",
+    # Browser engine for the sign-in / token-capture flow (drives a local Chrome
+    # against music.apple.com). Included by default so the no-Apple-Developer-account
+    # path works out of the box — the sign-in is offered automatically when a token
+    # is needed and none is configured. Uses system Chrome when present.
+    "playwright>=1.44.0",
 ]
 
 [project.optional-dependencies]

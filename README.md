@@ -73,9 +73,19 @@ Add to your MCP client config. **Claude Desktop** (`~/Library/Application Suppor
 
 ## API Setup (Optional on macOS, Required on Windows/Linux)
 
-**Requirements:** Python 3.10+, Apple Music app with subscription, active [Apple Developer Program](https://developer.apple.com/programs/) membership ($99/yr USD).
+Catalog add-to-library and playlist building run over the unified Apple Music API.
+There are **two ways** to enable it — pick one:
 
-Want catalog search, recommendations, and Windows/Linux support? Set up API access.
+- **Option A — Apple Developer token (preferred).** Sanctioned, 6-month token,
+  cleaner rate limits. Best if you have (or will get) an Apple Developer account.
+  Steps 1–3 below.
+- **Option B — Browser sign-in (no Apple Developer account).** A one-time browser
+  login captures your `media-user-token`; the developer token is harvested from
+  Apple's public web player. See [Option B](#option-b--browser-sign-in-no-apple-developer-account).
+
+### Option A — Apple Developer token
+
+**Requirements:** Python 3.10+, Apple Music app with subscription, active [Apple Developer Program](https://developer.apple.com/programs/) membership ($99/yr USD).
 
 ### 1. Get MusicKit Key
 
@@ -107,6 +117,25 @@ applemusic-mcp generate-token   # Creates developer token (180 days)
 applemusic-mcp authorize        # Opens browser for Apple Music auth
 applemusic-mcp status           # Verify everything works
 ```
+
+### Option B — Browser sign-in (no Apple Developer account)
+
+If you don't have an Apple Developer account, just sign in once. This captures
+your `media-user-token` from a local, signed-in Chrome profile (your password
+never touches this tool); the developer token is sourced from Apple's public web
+player.
+
+```bash
+applemusic-mcp signin            # opens Chrome to music.apple.com; sign in once
+applemusic-mcp status            # verify
+```
+
+Uses your installed Google Chrome when present (recommended). One-time sign-in
+persists, so you won't repeat it.
+
+> Note: this uses Apple's web-player API the same way many open-source Apple Music
+> clients do — an unofficial path; your own generated token (Option A) is the
+> sanctioned route.
 
 ### 4. Add to Your MCP Client (Windows/Linux)
 

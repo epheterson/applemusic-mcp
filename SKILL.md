@@ -342,7 +342,16 @@ osascript stderr messages map to a small set of environmental states. When Apple
 
 # UI Automation (macOS)
 
-For catalog features without an API token. Controls Music.app through System Events (Accessibility API) and CoreGraphics (mouse events).
+> **Add-to-library/playlist UI automation was removed in 0.15.0.** Catalog
+> add-to-library and auto_search→playlist run over the **unified Apple Music API**
+> (developer token generated **or** sourced from Apple's public web player, plus a
+> `media-user-token`). The old UI add path was version-fragile (it broke across
+> macOS/Music.app releases, #37). To enable the API path without an Apple Developer
+> account: `applemusic-mcp signin` (one-time browser login captures the
+> media-user-token). The UI primitives below remain only for **playback /
+> play-from-URL** and catalog *search*, not for adding.
+
+The remaining UI automation controls Music.app through System Events (Accessibility API) and CoreGraphics (mouse events).
 
 **Requirements:** Display attached, Music.app visible, Accessibility permissions for System Events (System Settings → Privacy & Security → Accessibility).
 

@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-06-23
+
+### Added
+
+- **Tokenless API path — no $99 Apple Developer account required.** Catalog
+  add-to-library and auto_search→playlist run over the unified Apple Music API
+  even without a generated developer token:
+  - A **developer-token fallback** that sources the public `AMPWebPlay`
+    web-player token (a generated/paid token is still **preferred** — it's the
+    sanctioned path, 6-month validity, cleaner limits).
+  - A **browser sign-in** (`applemusic-mcp signin`) that captures your
+    `media-user-token` once from a local signed-in Chrome profile. Sign in once;
+    it persists. Uses your installed Chrome when present.
+
+### Changed
+
+- **Catalog add-to-library and add-to-playlist now run over the API on every
+  platform.** The version-fragile UI automation that broke across macOS/Music.app
+  releases (#37) has been **removed entirely** — there is no UI add fallback. If
+  no token is configured, the tool tells you to run `signin`/`generate-token`.
+- Add-to-playlist resolves the playlist's library id and posts the catalog track
+  directly over the API — reliable and cross-platform, replacing the AppleScript
+  insert that raced iCloud sync.
+- API requests send an `Origin: https://music.apple.com` header (required by the
+  web-player token; ignored by generated tokens).
+
+### Removed
+
+- `ui_add_to_library`, `ui_add_to_library_via_url`, `ui_add_to_playlist` and their
+  hover/row helpers. Playback control and play-from-URL (AppleScript) are unaffected.
+
+### Notes
+
+- A **brand-new** playlist can take a moment to propagate to the cloud library
+  before it's addable over the API; existing playlists are immediate.
+
 ## [0.14.0] - 2026-06-17
 
 ### Added

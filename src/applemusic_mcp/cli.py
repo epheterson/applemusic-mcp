@@ -78,6 +78,15 @@ def cmd_authorize(args):
     return 1
 
 
+def cmd_signin(args):
+    """Browser sign-in to capture the media-user-token — the no-Apple-Developer-
+    account path. Opens Chrome to music.apple.com; you sign in once and the token
+    is saved for the unified API."""
+    from .browser import _cli_signin
+
+    return _cli_signin()
+
+
 def cmd_status(args):
     """Check authentication status."""
     config_dir = get_config_dir()
@@ -132,6 +141,7 @@ def cmd_status(args):
     # Test API connection
     try:
         import requests
+
         headers = {
             "Authorization": f"Bearer {get_developer_token()}",
             "Music-User-Token": get_user_token(),
@@ -156,6 +166,7 @@ def cmd_status(args):
 def cmd_serve(args):
     """Start the MCP server."""
     from .server import main
+
     main()
 
 
@@ -180,6 +191,12 @@ def main():
     auth_parser = subparsers.add_parser("authorize", help="Authorize with Apple Music")
     auth_parser.add_argument("--port", type=int, default=8765, help="Local server port")
 
+    # signin (browser-based media-user-token capture; no Apple Developer account)
+    subparsers.add_parser(
+        "signin",
+        help="Browser sign-in to capture your media-user-token (no Apple Developer account)",
+    )
+
     # status
     subparsers.add_parser("status", help="Check authentication status")
 
@@ -194,6 +211,8 @@ def main():
         sys.exit(cmd_generate_token(args))
     elif args.command == "authorize":
         sys.exit(cmd_authorize(args))
+    elif args.command == "signin":
+        sys.exit(cmd_signin(args))
     elif args.command == "status":
         sys.exit(cmd_status(args))
     elif args.command == "serve":
