@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import time
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -10,8 +11,107 @@ from typing import Optional
 from urllib.parse import parse_qs
 
 import jwt
+import requests
 
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "applemusic-mcp"
+
+# --- Harvested (fallback) developer token -----------------------------------
+# Apple ships a public developer token (issuer "AMPWebPlay") to every browser
+# that loads music.apple.com, embedded in the web player's JS bundle. It's the
+# fallback dev-token source for users WITHOUT a generated (paid) token — the
+# generated token always takes precedence (legit, 6-month). This is the
+# documented community technique; see docs/plans/browser-first-architecture.md.
+_HARVEST_UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
+_HARVEST_BROWSE_URL = "https://music.apple.com/us/browse"
+_HARVEST_ORIGIN = "https://music.apple.com"
+_HARVEST_TIMEOUT = 15
+# The web player's main JS chunk, e.g. /assets/index~6da982354d.js
+_BUNDLE_RE = re.compile(r"/assets/index~[A-Za-z0-9]+\.js")
+# A complete JWT whose payload segment begins with the AMPWebPlay issuer claim.
+_AMP_TOKEN_RE = re.compile(
+    r"eyJ0eXAiOiJKV1Q[A-Za-z0-9_-]+\.eyJpc3MiOiJBTVBXZWJQbGF5[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
+)
+
+
+def extract_developer_token(bundle_js: str) -> str:
+    """Pure extraction step (no network) — split out for testability. Given the
+    web-player bundle's JS source, return the embedded AMPWebPlay JWT. Raises
+    RuntimeError if not found."""
+    m = _AMP_TOKEN_RE.search(bundle_js)
+    if not m:
+        raise RuntimeError("AMPWebPlay developer token not found in web-player bundle")
+    return m.group(0)
+
+
+def harvest_developer_token() -> str:
+    """Fetch music.apple.com's web-player bundle and extract its public
+    developer token. Network call; raises on failure."""
+    browse = requests.get(_HARVEST_BROWSE_URL, headers=_HARVEST_UA, timeout=_HARVEST_TIMEOUT)
+    m = _BUNDLE_RE.search(browse.text)
+    if not m:
+        raise RuntimeError("Could not locate the web-player JS bundle on music.apple.com")
+    bundle = requests.get(
+        _HARVEST_ORIGIN + m.group(0), headers=_HARVEST_UA, timeout=_HARVEST_TIMEOUT
+    )
+    return extract_developer_token(bundle.text)
+
+
+def _harvested_token_file() -> Path:
+    return get_config_dir() / "harvested_token.json"
+
+
+def _load_harvested_token() -> Optional[str]:
+    """Return a cached harvested token if present and not expiring within a day."""
+    f = _harvested_token_file()
+    if not f.exists():
+        return None
+    try:
+        data = json.loads(f.read_text())
+        if data.get("expires", 0) > time.time() + 86400:
+            return data["token"]
+    except (json.JSONDecodeError, OSError, KeyError):
+        return None
+    return None
+
+
+def _save_harvested_token(token: str) -> None:
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False})
+        exp = int(claims.get("exp", time.time() + 30 * 86400))
+    except Exception:
+        exp = int(time.time() + 30 * 86400)
+    f = _harvested_token_file()
+    f.write_text(json.dumps({"token": token, "expires": exp, "source": "harvested"}, indent=2))
+    os.chmod(f, 0o600)
+
+
+def resolve_developer_token() -> str:
+    """Return a usable developer token, **preferring the generated (paid) one**.
+
+    Order: valid generated token → valid cached harvested token → harvest fresh.
+    The generated token is the legit, recommended path; harvesting is the
+    fallback so users without an Apple Developer account still work.
+    """
+    try:
+        return get_developer_token()  # generated (paid) — preferred
+    except (FileNotFoundError, ValueError):
+        pass
+    cached = _load_harvested_token()
+    if cached:
+        return cached
+    token = harvest_developer_token()
+    _save_harvested_token(token)
+    return token
+
+
+def has_any_developer_token() -> bool:
+    """True if a developer token is obtainable from either source (generated or
+    harvestable). Used for API-vs-fallback feature detection."""
+    try:
+        resolve_developer_token()
+        return True
+    except Exception:
+        return False
 
 
 def get_config_dir() -> Path:
