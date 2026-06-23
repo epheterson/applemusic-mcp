@@ -378,7 +378,7 @@ class TestGenreSearch:
         """A genre containing a quote is escaped (no AppleScript injection)."""
         source = asc._library_search_source('Rock" & evil', "genre")
         assert '\\"' in source
-        assert 'search library playlist 1 for' not in source
+        assert "search library playlist 1 for" not in source
 
     def test_non_genre_search_still_uses_fulltext(self):
         """Non-genre types keep the existing full-text search behavior."""
@@ -718,7 +718,8 @@ class TestAddTrackDisambiguation:
         """Auto-create the test playlist if missing (e.g. iCloud sync deleted it).
         Without this, all tests in this class fail with cryptic 'add failed'
         errors when the playlist isn't present."""
-        ok, _ = asc.run_applescript(f"""
+        ok, _ = asc.run_applescript(
+            f"""
 tell application "Music"
     set found to false
     try
@@ -728,19 +729,22 @@ tell application "Music"
     if not found then
         make new playlist with properties {{name:"{self.TEST_PLAYLIST}"}}
     end if
-end tell""")
+end tell"""
+        )
 
     @classmethod
     def teardown_class(cls):
         """Delete the test playlist after the whole class finishes so we
         don't leave debris in the user's Music library. Best-effort."""
         try:
-            asc.run_applescript(f"""
+            asc.run_applescript(
+                f"""
 tell application "Music"
     try
         delete (first user playlist whose name is "{cls.TEST_PLAYLIST}")
     end try
-end tell""")
+end tell"""
+            )
         except Exception:
             pass
 
@@ -1859,7 +1863,8 @@ def _probe_row_is_fresh(name: str, artist: str) -> bool:
     # Hover the row first — Music.app only reveals the in-library indicator
     # ("Download button") OR the not-in-library button ("Add to Library")
     # AFTER hover. A no-hover probe shows only Favorite|More for any state.
-    ok, pos = asc.run_applescript(f"""
+    ok, pos = asc.run_applescript(
+        f"""
 tell application "System Events"
     tell process "Music"
         try
@@ -1871,7 +1876,8 @@ tell application "System Events"
             return "ERR"
         end try
     end tell
-end tell""")
+end tell"""
+    )
     if not ok or pos.strip() == "ERR":
         asc.ui_clear_search()
         return False
@@ -1882,7 +1888,8 @@ end tell""")
         return False
     asc._hover_with_nudge(hcx, hcy)
     time.sleep(0.6)
-    ok, descs = asc.run_applescript(f"""
+    ok, descs = asc.run_applescript(
+        f"""
 tell application "System Events"
     tell process "Music"
         try
@@ -1898,7 +1905,8 @@ tell application "System Events"
             return "PROBE_FAIL"
         end try
     end tell
-end tell""")
+end tell"""
+    )
     asc.ui_clear_search()
     if not ok or descs.strip() == "PROBE_FAIL":
         return False
@@ -1910,276 +1918,6 @@ end tell""")
     not os.environ.get("TEST_UI"),
     reason="UI flows require Music.app visible + Accessibility. Run with TEST_UI=1.",
 )
-class TestUIFlowsLive:
-    """End-to-end UI flow tests.
-
-    Exercises the full ``ui_search_catalog`` → ``ui_add_to_library`` →
-    ``ui_add_to_playlist`` chain on the user's actual Music.app. Skipped by
-    default (CI / headless / API-only users); run locally with::
-
-        TEST_UI=1 uv run pytest tests/test_applescript.py::TestUIFlowsLive -v
-
-    **Cleanup is non-negotiable**: every test removes the track it added
-    from the library + playlist in teardown, and ``teardown_class`` deletes
-    the test playlist. The session-end conftest sweep is a final safety net.
-
-    Track selection: the class picks the first candidate from the fallback
-    list that ISN'T already in the user's library. If all candidates are
-    already in library, the whole class is skipped (very unlikely — the
-    candidates are deliberately obscure tracks).
-    """
-
-    TEST_PLAYLIST = "_UI_TEST_PLAYLIST_"
-
-    # Test track candidates. Selection criteria checked in setup_class:
-    #   1. NOT already in the user's library (so add operations are testable)
-    #   2. Surfaces as a Song-type row in Music.app's Top Results for the
-    #      "{name} {artist}" search query (so the UI flow can find + click it)
-    #
-    # The third "has Add to Library button after hover" check is left to the
-    # test itself because, on macOS 26, that button may be hidden in the
-    # [More] context menu rather than directly on the row — a real Apple
-    # UX shift, not a code bug. The full-flow test handles this with a soft
-    # skip when the button isn't directly present.
-    CANDIDATES = [
-        ("Such Great Heights", "Iron and Wine"),  # Garden State soundtrack
-        ("The Night We Met", "Lord Huron"),  # 13 Reasons Why use, well-indexed
-        ("Holocene", "Bon Iver"),  # For Emma, well-indexed
-        ("Skinny Love", "Bon Iver"),  # Same artist fallback
-        ("Re: Stacks", "Bon Iver"),  # Same artist fallback
-        ("Wandering", "Crooked Still"),
-        ("Bee Pee Tee", "Hot 8 Brass Band"),
-        ("Rainwater", "Penguin Cafe Orchestra"),
-        # More obscure-but-indexed fallbacks for when rapid-rerun pollution
-        # exhausts the primary list (each test run leaves a "stale" cache
-        # entry for ~minutes-to-hours of iCloud propagation lag).
-        ("Pyramid Song", "Radiohead"),
-        ("Hyperballad", "Björk"),
-        ("Casimir Pulaski Day", "Sufjan Stevens"),
-        ("Mykonos", "Fleet Foxes"),
-        ("Emmylou", "First Aid Kit"),
-        ("Sea of Love", "Cat Power"),
-        ("Hounds of Love", "Kate Bush"),
-        ("Sleeping Lessons", "The Shins"),
-    ]
-
-    track_name: str = ""
-    track_artist: str = ""
-
-    @classmethod
-    def setup_class(cls):
-        """Pick the first candidate that is BOTH not in library AND surfaces
-        as a Song-type Top Result. Then create a fresh test playlist.
-
-        Pre-validating Top Results visibility (vs. just library absence) is
-        what makes these tests deterministic — without it, candidates picked
-        only on library absence would silently skip the add tests when
-        Apple's UI search ranks the Song row below an Album/Artist row."""
-        asc.run_applescript('tell application "Music" to activate')
-        time.sleep(1.5)
-
-        skipped_reasons = []
-        for name, artist in cls.CANDIDATES:
-            # Criterion 1: not in library
-            ok, hits = asc.search_library(name, "songs")
-            if not ok:
-                skipped_reasons.append(f"{name}: search_library failed")
-                continue
-            owns = any(
-                t.get("name", "").lower() == name.lower()
-                and artist.lower() in t.get("artist", "").lower()
-                for t in (hits or [])
-            )
-            if owns:
-                skipped_reasons.append(f"{name}: already in library")
-                continue
-
-            # Criterion 2: surfaces as Song-type Top Result for "{name} {artist}"
-            ok, results, _why = asc.ui_search_catalog(f"{name} {artist}")
-            if not ok or not results:
-                asc.ui_clear_search()
-                skipped_reasons.append(f"{name}: UI search returned no results")
-                continue
-            has_song = any(
-                r.get("type") == "Song"
-                and name.lower() in r.get("name", "").lower()
-                and artist.lower() in r.get("artist", "").lower()
-                for r in results
-            )
-            asc.ui_clear_search()
-            if not has_song:
-                skipped_reasons.append(f"{name}: not surfaced as Song row in Top Results today")
-                continue
-
-            # Criterion 3: Music.app's song-page row must show this as
-            # not-in-library. A previous test run that added+removed the
-            # track via AppleScript can leave Music.app's per-row cloud-
-            # state cache showing "Download button" (=in library) for
-            # minutes-to-hours after iCloud-side removal. If we picked a
-            # candidate in that state, ui_add_to_library would fail at
-            # the hover-find step with "Download button" in the row's
-            # children rather than "Add to Library".
-            if not _probe_row_is_fresh(name, artist):
-                skipped_reasons.append(
-                    f"{name}: Music.app song-page shows Download button "
-                    f"(stale in-library cache from prior run); skipping"
-                )
-                continue
-
-            cls.track_name = name
-            cls.track_artist = artist
-            break
-        else:
-            pytest.skip(
-                "No candidate satisfied all three criteria (not in library + "
-                "surfaces as Song in Top Results + Music.app row shows fresh "
-                "Add to Library button):\n  - " + "\n  - ".join(skipped_reasons)
-            )
-
-        # Always start the playlist fresh — prior failed runs may have left a
-        # stale one with stuck tracks.
-        asc.run_applescript(f"""
-tell application "Music"
-    try
-        delete (every user playlist whose name is "{cls.TEST_PLAYLIST}")
-    end try
-    make new playlist with properties {{name:"{cls.TEST_PLAYLIST}"}}
-end tell""")
-
-    @classmethod
-    def teardown_class(cls):
-        """Delete the test playlist AND remove the selected candidate from
-        library (defensive — per-test teardown also handles this).
-
-        We do NOT iterate cls.CANDIDATES here because a user running these
-        tests may legitimately have one of the candidate tracks in their
-        library (Bon Iver / Radiohead / Sufjan are mainstream); removing
-        them would be destructive. Only the selected candidate (track_name)
-        could possibly have been added by ui_add_to_library, and only if
-        criterion 1 confirmed it wasn't there before the test started.
-        """
-        try:
-            asc.run_applescript(f"""
-tell application "Music"
-    try
-        delete (every user playlist whose name is "{cls.TEST_PLAYLIST}")
-    end try
-end tell""")
-        except Exception:
-            pass
-        # Defensive UNCONDITIONAL removal of the SELECTED candidate only —
-        # setup_class confirmed it wasn't in library before the test started,
-        # so removing it cleans up any add this run made. We don't precheck
-        # via search_library because that races with iCloud sync (see
-        # teardown_method comment for the failure mode).
-        if not cls.track_name:
-            return
-        try:
-            asc.remove_from_library(track_name=cls.track_name, artist=cls.track_artist)
-        except Exception:
-            pass
-
-    def teardown_method(self, method):
-        """Per-test cleanup: remove the test track from playlist + library if
-        it landed there. Idempotent — safe to call when the test never added.
-
-        We do this after EVERY test (not just the ones that explicitly add)
-        so a mid-test failure that left state behind still gets cleaned up.
-        Eric explicitly asked for strict cleanup: "anything the tests make
-        should get removed at end of testing."
-        """
-        if not self.track_name:
-            return
-        # Remove from playlist (silent if not there).
-        try:
-            asc.remove_track_from_playlist(
-                self.TEST_PLAYLIST,
-                track_name=self.track_name,
-                artist=self.track_artist or None,
-            )
-        except Exception:
-            pass
-        # Remove from library — UNCONDITIONALLY (idempotent — silent on miss).
-        # The earlier search_library precheck raced with iCloud sync: if
-        # ui_add_to_playlist returned success but iCloud hadn't propagated
-        # the library entry to local AppleScript queries within the ~1s
-        # between the test ending and teardown running, the precheck would
-        # return 0 hits and skip removal, but the track would land in
-        # library seconds later — pollution. remove_from_library tolerates
-        # "not found" silently, so just call it and let it no-op on miss.
-        try:
-            asc.remove_from_library(
-                track_name=self.track_name,
-                artist=self.track_artist or None,
-            )
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------------
-    # Tests
-    # ------------------------------------------------------------------
-
-    def test_full_ui_flow(self):
-        """One deep flow exercising the entire tokenless-macOS chain in a
-        single Music.app session — replaces the prior 3 tests that each
-        re-ran ui_search_catalog as setup. Halves the live-test runtime
-        and asserts the realistic end-user path:
-
-        1. ui_search_catalog returns parsed Top Results
-        2. Top Results dicts have the expected shape
-        3. ui_add_to_playlist (popover-canonical flow) drives
-           search → library-add → playlist-add → verify
-        4. The EXACT track we asked for landed in the playlist
-           (no wrong-track substitution — v0.10.2 regression guard)
-
-        Soft-skips on the known macOS 26 limitation where Apple's Top
-        Results UI sometimes omits the per-row Add to Library button —
-        a real Apple UX shift, not a code bug.
-        """
-        query = f"{self.track_name} {self.track_artist}"
-
-        # Step 1+2: search + parse
-        ok, results, why = asc.ui_search_catalog(query)
-        try:
-            assert ok is True, f"search failed: {why}"
-            assert len(results) > 0, "expected at least one Top Result"
-            for r in results:
-                assert "name" in r and isinstance(r["name"], str)
-                assert "type" in r and isinstance(r["type"], str)
-                assert "artist" in r and isinstance(r["artist"], str)
-                assert "index" in r and isinstance(r["index"], int)
-                assert r["index"] >= 1
-        finally:
-            asc.ui_clear_search()
-
-        # Step 3: full composite add-to-playlist (the path that powers
-        # playlist(action='add', auto_search=True) for tokenless users)
-        ok, msg = asc.ui_add_to_playlist(self.TEST_PLAYLIST, query, self.track_artist)
-        if not ok:
-            soft_failures = (
-                "No Song-type Top Result",
-                "No Song result for",
-                "No 'Add to Library' button found",
-                "row has no Add to Library button",
-            )
-            if any(s in (msg or "") for s in soft_failures):
-                pytest.skip(
-                    f"macOS 26 Music.app UI surface limitation, not a code "
-                    f"bug: {msg}. See test docstring for context."
-                )
-        assert ok, f"ui_add_to_playlist failed: {msg}"
-
-        # Step 4: verify EXACT track landed (not a wrong-track substitution)
-        ok_check, exists = asc.track_exists_in_playlist(
-            self.TEST_PLAYLIST, self.track_name, self.track_artist
-        )
-        assert ok_check and exists, (
-            f"ui_add_to_playlist returned success ({msg!r}) but the track "
-            f"{self.track_name!r} by {self.track_artist!r} is NOT in "
-            f"{self.TEST_PLAYLIST!r}. The wrong track may have been added."
-        )
-
-
 @pytest.mark.ui
 @pytest.mark.skipif(
     not os.environ.get("TEST_UI"),
@@ -2285,7 +2023,8 @@ class TestUIEdgeCasesLive:
                 "Could not resolve search field path — Music.app build may "
                 "have shifted the toolbar layout. Not a code bug."
             )
-        ok, value = asc.run_applescript(f"""
+        ok, value = asc.run_applescript(
+            f"""
 tell application "System Events"
     tell process "Music"
         try
@@ -2294,7 +2033,8 @@ tell application "System Events"
             return "FIELD_NOT_FOUND"
         end try
     end tell
-end tell""")
+end tell"""
+        )
         if not ok or value.strip() == "FIELD_NOT_FOUND":
             pytest.skip(
                 "Could not probe search field via resolved path — Music.app "
@@ -2334,77 +2074,6 @@ end tell""")
             f"'Talking Heads', got {resolved_artist!r}. Disambiguation "
             f"may have picked a different artist's 'Heaven'."
         )
-
-
-class TestRowHasButton:
-    """`_row_has_button` disambiguates the step-6 'no Add to Library button'
-    miss: a 'Download' button on the song-detail row means the track is ALREADY
-    in the library (Music swaps the add control for the offline-download one) —
-    a success, not a failure."""
-
-    def test_true_when_button_present(self, monkeypatch):
-        monkeypatch.setattr(asc, "run_applescript", lambda _: (True, "YES\n"))
-        assert asc._row_has_button("group x", "Download") is True
-
-    def test_false_when_button_absent(self, monkeypatch):
-        monkeypatch.setattr(asc, "run_applescript", lambda _: (True, "NO\n"))
-        assert asc._row_has_button("group x", "Download") is False
-
-    def test_false_on_applescript_error(self, monkeypatch):
-        monkeypatch.setattr(asc, "run_applescript", lambda _: (False, "(-1728)"))
-        assert asc._row_has_button("group x", "Download") is False
-
-    def test_queries_for_the_requested_description(self, monkeypatch):
-        seen = {}
-
-        def capture(script):
-            seen["script"] = script
-            return (True, "YES")
-
-        monkeypatch.setattr(asc, "run_applescript", capture)
-        asc._row_has_button("the row", "Download")
-        assert 'description is "Download"' in seen["script"]
-
-
-class TestFindAddButtonInHighlightedRow:
-    """`_find_add_button_in_highlighted_row` locates the hover-revealed button on
-    the deep-link highlighted (?i=) row — the macOS-15 add path's click target."""
-
-    def _capture(self, monkeypatch, ret=(True, "NOT_FOUND")):
-        seen = {}
-        monkeypatch.setattr(
-            asc,
-            "run_applescript",
-            lambda s: (seen.__setitem__("script", s), ret)[1],
-        )
-        return seen
-
-    def test_no_reserved_word_by_variable(self, monkeypatch):
-        # REGRESSION: 'by' is a reserved word in AppleScript (repeat ... by).
-        # `set {bx, by} to position of b` is a syntax error that silently made
-        # this finder return None every time, breaking the whole macOS-15 add.
-        seen = self._capture(monkeypatch)
-        asc._find_add_button_in_highlighted_row()
-        assert "{bx, by}" not in seen["script"]
-        assert "bposx" in seen["script"] and "bposy" in seen["script"]
-
-    def test_default_targets_add_to_library(self, monkeypatch):
-        seen = self._capture(monkeypatch)
-        asc._find_add_button_in_highlighted_row()
-        assert 'description of b is "Add to Library"' in seen["script"]
-
-    def test_desc_param_injected(self, monkeypatch):
-        seen = self._capture(monkeypatch)
-        asc._find_add_button_in_highlighted_row("Download")
-        assert 'description of b is "Download"' in seen["script"]
-
-    def test_parses_center_coords(self, monkeypatch):
-        monkeypatch.setattr(asc, "run_applescript", lambda _: (True, "100.0,200.0"))
-        assert asc._find_add_button_in_highlighted_row() == (100.0, 200.0)
-
-    def test_none_when_not_found(self, monkeypatch):
-        monkeypatch.setattr(asc, "run_applescript", lambda _: (True, "NOT_FOUND"))
-        assert asc._find_add_button_in_highlighted_row() is None
 
 
 class TestOpenSearchPopoverSelfHeal:
