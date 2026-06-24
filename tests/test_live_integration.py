@@ -47,6 +47,10 @@ _PREFIX = "_UI_TEST_"
 
 pytestmark = [pytest.mark.ui]
 
+# Captured before conftest's autouse harvest stub, so the live gate can harvest a
+# REAL web token from Apple (amp-api rejects the stub).
+_REAL_HARVEST = auth.harvest_developer_token
+
 
 def _env_skip_reason() -> str:
     """Non-empty reason to skip, or '' when the live API environment is ready.
@@ -70,6 +74,7 @@ def _real_token_storage(monkeypatch):
     auto-restored) so it NEVER leaks into the rest of the session. The skip check
     runs here, after the env is cleared, so it sees the real tokens."""
     monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
+    monkeypatch.setattr(auth, "harvest_developer_token", _REAL_HARVEST)  # real web token
     reason = _env_skip_reason()
     if reason:
         pytest.skip(reason)
