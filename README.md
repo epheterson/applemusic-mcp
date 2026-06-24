@@ -9,37 +9,26 @@
 
 [MCP](https://modelcontextprotocol.io/) server for Apple Music — lets your AI assistant (Claude, Cursor, Cline, Windsurf, or any [MCP client](https://modelcontextprotocol.io/clients)) manage playlists, add music, control playback, and browse your library.
 
-**Works on macOS, Windows, and Linux. No $99 Apple Developer account required** — sign in once with `applemusic-mcp signin`. Catalog, library, playlists, **and playback** all work on every platform.
+**Works on macOS, Windows, and Linux.** Sign in once with `applemusic-mcp signin` and it all runs over the Apple Music API — the same everywhere.
 
-## Features
+## What it does
 
-| Feature | macOS | Windows / Linux |
-|---------|:-----:|:---------------:|
-| List / browse / search library | ✓ | ✓ |
-| Create playlists | ✓ | ✓ |
-| Search catalog · recommendations · charts | ✓ | ✓ |
-| **Add songs to library** | ✓ | ✓ |
-| **Add tracks to playlists** | ✓ | ✓ |
-| Love / dislike tracks | ✓ | ✓ |
-| CSV / JSON export | ✓ | ✓ |
-| **Play tracks · play by URL** | ✓ | ✓ |
-| **Pause / skip / seek** | ✓ | ✓ |
-| **Volume / shuffle / repeat** | ✓ | ✓ |
-| **Now playing** | ✓ | ✓ |
-| Star ratings (1–5) | ✓ | — |
-| AirPlay | ✓ | — |
-| Remove tracks · delete playlists | ✓ | — |
-| Nested folders · rename / move | ✓ | top-level |
+- **Library** — browse, search, and add catalog songs to your library
+- **Playlists** — create, rename, delete · add and remove tracks · organize into folders (create, nest, and move playlists between them)
+- **Playback** — play, play-by-URL, pause, skip, seek, volume, shuffle, repeat, now-playing
+- **Discover** — catalog search, recommendations, charts
+- **Rate** — love / dislike tracks
+- **Export** — CSV / JSON, readable as MCP resources
 
-Everything in the top group runs over the **Apple Music API + web player** — identical on
-every platform after one sign-in. By default macOS uses native Music.app control (AppleScript)
-and adds AirPlay, star ratings, nested folders, and playlist/track deletion.
+### Modes
 
-**Browser playback** (Windows/Linux, or macOS with `playback=browser`) **requires a desktop
-session and Google Chrome installed** — it plays through a local Chrome window using Chrome's
-DRM (Widevine); the bundled Chromium has no DRM and stays silent. Audio comes out of the
-machine running the server. It does **not** work on headless servers (no display → the browser
-can't launch, and sign-in needs an interactive login).
+Choose how it runs with the `mode` preference:
+
+- **`auto`** *(default)* — native Music.app on macOS, the cross-platform API everywhere else
+- **`native`** — all-in on the local Music.app (macOS; works with no account)
+- **`api`** — all-in on the Apple Music API + web player — runs on any platform, and even on a Mac that isn't signed into Music.app (or is signed into a different account)
+
+The only macOS-only pieces are **AirPlay**, native Music.app **playback**, and **1–5 star ratings** (the API model is love/dislike). **Browser playback** (api mode, or any non-Mac) needs a desktop session with **Google Chrome** installed for DRM — it plays in a local Chrome window and doesn't run on headless servers.
 
 ---
 
