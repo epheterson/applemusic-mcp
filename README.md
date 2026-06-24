@@ -9,7 +9,17 @@
 
 [MCP](https://modelcontextprotocol.io/) server for Apple Music — lets your AI assistant (Claude, Cursor, Cline, Windsurf, or any [MCP client](https://modelcontextprotocol.io/clients)) manage playlists, add music, control playback, and browse your library.
 
-**Works on macOS, Windows, and Linux. No $99 Apple Developer account required** — sign in once with `applemusic-mcp signin` and catalog/library/playlist features run over the Apple Music API. macOS additionally gets native playback control.
+**Works on macOS, Windows, and Linux.**
+
+### Access
+
+| Access | What it does | Platforms |
+|---|---|---|
+| **Developer token** — recommended | Full Apple Music API: library, playlists, catalog add, recommendations | macOS · Windows · Linux |
+| Web token | Same | macOS · Windows · Linux |
+| No token | Control the local Music app — play, browse, edit local playlists | macOS |
+
+<sub>**Developer token** is included with Apple Developer membership (free for App Store developers), valid 6 months — [setup](#appendix-developer-token-setup). **Web token** is a free fallback captured by `applemusic-mcp signin`; it uses Apple's web-player API the same way open-source clients such as [Cider](https://github.com/ciderapp/Cider-2) and [Sidra](https://github.com/wimpysworld/sidra) do.</sub>
 
 ## Features
 
@@ -73,74 +83,20 @@ Add to your MCP client config. **Claude Desktop** (`~/Library/Application Suppor
 
 ## Enable Catalog Features (sign in once)
 
-Adding catalog music to your library and playlists runs over the Apple Music API. Pick one:
-
-- **Recommended — browser sign-in (no Apple Developer account).** One command, any OS:
-  ```bash
-  applemusic-mcp signin     # opens Chrome to music.apple.com; sign in once
-  applemusic-mcp status     # verify
-  ```
-  Captures your `media-user-token` from a local signed-in Chrome profile (your password
-  never touches this tool); the developer token comes from Apple's public web player. Uses
-  your installed Chrome when present. [Details](#option-b--browser-sign-in-no-apple-developer-account).
-- **Power users — Apple Developer token.** If you have an [Apple Developer Program](https://developer.apple.com/programs/)
-  membership ($99/yr), generate a sanctioned 6-month token instead — Option A below.
-
-### Option A — Apple Developer token (optional)
-
-**Requirements:** Python 3.10+, Apple Music app with subscription, active Apple Developer Program membership.
-
-### 1. Get MusicKit Key
-
-1. [Apple Developer Portal → Keys](https://developer.apple.com/account/resources/authkeys/list) → Click **+**
-2. Name it anything, check **MusicKit**, click Continue → Register
-3. **Download the .p8 file** (one-time download!)
-4. Note your **Key ID** (10 chars) and **Team ID** (from [Membership](https://developer.apple.com/account/#!/membership))
-
-### 2. Configure
+Adding catalog music to your library and playlists runs over the Apple Music API. Sign in once:
 
 ```bash
-mkdir -p ~/.config/applemusic-mcp
-cp ~/Downloads/AuthKey_XXXXXXXXXX.p8 ~/.config/applemusic-mcp/
+applemusic-mcp signin     # opens Chrome to music.apple.com; sign in once
+applemusic-mcp status     # verify
 ```
 
-Create `~/.config/applemusic-mcp/config.json`:
-```json
-{
-  "team_id": "YOUR_TEAM_ID",
-  "key_id": "YOUR_KEY_ID",
-  "private_key_path": "~/.config/applemusic-mcp/AuthKey_XXXXXXXXXX.p8"
-}
-```
+Captures your `media-user-token` from a local, signed-in Chrome profile (your password never
+touches this tool); uses your installed Chrome when present. The sign-in persists.
 
-### 3. Generate Tokens
+Have an Apple Developer membership? A generated token (6-month, sanctioned) is preferred — see
+[Appendix: Developer token setup](#appendix-developer-token-setup).
 
-```bash
-applemusic-mcp generate-token   # Creates developer token (180 days)
-applemusic-mcp authorize        # Opens browser for Apple Music auth
-applemusic-mcp status           # Verify everything works
-```
-
-### Option B — Browser sign-in (no Apple Developer account)
-
-If you don't have an Apple Developer account, just sign in once. This captures
-your `media-user-token` from a local, signed-in Chrome profile (your password
-never touches this tool); the developer token is sourced from Apple's public web
-player.
-
-```bash
-applemusic-mcp signin            # opens Chrome to music.apple.com; sign in once
-applemusic-mcp status            # verify
-```
-
-Uses your installed Google Chrome when present (recommended). One-time sign-in
-persists, so you won't repeat it.
-
-> Note: this uses Apple's web-player API the same way many open-source Apple Music
-> clients do — an unofficial path; your own generated token (Option A) is the
-> sanctioned route.
-
-### 4. Add to Your MCP Client (Windows/Linux)
+### Add to Your MCP Client (Windows/Linux)
 
 Same `mcpServers` shape works across clients (Claude Desktop, Cursor, Cline, Windsurf, etc.) — only the config file path differs.
 
@@ -440,6 +396,41 @@ applemusic-mcp serve           # Run MCP server (auto-launched by your MCP clien
 ```
 
 **Config:** `~/.config/applemusic-mcp/` (config.json, .p8 key, tokens)
+
+---
+
+## Appendix: Developer token setup
+
+The preferred path if you have an [Apple Developer Program](https://developer.apple.com/programs/) membership — a sanctioned, 6-month token.
+
+**1. Get a MusicKit key** — [Apple Developer Portal → Keys](https://developer.apple.com/account/resources/authkeys/list) → **+** → name it, check **MusicKit**, Register → **download the .p8** (one-time). Note your **Key ID** and **Team ID** (from [Membership](https://developer.apple.com/account/#!/membership)).
+
+**2. Configure:**
+```bash
+mkdir -p ~/.config/applemusic-mcp
+cp ~/Downloads/AuthKey_XXXXXXXXXX.p8 ~/.config/applemusic-mcp/
+```
+Create `~/.config/applemusic-mcp/config.json`:
+```json
+{
+  "team_id": "YOUR_TEAM_ID",
+  "key_id": "YOUR_KEY_ID",
+  "private_key_path": "~/.config/applemusic-mcp/AuthKey_XXXXXXXXXX.p8"
+}
+```
+
+**3. Generate + authorize:**
+```bash
+applemusic-mcp generate-token   # developer token (180 days)
+applemusic-mcp authorize        # capture your user token
+applemusic-mcp status           # verify
+```
+
+---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=epheterson/applemusic-mcp&type=Date)](https://star-history.com/#epheterson/applemusic-mcp&Date)
 
 ---
 
