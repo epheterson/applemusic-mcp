@@ -2215,6 +2215,81 @@ class TestUserJourneyMacOSOnly:
             json.dump({"music_user_token": mock_user_token}, f)
 
 
+class TestApiModeReadRouting:
+    """On macOS, mode=api must skip AppleScript for library reads and use the
+    HTTP API — so a user not signed into Music.app (or signed into a different
+    account there) can stay fully API/browser."""
+
+    def _setup_tokens(self, mock_config_dir, mock_developer_token, mock_user_token):
+        dev_token_file = mock_config_dir / "developer_token.json"
+        with open(dev_token_file, "w") as f:
+            json.dump({"token": mock_developer_token, "expires": time.time() + 86400 * 60}, f)
+        user_token_file = mock_config_dir / "music_user_token.json"
+        with open(user_token_file, "w") as f:
+            json.dump({"music_user_token": mock_user_token}, f)
+
+    @responses.activate
+    def test_search_in_api_mode_skips_applescript(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        # AppleScript is present (macOS) but the engine is pinned to api.
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(server, "_engine", lambda: "api")
+        self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+
+        mock_asc = MagicMock()
+        monkeypatch.setattr(server, "asc", mock_asc)
+
+        responses.add(
+            responses.GET,
+            "https://api.music.apple.com/v1/me/library/search",
+            json={
+                "results": {
+                    "library-songs": {
+                        "data": [
+                            {
+                                "id": "i.lib1",
+                                "attributes": {"name": "Money", "artistName": "Pink Floyd"},
+                            }
+                        ]
+                    }
+                }
+            },
+            status=200,
+        )
+
+        result = server.library(action="search", query="Money")
+        assert "Money" in result
+        mock_asc.search_library_page.assert_not_called()
+
+    @responses.activate
+    def test_browse_songs_in_api_mode_skips_applescript(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(server, "_engine", lambda: "api")
+        self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+
+        mock_asc = MagicMock()
+        monkeypatch.setattr(server, "asc", mock_asc)
+
+        responses.add(
+            responses.GET,
+            "https://api.music.apple.com/v1/me/library/songs",
+            json={
+                "data": [
+                    {"id": "i.lib2", "attributes": {"name": "Time", "artistName": "Pink Floyd"}}
+                ]
+            },
+            status=200,
+        )
+
+        result = server.library(action="browse", item_type="songs", limit=25)
+        assert "Time" in result
+        mock_asc.get_library_songs_page.assert_not_called()
+        mock_asc.get_library_songs.assert_not_called()
+
+
 class TestAlbumDisambiguation:
     """Tests for album param behavior: disambiguation filter when track is present, whole-album add when alone."""
 

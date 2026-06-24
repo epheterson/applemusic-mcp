@@ -4072,9 +4072,10 @@ def _library_search(
     if limit <= 0:
         limit = 25
 
-    # Try AppleScript on macOS (faster for local searches)
+    # Try AppleScript on macOS (faster for local searches) — only when the
+    # active engine is native; api mode goes straight to the HTTP API below.
     asc_error: Optional[str] = None
-    if APPLESCRIPT_AVAILABLE:
+    if _engine() == "native" and APPLESCRIPT_AVAILABLE:
         success, results, total, as_err = asc.search_library_page(
             query, types, offset=offset, limit=limit
         )
@@ -4908,8 +4909,9 @@ def _library_browse(
     if clean_only is None:
         clean_only = prefs["clean_only"]
 
-    # Try AppleScript first for songs (local, instant, no auth required)
-    if APPLESCRIPT_AVAILABLE and item_type == "songs":
+    # Try AppleScript first for songs (local, instant, no auth required) —
+    # only in native engine mode; api mode browses via the HTTP API below.
+    if _engine() == "native" and APPLESCRIPT_AVAILABLE and item_type == "songs":
         if limit > 0 and not clean_only:
             # O(limit): fetch only the requested page and the true total count.
             success, as_songs, true_total, as_err = asc.get_library_songs_page(offset, limit)
