@@ -10,6 +10,16 @@ import responses
 
 from applemusic_mcp import auth
 
+# This module tests the REAL harvest path (with the network mocked), so undo
+# conftest's autouse harvest stub for every test here.
+_REAL_HARVEST = auth.harvest_developer_token
+
+
+@pytest.fixture(autouse=True)
+def _use_real_harvest(monkeypatch):
+    monkeypatch.setattr(auth, "harvest_developer_token", _REAL_HARVEST)
+
+
 # A string shaped like the AMPWebPlay JWT the extractor looks for
 # (header.payload.signature, payload starting with the AMPWebPlay issuer claim).
 FAKE_TOKEN = "eyJ0eXAiOiJKV1QabcDEF123.eyJpc3MiOiJBTVBXZWJQbGF5ghiJKL456.sigMNO789"

@@ -15,6 +15,19 @@ from applemusic_mcp import applescript as asc
 from applemusic_mcp import audit_log
 
 
+# Never hit Apple's network to harvest a web token during tests. amp-api's
+# resolve_web_token() harvests when nothing is cached; stub the harvest (the
+# network boundary) so the real resolver logic still runs but offline. Tests that
+# need the real harvest (test_harvest) restore it; tests that control harvesting
+# monkeypatch it per-test, which overrides this.
+@pytest.fixture(autouse=True)
+def _stub_web_token_harvest():
+    from applemusic_mcp import auth
+
+    with patch.object(auth, "harvest_developer_token", return_value="TEST_WEB_TOKEN"):
+        yield
+
+
 # Mock audit log for all tests to avoid polluting real audit log
 @pytest.fixture(autouse=True)
 def mock_audit_log_for_all_tests(tmp_path):

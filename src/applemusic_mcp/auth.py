@@ -224,6 +224,15 @@ def resolve_developer_token() -> str:
         return get_developer_token()  # generated (paid) — preferred
     except (FileNotFoundError, ValueError):
         pass
+    return resolve_web_token()
+
+
+def resolve_web_token() -> str:
+    """A developer token accepted by ``amp-api.music.apple.com`` (the web player's
+    host). This is ALWAYS the harvested ``AMPWebPlay`` token — amp-api rejects a
+    generated (Apple Developer) token with 401, even though it works on the public
+    ``api.music.apple.com``. So every amp-api call uses this, not
+    ``resolve_developer_token`` (which prefers the generated token)."""
     cached = _load_harvested_token()
     if cached:
         return cached

@@ -6722,7 +6722,7 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
     if action in ("status", "info"):
         mode = (get_user_preferences().get("mode") or "auto").lower()
         body = _config_auth_status()
-        ready = has_any_developer_token() and (get_config_dir() / "music_user_token.json").exists()
+        ready = has_any_developer_token() and has_user_token()
         nxt = (
             "✅ Ready — catalog, playlists, add, and rate all work."
             if ready

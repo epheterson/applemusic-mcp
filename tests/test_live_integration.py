@@ -45,6 +45,8 @@ from applemusic_mcp import server
 
 _PREFIX = "_UI_TEST_"
 
+pytestmark = [pytest.mark.ui]
+
 
 def _env_skip_reason() -> str:
     """Non-empty reason to skip, or '' when the live API environment is ready.
@@ -60,10 +62,17 @@ def _env_skip_reason() -> str:
     return ""
 
 
-pytestmark = [
-    pytest.mark.ui,
-    pytest.mark.skipif(bool(_env_skip_reason()), reason=_env_skip_reason()),
-]
+@pytest.fixture(autouse=True)
+def _real_token_storage(monkeypatch):
+    """This gate runs against the user's REAL token storage (the OS keychain when
+    available), NOT conftest's file-mode guard — otherwise a user whose tokens
+    live in the keychain gets spurious 401s. Done with monkeypatch (per-test,
+    auto-restored) so it NEVER leaks into the rest of the session. The skip check
+    runs here, after the env is cleared, so it sees the real tokens."""
+    monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
+    reason = _env_skip_reason()
+    if reason:
+        pytest.skip(reason)
 
 
 def _unique(suffix: str) -> str:

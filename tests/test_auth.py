@@ -10,6 +10,10 @@ import pytest
 
 from applemusic_mcp import auth
 
+# Captured before conftest's autouse stub replaces it, so these tests can
+# exercise the REAL resolve_web_token logic.
+_REAL_RESOLVE_WEB = auth.resolve_web_token
+
 
 class TestGetConfigDir:
     """Tests for get_config_dir function."""
@@ -282,6 +286,25 @@ class TestSecretStoreKeychain:
         stuck.d[("applemusic-mcp", "k")] = "stuck"
         monkeypatch.setattr(auth, "_keyring", stuck)
         assert auth.secret_delete("k") is False  # still present → reports failure
+
+
+class TestResolveWebToken:
+    """amp-api needs the harvested web token, never the generated one (which it
+    401s). resolve_web_token must return harvested even when a generated token
+    exists."""
+
+    def test_returns_cached_harvested(self, mock_config_dir, monkeypatch):
+        monkeypatch.setattr(auth, "resolve_web_token", _REAL_RESOLVE_WEB)
+        auth._save_harvested_token("h.token")  # plenty of life left
+        monkeypatch.setattr(
+            auth, "harvest_developer_token", lambda: pytest.fail("should not harvest")
+        )
+        assert auth.resolve_web_token() == "h.token"
+
+    def test_harvests_when_no_cache(self, mock_config_dir, monkeypatch):
+        monkeypatch.setattr(auth, "resolve_web_token", _REAL_RESOLVE_WEB)
+        monkeypatch.setattr(auth, "harvest_developer_token", lambda: "fresh.harvest")
+        assert auth.resolve_web_token() == "fresh.harvest"
 
 
 class TestGetUserToken:

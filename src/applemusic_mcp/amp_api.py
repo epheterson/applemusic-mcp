@@ -28,8 +28,11 @@ _OK = (200, 201, 202, 204)
 
 
 def _headers() -> dict:
+    # amp-api.music.apple.com is the web player's host: it accepts the harvested
+    # AMPWebPlay token and 401s a generated (Apple Developer) token. Always use
+    # the web token here — NOT resolve_developer_token(), which prefers generated.
     return {
-        "Authorization": f"Bearer {auth.resolve_developer_token()}",
+        "Authorization": f"Bearer {auth.resolve_web_token()}",
         "Music-User-Token": auth.get_user_token(),
         "Content-Type": "application/json",
         "Origin": ORIGIN,

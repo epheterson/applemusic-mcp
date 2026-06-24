@@ -16,6 +16,7 @@ from applemusic_mcp import amp_api
 @pytest.fixture(autouse=True)
 def _fake_auth(monkeypatch):
     monkeypatch.setattr(amp_api.auth, "resolve_developer_token", lambda: "DEV")
+    monkeypatch.setattr(amp_api.auth, "resolve_web_token", lambda: "DEV")
     monkeypatch.setattr(amp_api.auth, "get_user_token", lambda: "USER")
     monkeypatch.setattr(amp_api.auth, "get_user_preferences", lambda: {"storefront": "us"})
 
