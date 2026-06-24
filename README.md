@@ -131,6 +131,7 @@ Or set any of these conversationally — `config(action="set-pref", preference="
 
 - `mode`: Engine — `auto` (default) / `native` (local Music.app) / `api` (Apple Music API + web player, any OS).
 - `playback`: Playback engine override — `auto` (default, follows `mode`) / `native` (macOS Music.app) / `browser` (Chrome web player).
+- `secure_storage`: Where tokens live — `file` (default, `0600` files; reliable everywhere) or `keychain` (OS keychain; opt-in, may prompt once for access).
 - `auto_search`: For `playlist(action="add")`, search the catalog (and add to your library) when a track isn't already in your library — required to add catalog songs you don't own yet. Default false to avoid unintended library writes; set true for "fill this playlist" workflows.
 - `clean_only`: Filter explicit content, for `search_catalog`, `search_library`, `browse_library` (default: false)
 - `fetch_explicit`: Fetch explicit status (cached), for `get_playlist_tracks`, `search_library`, `browse_library` (default: false)

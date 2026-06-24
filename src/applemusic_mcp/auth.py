@@ -41,12 +41,16 @@ _KEYRING_SERVICE = "applemusic-mcp"
 
 
 def _keyring_ok() -> bool:
-    """True when a real keychain backend is usable. False under the test guard
-    (APPLEMUSIC_NO_KEYRING=1), when keyring is missing, or when the active
-    backend is the null/fail backend (e.g. a headless Linux box)."""
+    """True when the OS keychain should be used. Keychain is OPT-IN — tokens
+    default to 0600 files because the keychain's per-process ACL is unreliable
+    across this tool's separate CLI and server processes. Returns True only when
+    the user set ``secure_storage: keychain`` AND a real backend is available AND
+    the test guard (APPLEMUSIC_NO_KEYRING=1) isn't set."""
     if os.environ.get("APPLEMUSIC_NO_KEYRING") == "1" or _keyring is None:
         return False
     try:
+        if (get_user_preferences().get("secure_storage") or "file").lower() != "keychain":
+            return False
         kr = _keyring.get_keyring()
         name = f"{type(kr).__module__}.{type(kr).__name__}".lower()
         return "fail" not in name and "null" not in name
@@ -321,6 +325,9 @@ def get_user_preferences() -> dict:
         "mode": prefs.get("mode", "auto"),
         # Back-compat playback-only override (falls back to `mode` when "auto").
         "playback": prefs.get("playback", "auto"),
+        # Token storage: "file" (default — 0600 files, reliable across the CLI and
+        # server processes) or "keychain" (OS keychain; opt-in, may prompt once).
+        "secure_storage": prefs.get("secure_storage", "file"),
     }
 
 

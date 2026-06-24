@@ -230,9 +230,22 @@ class TestSecretStoreKeychain:
 
     def _enable(self, monkeypatch):
         monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
+        # Keychain is opt-in: the user picked secure_storage=keychain.
+        monkeypatch.setattr(auth, "get_user_preferences", lambda: {"secure_storage": "keychain"})
         fake = _FakeKeyring()
         monkeypatch.setattr(auth, "_keyring", fake)
         return fake
+
+    def test_keychain_off_by_default_even_with_backend(self, mock_config_dir, monkeypatch):
+        """Opt-in: with a working backend but the default secure_storage=file, the
+        token must be written to a FILE, not the keychain."""
+        monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
+        monkeypatch.setattr(auth, "get_user_preferences", lambda: {"secure_storage": "file"})
+        fake = _FakeKeyring()
+        monkeypatch.setattr(auth, "_keyring", fake)
+        auth.secret_set("music_user_token", '{"music_user_token": "x"}')
+        assert auth._secret_file("music_user_token").exists()
+        assert ("applemusic-mcp", "music_user_token") not in fake.d
 
     def test_round_trip_uses_keychain_not_file(self, mock_config_dir, monkeypatch):
         fake = self._enable(monkeypatch)
@@ -282,6 +295,7 @@ class TestSecretStoreKeychain:
                 return self.d.get((service, key))
 
         monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
+        monkeypatch.setattr(auth, "get_user_preferences", lambda: {"secure_storage": "keychain"})
         stuck = _StuckKeyring()
         stuck.d[("applemusic-mcp", "k")] = "stuck"
         monkeypatch.setattr(auth, "_keyring", stuck)

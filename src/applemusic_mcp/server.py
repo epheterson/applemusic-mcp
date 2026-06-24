@@ -6064,11 +6064,12 @@ def config(
         # === SET PREFERENCE ===
         if action == "set-pref":
             bool_prefs = ["fetch_explicit", "reveal_on_library_miss", "clean_only", "auto_search"]
-            string_prefs = ["storefront", "mode", "playback"]
+            string_prefs = ["storefront", "mode", "playback", "secure_storage"]
             # Enum string prefs: only these values are accepted.
             enum_prefs = {
                 "mode": ("native", "api", "auto"),
                 "playback": ("native", "browser", "auto"),
+                "secure_storage": ("file", "keychain"),
             }
             all_prefs = bool_prefs + string_prefs
 

@@ -42,10 +42,11 @@ Linux with no $99 Apple Developer account** — library, playlists, *and playbac
 
 ### Security
 
-- **Tokens are stored in the OS keychain** (macOS Keychain / Windows Credential
-  Locker / Linux Secret Service), falling back to a `0600` file when no backend
-  is available (headless servers). Token files and `auth.html` are created
-  `0600` atomically; the config dir and Chrome profile are `0700`.
+- **Token storage**: `0600` files by default (reliable across the CLI and server
+  processes), with an opt-in `secure_storage: keychain` preference for the OS
+  keychain (macOS Keychain / Windows Credential Locker / Linux Secret Service).
+  Token files and `auth.html` are created `0600` atomically; the config dir and
+  Chrome profile are `0700`.
 
 ### Changed
 
