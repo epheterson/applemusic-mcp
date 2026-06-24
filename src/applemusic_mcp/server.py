@@ -19,6 +19,7 @@ from typing import Callable, Optional
 
 import requests
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from .auth import (
     get_developer_token,
@@ -3927,7 +3928,11 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
         return str(e)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Playlists & folders", readOnlyHint=False, destructiveHint=True, openWorldHint=True
+    )
+)
 def playlist(
     action: str = "list",
     name: str = "",
@@ -4063,7 +4068,11 @@ def playlist(
 # ============ LIBRARY MANAGEMENT ============
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Library", readOnlyHint=False, destructiveHint=True, openWorldHint=True
+    )
+)
 def library(
     action: str = "search",
     query: str = "",
@@ -5362,7 +5371,11 @@ def _discover_personal_station() -> str:
         return str(e)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Discover", readOnlyHint=True, destructiveHint=False, openWorldHint=True
+    )
+)
 def discover(
     action: str = "recommendations",
     artist: str = "",
@@ -5947,7 +5960,11 @@ def _catalog_suggestions(term: str) -> str:
         return str(e)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Catalog search", readOnlyHint=True, destructiveHint=False, openWorldHint=True
+    )
+)
 def catalog(
     action: str = "search",
     query: str = "",
@@ -6018,7 +6035,11 @@ def catalog(
 # ============ SYSTEM MANAGEMENT ============
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Settings & auth", readOnlyHint=False, destructiveHint=True, openWorldHint=True
+    )
+)
 def config(
     action: str = "info",
     days_old: int = 0,
@@ -6798,7 +6819,11 @@ def _format_queue(data: dict) -> str:
     return "\n".join(lines)
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Up Next queue", readOnlyHint=False, destructiveHint=False, openWorldHint=True
+    )
+)
 def queue(
     action: str = "list",
     track: str = "",
@@ -6872,7 +6897,11 @@ _PLAYBACK_NEEDS_BROWSER = (
 )
 
 
-@mcp.tool()
+@mcp.tool(
+    annotations=ToolAnnotations(
+        title="Playback transport", readOnlyHint=False, destructiveHint=False, openWorldHint=True
+    )
+)
 def playback(
     action: str = "now_playing",
     # play params

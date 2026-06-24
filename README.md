@@ -54,38 +54,39 @@ Pick how it runs with the `mode` preference:
 
 ## Quick Start
 
-**Requirements:** Python 3.10+ and an Apple Music subscription. For playback and the Up Next queue, install **Google Chrome** (macOS can use the Music app instead).
+**Requirements:** Python 3.10+ and an Apple Music subscription. For playback and the Up Next queue, also install **Google Chrome** (macOS can use the Music app instead).
 
-**No Apple Developer account needed.** On macOS, local library and playback work instantly via the Music app. To add catalog music — and to play or use the queue on any OS — sign in once; see [Enable catalog features](#enable-catalog-features-sign-in-once) below.
+**Claude Code — one line:**
 
 ```bash
-git clone https://github.com/epheterson/applemusic-mcp.git
-cd applemusic-mcp
-python3 -m venv venv && source venv/bin/activate
-pip install -e .
-playwright install chromium     # browser engine for sign-in, playback & queue
+claude mcp add applemusic -- uvx applemusic-mcp serve
 ```
 
-> Install **Google Chrome** too if you want audio playback — the bundled Chromium can't decode Apple's DRM. On macOS-only/native setups you can skip both Chrome and the `playwright install` step.
+**Claude Desktop / Cursor / Cline / Windsurf** — install once, then add the config block:
 
-Add to your MCP client config. **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`); **Cursor / Cline / Windsurf** use the same `mcpServers` shape — see your client's docs for the file location.
+```bash
+pipx install applemusic-mcp        # or: pip install applemusic-mcp
+playwright install chromium        # browser engine for sign-in, playback & queue
+```
 
 ```json
 {
   "mcpServers": {
     "Apple Music": {
-      "command": "/full/path/to/applemusic-mcp/venv/bin/python",
-      "args": ["-m", "applemusic_mcp"]
+      "command": "applemusic-mcp",
+      "args": ["serve"]
     }
   }
 }
 ```
 
-**That's it!** Restart your client and try: "List my Apple Music playlists" or "Play my favorites playlist"
+Config file locations — **Claude Desktop:** `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `%APPDATA%\Claude\claude_desktop_config.json` (Windows). Cursor / Cline / Windsurf use the same `mcpServers` shape — see your client's docs.
 
-> **Windows/Linux users:** library, playlists, catalog, and add/rate all work over the API after you
-> [sign in](#enable-catalog-features-sign-in-once). Playback and the queue additionally need Google
-> Chrome (they open a local Chrome window — not for headless servers).
+**That's it!** Restart your client and try: *"List my Apple Music playlists"* or *"Play my favorites playlist."* No Apple Developer account needed — on macOS the local library and playback work immediately; to add catalog music or play on any OS, [sign in once](#enable-catalog-features-sign-in-once).
+
+> **Browser features (playback, queue, sign-in)** need Google Chrome + the one-time `playwright install chromium` (the bundled Chromium can't decode Apple's DRM). They open a local Chrome window — not for headless servers. macOS-native-only setups can skip both. With `uvx`, run the browser install as `uvx --from applemusic-mcp playwright install chromium`.
+>
+> **From source (development):** `git clone … && pip install -e .`, then point the config `command` at `<repo>/venv/bin/applemusic-mcp` or use `python -m applemusic_mcp`.
 
 ---
 
@@ -107,25 +108,6 @@ Adding catalog music to your library and playlists runs over the Apple Music API
 > Note: browser sign-in uses Apple's web-player API the same way many open-source Apple Music
 > clients do — an unofficial path; your own [generated token](#appendix-developer-token-setup)
 > is the sanctioned route.
-
-### Add to Your MCP Client (Windows/Linux)
-
-Same `mcpServers` shape works across clients (Claude Desktop, Cursor, Cline, Windsurf, etc.) — only the config file path differs.
-
-**Claude Desktop:**
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-- Linux: `~/.config/Claude/claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "Apple Music": {
-      "command": "/full/path/to/applemusic-mcp/venv/bin/python",
-      "args": ["-m", "applemusic_mcp"]
-    }
-  }
-}
-```
 
 ### Optional Preferences
 

@@ -635,6 +635,33 @@ class TestAuthTool:
         assert "Unknown action" in server.config(action="bogus")
 
 
+class TestToolAnnotations:
+    """Tools carry behavioral hints (readOnly/destructive/openWorld) so clients
+    can auto-approve reads and warn on destructive ops."""
+
+    def _annotations(self):
+        import asyncio
+
+        tools = asyncio.run(server.mcp.list_tools())
+        return {t.name: t.annotations for t in tools}
+
+    def test_reads_are_readonly(self):
+        ann = self._annotations()
+        for name in ("catalog", "discover"):
+            assert ann[name].readOnlyHint is True
+            assert ann[name].destructiveHint is False
+
+    def test_destructive_tools_flagged(self):
+        ann = self._annotations()
+        for name in ("playlist", "library", "config"):
+            assert ann[name].destructiveHint is True
+            assert ann[name].readOnlyHint is False
+
+    def test_all_tools_hit_open_world(self):
+        ann = self._annotations()
+        assert all(a.openWorldHint is True for a in ann.values())
+
+
 class TestFormatDuration:
     """Tests for format_duration helper function."""
 
