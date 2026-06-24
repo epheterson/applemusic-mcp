@@ -12,12 +12,46 @@ Linux with no $99 Apple Developer account** — library, playlists, *and playbac
 
 ### Added
 
+- **Three-mode engine** (`mode` preference): `auto` (native Music.app on macOS,
+  API everywhere else), `native` (local Music.app), or `api` (Apple Music API +
+  web player on any OS — even a Mac not signed into the Music app). Set it from
+  the tool: `config(action="set-pref", preference="mode", string_value="api")`.
 - **Cross-platform playback** via the music.apple.com web player (MusicKit in a
   local Chrome window): play, play-by-URL (song/album/playlist), pause, skip,
-  seek, volume, shuffle, repeat, now-playing. Plays with DRM through Google
-  Chrome (Widevine).
-- **`playback` preference** — `auto` (native AppleScript on macOS, browser
-  elsewhere), `native`, or `browser`.
+  seek, volume, shuffle, repeat, now-playing. DRM through Google Chrome.
+  Registered on every platform (was macOS-only). **`playback` preference**:
+  `auto`/`native`/`browser`. `reveal` now opens a track in Chrome too.
+- **Up Next queue** — a new `queue` tool driving the web player's MusicKit:
+  list, play-next, play-last, remove, jump, clear, autoplay. Cross-platform
+  (browser); the queue has no REST endpoint and AppleScript can't reach it.
+- **Full API routing of library/playlist mutations** in api mode (any OS):
+  create/rename/delete playlists, add/remove tracks, single-level folders and
+  moving playlists between folders (beyond the web UI, which only drags),
+  love/dislike ratings, catalog→library add, and **remove-from-library** (the
+  verified `DELETE /me/library/songs/{id}`). Library search/browse read via the
+  API in api mode. (macOS-only: 1–5 star ratings, favorites, snapshots, genre
+  search, nested folder paths, AirPlay.)
+- **Conversational auth** through `config` — `status`, `signin` (opens a browser,
+  any OS), `logout` (switch accounts), `reset` (clean slate / drop a dev token
+  for the web path). No terminal needed.
+- **Self-renewing tokens**: the Apple Developer token auto-renews from your `.p8`
+  when ≤30 days from expiry; the harvested web token re-fetches itself ≤15 days
+  out. Clear, escalating expiry messaging for the keyless case.
+- **MCP tool annotations** (read-only / destructive / open-world hints) on all
+  tools, so clients can auto-approve reads and warn before destructive ops.
+
+### Security
+
+- **Tokens are stored in the OS keychain** (macOS Keychain / Windows Credential
+  Locker / Linux Secret Service), falling back to a `0600` file when no backend
+  is available (headless servers). Token files and `auth.html` are created
+  `0600` atomically; the config dir and Chrome profile are `0700`.
+
+### Changed
+
+- Install is now the published PyPI package: `claude mcp add applemusic -- uvx
+  applemusic-mcp serve` or `pipx install applemusic-mcp` (git-clone is the
+  from-source path). Tokens self-heal, so re-auth is rare.
 
 ### Requirements / notes
 

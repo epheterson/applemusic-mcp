@@ -461,6 +461,9 @@ applemusic-mcp status           # verify
 
 MIT · *Unofficial community project, not affiliated with Apple.*
 
+<!-- Identifier for the official MCP Registry (PyPI ownership check). -->
+mcp-name: io.github.epheterson/applemusic-mcp
+
 ## Credits
 
 [FastMCP](https://github.com/jlowin/fastmcp) · [Apple MusicKit](https://developer.apple.com/documentation/applemusicapi) · [Model Context Protocol](https://modelcontextprotocol.io/)
