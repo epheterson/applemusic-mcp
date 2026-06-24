@@ -156,6 +156,9 @@ def get_user_preferences() -> dict:
             "auto_search", False
         ),  # Default FALSE (don't modify library without permission)
         "storefront": prefs.get("storefront", "us"),  # Apple Music region (default: US)
+        # Playback engine: "auto" (native AppleScript on macOS, browser elsewhere),
+        # "native" (AppleScript only), or "browser" (always the web player).
+        "playback": prefs.get("playback", "auto"),
     }
 
 

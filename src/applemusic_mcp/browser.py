@@ -340,6 +340,56 @@ def play_catalog_track(catalog_id: str) -> tuple[bool, str]:
         return False, f"Browser play failed: {exc}"
 
 
+_PLAY_QUEUE_JS = """
+async (q) => {
+  const mk = window.MusicKit.getInstance();
+  await mk.setQueue(Object.assign({ startPlaying: true }, q));
+  await mk.play();
+  return mk.nowPlayingItem ? mk.nowPlayingItem.attributes.name : 'playing';
+}
+"""
+
+
+def _parse_music_url(url: str) -> Optional[dict]:
+    """Map an Apple Music URL to a MusicKit setQueue descriptor.
+
+    song-in-album (``?i=<id>``) -> {song}; /album/ -> {album}; /playlist/ ->
+    {playlist}; /song/ -> {song}. Returns None if unrecognized (caller can fall
+    back to passing the raw {url}).
+    """
+    import re
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query)
+    if "i" in qs and qs["i"]:
+        return {"song": qs["i"][0]}
+    m = re.search(r"/(album|playlist|song)/[^/]+/([^/?#]+)", parsed.path)
+    if not m:
+        return None
+    kind, ident = m.group(1), m.group(2)
+    return {"album" if kind == "album" else "playlist" if kind == "playlist" else "song": ident}
+
+
+def play_url(music_url: str) -> tuple[bool, str]:
+    """Play an Apple Music URL (song / album / playlist) in the browser web player
+    — cross-platform parity for the native macOS play-from-URL."""
+    if not music_url.strip():
+        return False, "Empty URL"
+    descriptor = _parse_music_url(music_url) or {"url": music_url}
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_PLAY_QUEUE_JS, descriptor)
+
+    try:
+        return True, f"Playing: {_engine.submit(run)}"
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Browser play-by-URL failed: {exc}"
+
+
 def playback_control(action: str) -> tuple[bool, str]:
     """play | pause | next | previous on the browser web player."""
 

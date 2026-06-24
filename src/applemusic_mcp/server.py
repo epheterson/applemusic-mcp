@@ -918,6 +918,37 @@ def _can_use_library_api() -> bool:
     return has_any_developer_token() and _has_user_token()
 
 
+def _use_browser_playback() -> bool:
+    """Decide the playback engine. ``playback`` preference: ``auto`` (default) uses
+    native AppleScript on macOS and the browser web player elsewhere; ``native``
+    forces AppleScript; ``browser`` forces the web player. Browser playback needs
+    a signed-in session (a media-user-token)."""
+    pref = (get_user_preferences().get("playback") or "auto").lower()
+    if os.environ.get("APPLEMUSIC_FORCE_BROWSER_PLAYBACK") == "1":
+        pref = "browser"
+    if pref == "native":
+        return False
+    if pref == "browser":
+        return True
+    return not APPLESCRIPT_AVAILABLE  # auto
+
+
+def _browser_play(track: str, artist: str = "", url: str = "") -> str:
+    """Play a track or Apple Music URL in the browser web player (cross-platform)."""
+    from . import browser
+
+    play_url = url
+    if not play_url:
+        if not track:
+            return "Error: provide track or url"
+        resolved = _resolve_catalog_track_itunes(track, artist)
+        if not resolved:
+            return f"Error: '{track}' not found in catalog"
+        play_url = resolved["url"]
+    ok, msg = browser.play_url(play_url)
+    return msg if ok else f"Error: {msg}"
+
+
 def _format_applescript_error(raw: str, operation: str = "") -> str:
     """Translate a raw AppleScript error into an actionable user message.
 
@@ -6344,14 +6375,28 @@ if APPLESCRIPT_AVAILABLE:
         action = action.lower().strip().replace("-", "_")
 
         if action == "play":
+            if _use_browser_playback():
+                return _browser_play(track, artist, url)
             return _playback_play(
                 track, playlist, album, artist, shuffle, reveal, add_to_library, url
             )
         elif action == "control":
             if not control:
                 return "Error: control param required. Use: play, pause, stop, next, previous, seek"
+            if _use_browser_playback():
+                from . import browser
+
+                ok, msg = browser.playback_control(control)
+                return msg if ok else f"Error: {msg}"
             return _playback_control(control, seconds)
         elif action == "now_playing":
+            if _use_browser_playback():
+                from . import browser
+
+                np = browser.now_playing()
+                if not np:
+                    return "Nothing playing"
+                return f"Now playing: {np.get('name')} — {np.get('artist')} ({np.get('album')})"
             return _playback_now_playing()
         elif action == "settings":
             return _playback_settings(volume, shuffle_mode, repeat)
