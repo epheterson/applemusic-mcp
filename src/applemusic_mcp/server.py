@@ -6064,7 +6064,12 @@ def config(
         # === SET PREFERENCE ===
         if action == "set-pref":
             bool_prefs = ["fetch_explicit", "reveal_on_library_miss", "clean_only", "auto_search"]
-            string_prefs = ["storefront"]
+            string_prefs = ["storefront", "mode", "playback"]
+            # Enum string prefs: only these values are accepted.
+            enum_prefs = {
+                "mode": ("native", "api", "auto"),
+                "playback": ("native", "browser", "auto"),
+            }
             all_prefs = bool_prefs + string_prefs
 
             if not preference:
@@ -6076,8 +6081,18 @@ def config(
             # Determine the value to set
             if preference in string_prefs:
                 if not string_value:
-                    return f"Error: '{preference}' requires 'string_value' parameter (e.g., string_value='gb')"
+                    hint = (
+                        f" (one of: {', '.join(enum_prefs[preference])})"
+                        if preference in enum_prefs
+                        else " (e.g., string_value='gb')"
+                    )
+                    return f"Error: '{preference}' requires 'string_value' parameter{hint}"
                 pref_value = string_value.lower()
+                if preference in enum_prefs and pref_value not in enum_prefs[preference]:
+                    return (
+                        f"Error: '{preference}' must be one of: "
+                        f"{', '.join(enum_prefs[preference])}"
+                    )
             else:
                 if value is None:
                     return f"Error: '{preference}' requires 'value' parameter (true or false)"

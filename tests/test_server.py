@@ -635,6 +635,31 @@ class TestAuthTool:
         assert "Unknown action" in server.config(action="bogus")
 
 
+class TestModePreference:
+    """The marquee three-mode engine must be switchable via the tool, not just
+    by hand-editing config.json."""
+
+    def test_set_mode_api(self, mock_config_dir):
+        out = server.config(action="set-pref", preference="mode", string_value="api")
+        assert "mode = api" in out
+        from applemusic_mcp.auth import get_user_preferences
+
+        assert get_user_preferences()["mode"] == "api"
+
+    def test_set_playback_browser(self, mock_config_dir):
+        out = server.config(action="set-pref", preference="playback", string_value="browser")
+        assert "playback = browser" in out
+
+    def test_invalid_mode_rejected(self, mock_config_dir):
+        out = server.config(action="set-pref", preference="mode", string_value="bogus")
+        assert "must be one of" in out
+        assert "native" in out and "api" in out
+
+    def test_mode_missing_value_lists_choices(self, mock_config_dir):
+        out = server.config(action="set-pref", preference="mode")
+        assert "native" in out and "auto" in out
+
+
 class TestToolAnnotations:
     """Tools carry behavioral hints (readOnly/destructive/openWorld) so clients
     can auto-approve reads and warn on destructive ops."""

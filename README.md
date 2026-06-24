@@ -33,11 +33,13 @@
 
 ### Modes & what runs where
 
-Pick how it runs with the `mode` preference:
+Pick how it runs with the `mode` preference — just ask ("use API mode") or set it directly: `config(action="set-pref", preference="mode", string_value="api")`.
 
 - **`auto`** *(default)* — native Music.app on macOS, the cross-platform API everywhere else
 - **`native`** — all-in on the local Music.app (macOS; works with no account)
 - **`api`** — all-in on the Apple Music API + web player; runs on any OS, even on a Mac that isn't signed into the Music app
+
+(A separate `playback` preference — `auto`/`native`/`browser` — overrides just the playback engine if you want, say, API everything but native audio on macOS.)
 
 | What you can do | Where it runs |
 |---|---|
@@ -115,6 +117,8 @@ Add to config.json:
 ```json
 {
   "preferences": {
+    "mode": "auto",
+    "playback": "auto",
     "auto_search": true,
     "clean_only": false,
     "fetch_explicit": false,
@@ -123,6 +127,10 @@ Add to config.json:
 }
 ```
 
+Or set any of these conversationally — `config(action="set-pref", preference="mode", string_value="api")` (booleans use `value=true/false`).
+
+- `mode`: Engine — `auto` (default) / `native` (local Music.app) / `api` (Apple Music API + web player, any OS).
+- `playback`: Playback engine override — `auto` (default, follows `mode`) / `native` (macOS Music.app) / `browser` (Chrome web player).
 - `auto_search`: For `playlist(action="add")`, search the catalog (and add to your library) when a track isn't already in your library — required to add catalog songs you don't own yet. Default false to avoid unintended library writes; set true for "fill this playlist" workflows.
 - `clean_only`: Filter explicit content, for `search_catalog`, `search_library`, `browse_library` (default: false)
 - `fetch_explicit`: Fetch explicit status (cached), for `get_playlist_tracks`, `search_library`, `browse_library` (default: false)
