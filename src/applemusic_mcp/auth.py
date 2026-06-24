@@ -15,6 +15,16 @@ import requests
 
 DEFAULT_CONFIG_DIR = Path.home() / ".config" / "applemusic-mcp"
 
+
+def _write_private(path, text: str) -> None:
+    """Write ``text`` to ``path`` created 0600 from the start — no world-readable
+    window. The old ``open(w)`` + ``chmod`` pattern left the secret readable
+    between create and chmod; ``os.open`` with the mode closes that TOCTOU gap."""
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
 # --- Harvested (fallback) developer token -----------------------------------
 # Apple ships a public developer token (issuer "AMPWebPlay") to every browser
 # that loads music.apple.com, embedded in the web player's JS bundle. It's the
@@ -81,8 +91,7 @@ def _save_harvested_token(token: str) -> None:
     except Exception:
         exp = int(time.time() + 30 * 86400)
     f = _harvested_token_file()
-    f.write_text(json.dumps({"token": token, "expires": exp, "source": "harvested"}, indent=2))
-    os.chmod(f, 0o600)
+    _write_private(f, json.dumps({"token": token, "expires": exp, "source": "harvested"}, indent=2))
 
 
 def resolve_developer_token() -> str:
@@ -115,9 +124,13 @@ def has_any_developer_token() -> bool:
 
 
 def get_config_dir() -> Path:
-    """Get or create the config directory."""
+    """Get or create the config directory (0700 — it holds tokens and the .p8)."""
     config_dir = DEFAULT_CONFIG_DIR
     config_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(config_dir, 0o700)
+    except OSError:
+        pass
     return config_dir
 
 
@@ -203,9 +216,7 @@ def generate_developer_token(expiry_days: int = 180) -> str:
         "team_id": config["team_id"],
         "key_id": config["key_id"],
     }
-    with open(token_file, "w") as f:
-        json.dump(token_data, f, indent=2)
-    os.chmod(token_file, 0o600)
+    _write_private(token_file, json.dumps(token_data, indent=2))
 
     return token
 
@@ -247,9 +258,7 @@ def save_user_token(token: str) -> None:
         "music_user_token": token,
         "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    with open(token_file, "w") as f:
-        json.dump(data, f, indent=2)
-    os.chmod(token_file, 0o600)
+    _write_private(token_file, json.dumps(data, indent=2))
 
 
 def create_auth_html(developer_token: str, port: int) -> str:
@@ -419,12 +428,10 @@ def run_auth_server(port: int = 8765) -> Optional[str]:
     developer_token = get_developer_token()
     cors_origin = f"http://localhost:{port}"
 
-    # Write auth HTML with restricted permissions (contains developer token)
+    # Write auth HTML private from creation (it embeds the developer token).
     auth_html = create_auth_html(developer_token, port)
     auth_file = config_dir / "auth.html"
-    with open(auth_file, "w", encoding="utf-8") as f:
-        f.write(auth_html)
-    os.chmod(auth_file, 0o600)
+    _write_private(auth_file, auth_html)
 
     # Token storage for callback
     captured_token = {"value": None}

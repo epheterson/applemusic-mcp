@@ -977,6 +977,19 @@ def _playlist_rename_api(name: str, new_name: str) -> str:
     return f"Renamed '{name}' to '{new_name}'" if ok else f"Error: {msg}"
 
 
+def _safe_single_match(matches: list[dict], term: str) -> tuple[dict, int]:
+    """Pick exactly ONE match for a destructive op — an exact (case-insensitive)
+    title match if present, else the first candidate. Returns (chosen, others).
+
+    This is the guardrail that stops a short/common ``term`` (e.g. "Love") from
+    fanning a delete across every substring match. It mirrors the native
+    AppleScript path, which removes a single track, not all loose matches."""
+    tl = term.strip().lower()
+    exact = [m for m in matches if m.get("name", "").strip().lower() == tl]
+    chosen = exact[0] if exact else matches[0]
+    return chosen, len(matches) - 1
+
+
 def _playlist_remove_api(playlist: str, track: str, artist: str = "") -> str:
     pid = amp_api.resolve_playlist_id(playlist)
     if not pid:
@@ -989,14 +1002,18 @@ def _playlist_remove_api(playlist: str, track: str, artist: str = "") -> str:
     ]
     if not matches:
         return f"Error: {track!r} not found in {playlist!r}"
-    removed = 0
-    for t in matches:
-        ok, _ = amp_api.remove_track(pid, t["relationship_id"])
-        removed += int(ok)
-    if removed:
-        audit_log.log_action("remove_track", {"playlist": playlist, "track": track, "via": "api"})
-        return f"Removed {removed} track(s) matching {track!r} from {playlist!r}"
-    return f"Error: remove failed for {track!r}"
+    chosen, others = _safe_single_match(matches, track)
+    ok, _ = amp_api.remove_track(pid, chosen["relationship_id"])
+    if not ok:
+        return f"Error: remove failed for {track!r}"
+    audit_log.log_action("remove_track", {"playlist": playlist, "track": track, "via": "api"})
+    out = f"Removed {chosen['name']} - {chosen['artist']} from {playlist!r}"
+    if others:
+        out += (
+            f"\n({others} other track(s) also matched {track!r} — only that one was "
+            f"removed; pass artist=… or a more exact title to target another.)"
+        )
+    return out
 
 
 def _folder_create_api(name: str) -> str:
@@ -1048,7 +1065,7 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
     catalog search by name), and POST them. Adds to the library implicitly."""
     # Resolve the playlist id with the rich 3-pass fuzzy matcher (handles
     # &/and, emoji, accents) rather than amp_api's plain substring match.
-    pid, _ = _find_api_playlist_by_name(playlist)
+    pid, fuzzy = _find_api_playlist_by_name(playlist)
     if not pid:
         pid = amp_api.resolve_playlist_id(playlist)
     if not pid:
@@ -1077,9 +1094,14 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
     ok, msg = amp_api.add_tracks(pid, catalog_ids)
     if not ok:
         return f"Error: {msg}"
-    out = f"Added {len(catalog_ids)} track(s) to '{playlist}':\n" + "\n".join(
+    # Surface the playlist fuzzy match (parity with the native path) so the user
+    # knows if "Rock" landed in "Rock & Roll Classics".
+    dest = f"'{fuzzy.matched_name}'" if fuzzy and fuzzy.matched_name else f"'{playlist}'"
+    out = f"Added {len(catalog_ids)} track(s) to {dest}:\n" + "\n".join(
         f"  + {n}" for n in added_names
     )
+    if fuzzy:
+        out += f"\n{_format_fuzzy_match(fuzzy)}"
     if errors:
         out += "\n" + "\n".join(f"  - {e}" for e in errors)
     return out
@@ -1099,23 +1121,21 @@ def _library_remove_api(track: str, artist: str = "") -> str:
     ]
     if not matches:
         return f"Error: {track!r} not found in your library"
-    removed = []
-    errors = []
-    for s in matches:
-        ok, msg = amp_api.remove_from_library(s["id"])
-        if ok:
-            removed.append(f"{s['name']} - {s['artist']}")
-        else:
-            errors.append(f"{s['name']}: {msg}")
-    if removed:
-        audit_log.log_action("remove_from_library", {"track": track, "via": "api"})
-        out = f"Removed {len(removed)} track(s) from your library:\n" + "\n".join(
-            f"  - {n}" for n in removed
+    # Library removal is permanent and not cheaply reversible, so NEVER fan a
+    # fuzzy term across many songs — remove exactly one (exact title preferred),
+    # matching the native path, and tell the user what else matched.
+    chosen, others = _safe_single_match(matches, track)
+    ok, msg = amp_api.remove_from_library(chosen["id"])
+    if not ok:
+        return f"Error: {chosen['name']}: {msg}"
+    audit_log.log_action("remove_from_library", {"track": track, "via": "api"})
+    out = f"Removed from your library: {chosen['name']} - {chosen['artist']}"
+    if others:
+        out += (
+            f"\n({others} other title(s) also matched {track!r} — nothing else was "
+            f"removed; pass artist=… or a more exact title to target another.)"
         )
-        if errors:
-            out += "\n" + "\n".join(f"  ✗ {e}" for e in errors)
-        return out
-    return "Error: " + "; ".join(errors)
+    return out
 
 
 def _browser_play(track: str, artist: str = "", url: str = "") -> str:
@@ -4416,18 +4436,9 @@ def _library_add(
                 continue
 
             if r.input_type == InputType.CATALOG_ID:
-                # Direct catalog ID — same as track catalog-ID path: UI
-                # automation can't resolve opaque IDs, so on tokenless
-                # macOS surface a clear "use name instead" message
-                # rather than letting _add_to_library_api leak the
-                # token error.
-                if use_ui_path:
-                    errors.append(
-                        f"Album ID {r.value}: catalog IDs require an API "
-                        "token. To add this album without a token, pass "
-                        "it by name instead."
-                    )
-                    continue
+                # Direct catalog ID — add over the API (same as the track
+                # catalog-ID path). The old tokenless-UI fallback was removed,
+                # so there's no UI branch here anymore.
                 success, msg = _add_to_library_api([r.value], "albums")
                 if success:
                     added.append(f"Album ID {r.value}")
@@ -6614,7 +6625,7 @@ def queue(
     track: str = "",
     artist: str = "",
     index: int = -1,
-    enabled: bool = True,
+    enabled: Optional[bool] = None,
 ) -> str:
     """The Up Next play queue, via the browser web player (cross-platform; needs
     a signed-in browser session from `applemusic-mcp signin`). The queue is the
@@ -6627,7 +6638,7 @@ def queue(
     - `remove` — remove the item at `index`
     - `clear` — empty the queue
     - `jump` — jump playback to the item at `index`
-    - `autoplay` — toggle Autoplay (∞: keep playing similar music when the queue ends) with `enabled`
+    - `autoplay` — set Autoplay (∞: keep playing similar music when the queue ends); pass `enabled=true` or `enabled=false` (required)
     """
     from . import browser
 
@@ -6658,6 +6669,8 @@ def queue(
         ok, msg = browser.queue_jump(index)
         return msg if ok else f"Error: {msg}"
     if action == "autoplay":
+        if enabled is None:
+            return "Error: autoplay needs enabled=true or enabled=false"
         ok, msg = browser.queue_autoplay(enabled)
         return msg if ok else f"Error: {msg}"
     return (

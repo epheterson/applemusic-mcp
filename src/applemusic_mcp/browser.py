@@ -32,6 +32,7 @@ is only a fallback.
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 from pathlib import Path
@@ -95,6 +96,12 @@ class _BrowserEngine:
         try:
             self._pw = sync_playwright().start()
             PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+            # 0700 — this profile holds the signed-in Apple ID session + the
+            # media-user-token cookie (the most sensitive store in the project).
+            try:
+                os.chmod(PROFILE_DIR, 0o700)
+            except OSError:
+                pass
             self._ctx = self._launch_context()
             self._page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
         except BaseException as exc:  # noqa: BLE001 - report any launch failure to caller

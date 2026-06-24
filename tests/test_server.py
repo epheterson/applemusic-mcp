@@ -927,6 +927,26 @@ class TestAddToLibraryTool:
         assert "Added" in result
         assert "2" in result
 
+    @responses.activate
+    def test_add_album_by_catalog_id_does_not_crash(
+        self, mock_config_dir, mock_developer_token, mock_user_token
+    ):
+        """Regression: album=<numeric catalog id> hit an undefined `use_ui_path`
+        (NameError) left over from the UI-automation removal. It must route to
+        the API instead."""
+        dev_token_file = mock_config_dir / "developer_token.json"
+        with open(dev_token_file, "w") as f:
+            json.dump({"token": mock_developer_token, "expires": time.time() + 86400 * 60}, f)
+        user_token_file = mock_config_dir / "music_user_token.json"
+        with open(user_token_file, "w") as f:
+            json.dump({"music_user_token": mock_user_token}, f)
+
+        responses.add(responses.POST, "https://api.music.apple.com/v1/me/library", status=202)
+
+        result = server.library(action="add", album="1538003494")
+        assert "Error: name 'use_ui_path'" not in result
+        assert "Added" in result
+
 
 class TestPlayTrackMatching:
     """Tests for play_track song matching logic."""
@@ -2378,6 +2398,57 @@ class TestApiModeReadRouting:
         result = server.library(action="remove", track="Money")
         assert "Removed" in result and "Money" in result
         mock_asc.remove_from_library.assert_not_called()
+
+    @responses.activate
+    def test_remove_in_api_mode_never_fans_out(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """Data-loss guard: a short/common term that substring-matches many
+        library songs must delete EXACTLY ONE (exact title preferred), not all."""
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(server, "_engine", lambda: "api")
+        self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "asc", MagicMock())
+
+        # "Love" matches three titles; one is an exact match.
+        responses.add(
+            responses.GET,
+            "https://amp-api.music.apple.com/v1/me/library/search",
+            json={
+                "results": {
+                    "library-songs": {
+                        "data": [
+                            {
+                                "id": "i.1",
+                                "attributes": {"name": "Crazy in Love", "artistName": "Beyoncé"},
+                            },
+                            {
+                                "id": "i.2",
+                                "attributes": {"name": "Love", "artistName": "Lana Del Rey"},
+                            },
+                            {
+                                "id": "i.3",
+                                "attributes": {"name": "Love On Top", "artistName": "Beyoncé"},
+                            },
+                        ]
+                    }
+                }
+            },
+            status=200,
+        )
+        # Only the exact-title song (i.2) may be deleted.
+        deleted = responses.add(
+            responses.DELETE,
+            "https://amp-api.music.apple.com/v1/me/library/songs/i.2",
+            status=204,
+        )
+
+        result = server.library(action="remove", track="Love")
+        # Exactly one DELETE, and it was the exact-title match.
+        delete_calls = [c for c in responses.calls if c.request.method == "DELETE"]
+        assert len(delete_calls) == 1
+        assert "i.2" in delete_calls[0].request.url
+        assert "2 other" in result  # warns about the other matches
 
 
 class TestAlbumDisambiguation:
