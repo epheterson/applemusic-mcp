@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import sys
 import time
 import webbrowser
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -18,8 +19,11 @@ DEFAULT_CONFIG_DIR = Path.home() / ".config" / "applemusic-mcp"
 
 def _write_private(path, text: str) -> None:
     """Write ``text`` to ``path`` created 0600 from the start — no world-readable
-    window. The old ``open(w)`` + ``chmod`` pattern left the secret readable
-    between create and chmod; ``os.open`` with the mode closes that TOCTOU gap."""
+    window on POSIX. The old ``open(w)`` + ``chmod`` pattern left the secret
+    readable between create and chmod; ``os.open`` with the mode closes that
+    TOCTOU gap. NOTE: POSIX mode bits don't restrict access on Windows — that's
+    why Windows defaults ``secure_storage`` to the keychain (see
+    ``get_user_preferences``)."""
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(text)
@@ -325,9 +329,16 @@ def get_user_preferences() -> dict:
         "mode": prefs.get("mode", "auto"),
         # Back-compat playback-only override (falls back to `mode` when "auto").
         "playback": prefs.get("playback", "auto"),
-        # Token storage: "file" (default — 0600 files, reliable across the CLI and
-        # server processes) or "keychain" (OS keychain; opt-in, may prompt once).
-        "secure_storage": prefs.get("secure_storage", "file"),
+        # Token storage: "file" (0600 files) or "keychain" (OS keychain). Default
+        # is platform-aware: Windows defaults to the keychain because POSIX file
+        # mode bits don't restrict access there (0600 is a no-op on Windows, so a
+        # file would be readable by other local accounts) and the Credential
+        # Locker is per-user and reliable across processes. macOS/Linux default to
+        # files — reliable across the separate CLI and server processes, where the
+        # macOS keychain's per-process ACL is not.
+        "secure_storage": prefs.get(
+            "secure_storage", "keychain" if sys.platform == "win32" else "file"
+        ),
     }
 
 

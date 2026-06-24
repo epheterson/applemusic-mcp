@@ -236,6 +236,13 @@ class TestSecretStoreKeychain:
         monkeypatch.setattr(auth, "_keyring", fake)
         return fake
 
+    def test_default_storage_is_platform_aware(self, mock_config_dir, monkeypatch):
+        """Windows defaults to keychain (0600 is a no-op there); macOS/Linux to file."""
+        monkeypatch.setattr(auth.sys, "platform", "win32")
+        assert auth.get_user_preferences()["secure_storage"] == "keychain"
+        monkeypatch.setattr(auth.sys, "platform", "darwin")
+        assert auth.get_user_preferences()["secure_storage"] == "file"
+
     def test_keychain_off_by_default_even_with_backend(self, mock_config_dir, monkeypatch):
         """Opt-in: with a working backend but the default secure_storage=file, the
         token must be written to a FILE, not the keychain."""

@@ -167,9 +167,17 @@ class _BrowserEngine:
             return val
         raise val
 
-    def shutdown(self) -> None:
-        if self._thread and self._thread.is_alive():
-            self._cmd_q.put(_STOP)
+    def shutdown(self, timeout: float = 10.0) -> None:
+        """Stop the owner thread and WAIT for it to finish closing Chrome, so a
+        caller (e.g. clear_session) can safely delete the profile afterward and a
+        subsequent signin starts a clean thread instead of submitting to a dying
+        one."""
+        with self._lock:
+            t = self._thread
+            if t and t.is_alive():
+                self._cmd_q.put(_STOP)
+        if t and t.is_alive():
+            t.join(timeout=timeout)
 
 
 _engine = _BrowserEngine()

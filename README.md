@@ -399,7 +399,7 @@ Library, catalog, add/rate, and the full playlist + folder surface all work over
 
 | Problem | Solution |
 |---------|----------|
-| 401 Unauthorized | `applemusic-mcp authorize` |
+| 401 Unauthorized | `applemusic-mcp signin` (web path) or `applemusic-mcp authorize` (dev-token path) |
 | "Cannot edit playlist" | Use `copy_playlist` for editable copy |
 | Token expiring | `applemusic-mcp generate-token` |
 | Check everything | `applemusic-mcp status` |

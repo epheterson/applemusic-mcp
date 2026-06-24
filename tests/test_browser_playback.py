@@ -69,7 +69,8 @@ def test_browser_play_track_not_found(monkeypatch):
     [
         ("auto", True, "native"),  # macOS + AppleScript -> native
         ("auto", False, "api"),  # no AppleScript -> api
-        ("native", False, "native"),  # pinned native even off-Mac
+        ("native", True, "native"),  # pinned native on macOS
+        ("native", False, "api"),  # pinned native off-Mac -> falls back to api (no AppleScript)
         ("api", True, "api"),  # pinned api even on macOS
     ],
 )

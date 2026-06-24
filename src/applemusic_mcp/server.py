@@ -939,10 +939,12 @@ def _engine() -> str:
     if os.environ.get("APPLEMUSIC_FORCE_API_MODE") == "1":
         return "api"
     mode = (get_user_preferences().get("mode") or "auto").lower()
-    if mode == "native":
-        return "native"
     if mode == "api":
         return "api"
+    # native only when AppleScript is actually available; otherwise fall back to
+    # api so a non-macOS user who pinned `native` doesn't hit AppleScript crashes.
+    if mode == "native":
+        return "native" if APPLESCRIPT_AVAILABLE else "api"
     return "native" if APPLESCRIPT_AVAILABLE else "api"
 
 
@@ -6105,10 +6107,14 @@ def config(
                     return f"Error: '{preference}' requires 'value' parameter (true or false)"
                 pref_value = value
 
-            # Load current config
+            # Load current config. Deep-copy so we never mutate the shared cached
+            # dict (load_config returns the cached object) — a failed write must
+            # not poison the in-memory cache with unsaved state.
+            import copy
+
             from .auth import load_config, get_config_dir as get_auth_config_dir
 
-            config = load_config()
+            config = copy.deepcopy(load_config())
 
             # Update preferences
             if "preferences" not in config:
@@ -6116,10 +6122,13 @@ def config(
             old_value = config.get("preferences", {}).get(preference)
             config["preferences"][preference] = pref_value
 
-            # Save back
+            # Save atomically (temp + os.replace) so a concurrent reader never
+            # sees a half-written file.
             config_file = get_auth_config_dir() / "config.json"
-            with open(config_file, "w") as f:
+            tmp = config_file.with_suffix(".json.tmp")
+            with open(tmp, "w") as f:
                 json.dump(config, f, indent=2)
+            os.replace(tmp, config_file)
 
             audit_log.log_action(
                 "set_preference",
