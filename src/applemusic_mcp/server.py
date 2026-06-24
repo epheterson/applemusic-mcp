@@ -1969,6 +1969,35 @@ def _resolve_library_playlist_id(name: str) -> Optional[str]:
         return None
 
 
+def _delete_playlist_api(name: str) -> str:
+    """Delete a library playlist over amp-api — cross-platform, no AppleScript.
+
+    api.music.apple.com returns 401 on DELETE even with a paid token; the web
+    player's amp-api host accepts it (204). This is the path used off-macOS (or
+    in API mode) so deletion works with just the captured token.
+    """
+    pid = _resolve_library_playlist_id(name)
+    if not pid:
+        return f"Error: playlist {name!r} not found in your library"
+    try:
+        r = requests.delete(
+            f"https://amp-api.music.apple.com/v1/me/library/playlists/{pid}",
+            headers=get_headers(),
+            timeout=REQUEST_TIMEOUT,
+        )
+        if r.status_code in (200, 202, 204):
+            audit_log.log_action("delete_playlist", {"name": name, "via": "amp-api"})
+            return f"Deleted playlist: {name}"
+        if r.status_code in (401, 403):
+            return (
+                f"Not authorized to delete (status {r.status_code}) — re-run "
+                "`applemusic-mcp signin`."
+            )
+        return f"Error: delete failed (status {r.status_code})"
+    except Exception as e:
+        return f"Error: {e}"
+
+
 def _auto_search_and_add_to_playlist(
     track_name: str,
     artist: str,
@@ -3696,14 +3725,18 @@ def playlist(
             return err
         return _playlist_remove(playlist, track, artist)
     elif action == "delete":
-        if err := _macos_only("delete"):
-            return err
         if folder:
+            if err := _macos_only("delete folder"):
+                return err
             return _playlist_delete_folder(folder)
         playlist_name = name or playlist
         if not playlist_name:
             return "Error: name, playlist, or folder required for delete"
-        return _playlist_delete(playlist_name)
+        # Playlists delete natively on macOS; off-Mac (or no Music.app) they
+        # delete over amp-api with the captured token. Folders stay macOS-only.
+        if APPLESCRIPT_AVAILABLE:
+            return _playlist_delete(playlist_name)
+        return _delete_playlist_api(playlist_name)
     elif action == "rename":
         if err := _macos_only("rename"):
             return err

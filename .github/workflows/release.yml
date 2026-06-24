@@ -80,12 +80,12 @@ jobs:
         run: |
           if [ "$NOTES_FOUND" = "true" ]; then
             gh release create "$TAG" \
-              --title "v$VERSION" \
+              --title "Apple Music MCP v$VERSION" \
               --notes "$NOTES_BODY" \
               --target "$GITHUB_SHA"
           else
             gh release create "$TAG" \
-              --title "v$VERSION" \
+              --title "Apple Music MCP v$VERSION" \
               --generate-notes \
               --target "$GITHUB_SHA"
           fi

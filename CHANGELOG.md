@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-06-24
+
+### Fixed
+
+- **Playlist delete works off-macOS / without Music.app.** It was gated
+  macOS-only and the public API's `DELETE` returns 401 even with a paid token.
+  Deletion now routes through `amp-api` (the web player's host, which accepts it)
+  using the captured token. Folders remain macOS-only.
+
+### Changed
+
+- GitHub Release titles are prefixed **"Apple Music MCP vX.Y.Z"**.
+
 ## [0.15.0] - 2026-06-23
 
 ### Added
