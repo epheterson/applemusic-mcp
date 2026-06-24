@@ -422,7 +422,7 @@ When a user asks for something, the right MCP tool depends on whether they're se
 | Find a song the user already has | `library(action='search', query='...')` | Local library only. AppleScript on macOS, API otherwise. |
 | List the user's tracks in a genre | `library(action='search', query='Rock', types='genre')` | Filters on the track's genre field — **macOS-only**. Do NOT route a genre name through plain full-text search: it never looks at the genre field, so "Rock" would false-match a song titled *"Rock Your Body."* Zero matches returns "No tracks found"; off macOS it reports genre filtering isn't available via the API. |
 | Find a song in Apple Music's full catalog | `catalog(action='search', query='...')` | Tries API first, falls back to Music.app UI search on tokenless macOS. |
-| Add a catalog song to the user's library | `library(action='add', track='...')` | API path with token, UI automation path on tokenless macOS. |
+| Add a catalog song to the user's library | `library(action='add', track='...')` | API only — needs a developer token (generated or harvested) + a media-user-token (`signin`). The UI-automation fallback was removed in 0.15.0 (see note above). |
 | Add a song (in library OR catalog) to a playlist | `playlist(action='add', track='...', auto_search=True)` | `auto_search=True` is required to reach the catalog when the song isn't already in the library. Default is False to avoid unwanted library writes — set it to True for "fill this playlist" workflows. |
 | Browse charts / recommendations | `discover` | API only. No UI fallback for this one. |
 
