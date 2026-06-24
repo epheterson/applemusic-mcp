@@ -274,6 +274,94 @@ def add_catalog_track_to_library(song_id: str, name: str = "") -> tuple[bool, st
     return False, f"Add returned HTTP {status} for {label}"
 
 
+# ---------------------------------------------------------------------------
+# Cross-platform playback (branch B: "browser-first" flow)
+# ---------------------------------------------------------------------------
+#
+# Drives the music.apple.com web player's own MusicKit instance, so a catalog
+# track actually *plays* (DRM/audio) in the signed-in Chrome window on any OS.
+# This is the cross-platform counterpart to macOS AppleScript playback. Requires
+# system Chrome (Widevine); Playwright's bundled Chromium can't decode protected
+# audio.
+
+_PLAY_SONG_JS = """
+async (songId) => {
+  const mk = window.MusicKit.getInstance();
+  await mk.setQueue({ song: songId, startPlaying: true });
+  await mk.play();
+  return mk.nowPlayingItem ? mk.nowPlayingItem.attributes.name : 'playing';
+}
+"""
+
+_CONTROL_JS = """
+async (action) => {
+  const mk = window.MusicKit.getInstance();
+  switch (action) {
+    case 'play':     await mk.play(); break;
+    case 'pause':    await mk.pause(); break;
+    case 'next':     await mk.skipToNextItem(); break;
+    case 'previous': await mk.skipToPreviousItem(); break;
+    default: return 'unknown action: ' + action;
+  }
+  return 'ok';
+}
+"""
+
+_NOW_PLAYING_JS = """
+() => {
+  const mk = window.MusicKit.getInstance();
+  const it = mk && mk.nowPlayingItem;
+  if (!it) return null;
+  const a = it.attributes || {};
+  return { name: a.name, artist: a.artistName, album: a.albumName, playing: !mk.isPlaying === false };
+}
+"""
+
+
+def _ensure_player_ready(page) -> None:
+    page.goto(BROWSE_URL, wait_until="domcontentloaded")
+    page.wait_for_function(_MUSICKIT_READY, timeout=20000)
+
+
+def play_catalog_track(catalog_id: str) -> tuple[bool, str]:
+    """Play a catalog song in the browser web player (cross-platform, DRM)."""
+    if not str(catalog_id).strip():
+        return False, "Empty catalog id"
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_PLAY_SONG_JS, str(catalog_id))
+
+    try:
+        return True, f"Playing: {_engine.submit(run)}"
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Browser play failed: {exc}"
+
+
+def playback_control(action: str) -> tuple[bool, str]:
+    """play | pause | next | previous on the browser web player."""
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_CONTROL_JS, action)
+
+    try:
+        res = _engine.submit(run)
+        return (res == "ok"), res
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Browser control failed: {exc}"
+
+
+def now_playing() -> Optional[dict]:
+    """Current web-player track, or None."""
+    try:
+        return _engine.submit(lambda page: page.evaluate(_NOW_PLAYING_JS))
+    except Exception:
+        return None
+
+
 def is_available() -> bool:
     """Best-effort check that the engine can start (Playwright importable)."""
     try:
