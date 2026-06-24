@@ -43,11 +43,11 @@ can't launch, and sign-in needs an interactive login).
 
 ---
 
-## Quick Start (macOS)
+## Quick Start
 
-**Requirements:** Python 3.10+, Apple Music app with subscription.
+**Requirements:** Python 3.10+, Apple Music subscription. (macOS: the Music app for native playback. Windows/Linux: Google Chrome for playback.)
 
-**No Apple Developer account needed.** On macOS, playback and local library features work instantly via AppleScript. To add catalog music to your library/playlists (any platform), sign in once — see [Enable catalog features](#enable-catalog-features-sign-in-once) below.
+**No Apple Developer account needed.** On macOS, local library and playback work instantly via AppleScript. To add catalog music — and to play on any platform — sign in once; see [Enable catalog features](#enable-catalog-features-sign-in-once) below.
 
 ```bash
 git clone https://github.com/epheterson/applemusic-mcp.git
@@ -71,8 +71,8 @@ Add to your MCP client config. **Claude Desktop** (`~/Library/Application Suppor
 
 **That's it!** Restart your client and try: "List my Apple Music playlists" or "Play my favorites playlist"
 
-> **Windows/Linux users:** AppleScript playback requires macOS, but catalog/library/playlist
-> features work cross-platform — just [sign in](#enable-catalog-features-sign-in-once).
+> **Windows/Linux users:** everything — library, playlists, and playback — works after you
+> [sign in](#enable-catalog-features-sign-in-once). Playback uses a local Google Chrome window.
 
 ---
 
