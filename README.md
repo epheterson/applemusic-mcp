@@ -7,35 +7,34 @@
 [![macOS](https://img.shields.io/badge/macOS-15%20%7C%2026-blue.svg)]()
 [![MCP](https://img.shields.io/badge/MCP-server-purple.svg)](https://modelcontextprotocol.io/)
 
-[MCP](https://modelcontextprotocol.io/) server for Apple Music — lets your AI assistant (Claude, Cursor, Cline, Windsurf, or any [MCP client](https://modelcontextprotocol.io/clients)) manage playlists, control playback, and browse your library.
+[MCP](https://modelcontextprotocol.io/) server for Apple Music — lets your AI assistant (Claude, Cursor, Cline, Windsurf, or any [MCP client](https://modelcontextprotocol.io/clients)) manage playlists, add music, control playback, and browse your library.
+
+**Works on macOS, Windows, and Linux. No $99 Apple Developer account required** — sign in once with `applemusic-mcp signin` and catalog/library/playlist features run over the Apple Music API. macOS additionally gets native playback control.
 
 ## Features
 
-| Feature | macOS | API |
-|---------|:-----:|:---:|
+| Feature | macOS | Cross-platform |
+|---------|:-----:|:--------------:|
 | List playlists | ✓ | ✓ |
-| Browse library songs | ✓ | ✓ |
+| Browse / search library | ✓ | ✓ |
 | Create playlists | ✓ | ✓ |
-| Search library | ✓ | ✓ |
 | Love/dislike tracks | ✓ | ✓ |
 | CSV/JSON export | ✓ | ✓ |
-| Add tracks to playlists | ✓ | API-created |
-| Search catalog | UI* | ✓ |
-| Add songs to library | UI* | ✓ |
-| Recommendations, charts, radio |   | ✓ |
-| Play tracks | ✓ / UI* |   |
-| Play by URL (album, playlist, song) | UI* |   |
-| Playback control (pause/skip/seek) | ✓ |   |
-| Volume, shuffle, repeat | ✓ |   |
+| Search catalog | ✓ | ✓ |
+| **Add songs to library** | ✓ | ✓ |
+| **Add tracks to playlists** | ✓ | ✓ |
+| Recommendations, charts, radio | ✓ | ✓ |
+| Play tracks | ✓ |   |
+| Play by URL (album, playlist, song) | ✓ |   |
+| Playback control (pause/skip/seek/volume) | ✓ |   |
 | Star ratings (1-5) | ✓ |   |
-| Remove tracks from playlists | ✓ |   |
-| Delete playlists/folders | ✓ |   |
-| Create folders | ✓ | top-level |
-| Rename playlists/folders | ✓ |   |
-| Move playlists/folders | ✓ |   |
-| Folder hierarchy/paths | ✓ |   |
+| Remove tracks / delete playlists / folders | ✓ |   |
+| Rename / move playlists & folders | ✓ |   |
 
-**macOS** uses AppleScript for full local control. **API** mode enables catalog features and works cross-platform. **UI*** = UI automation fallback (requires the screen to be unlocked, display attached, and Accessibility permissions; Top Results only for search).
+**Catalog, library, and playlist features run over the Apple Music API** — same on every
+platform (sign in once). **Playback** is macOS-only for now (native AppleScript control of
+Music.app); cross-platform browser playback is in progress. Play-from-URL on macOS uses a
+small AppleScript UI step and needs the screen unlocked + Accessibility permission.
 
 ---
 
@@ -43,7 +42,7 @@
 
 **Requirements:** Python 3.10+, Apple Music app with subscription.
 
-**No Apple Developer account needed on macOS!** Most features work instantly via AppleScript. Catalog features use the API when available, with UI automation fallback on macOS (requires display + Accessibility permissions). On other platforms and for more features a $99/yr Apple Developer Program membership is required for the API.
+**No Apple Developer account needed.** On macOS, playback and local library features work instantly via AppleScript. To add catalog music to your library/playlists (any platform), sign in once — see [Enable catalog features](#enable-catalog-features-sign-in-once) below.
 
 ```bash
 git clone https://github.com/epheterson/applemusic-mcp.git
@@ -67,25 +66,29 @@ Add to your MCP client config. **Claude Desktop** (`~/Library/Application Suppor
 
 **That's it!** Restart your client and try: "List my Apple Music playlists" or "Play my favorites playlist"
 
-> **Windows/Linux users:** Skip to [API Setup](#api-setup-optional-on-macos-required-on-windowslinux) - AppleScript features require macOS, but API mode works cross-platform.
+> **Windows/Linux users:** AppleScript playback requires macOS, but catalog/library/playlist
+> features work cross-platform — just [sign in](#enable-catalog-features-sign-in-once).
 
 ---
 
-## API Setup (Optional on macOS, Required on Windows/Linux)
+## Enable Catalog Features (sign in once)
 
-Catalog add-to-library and playlist building run over the unified Apple Music API.
-There are **two ways** to enable it — pick one:
+Adding catalog music to your library and playlists runs over the Apple Music API. Pick one:
 
-- **Option A — Apple Developer token (preferred).** Sanctioned, 6-month token,
-  cleaner rate limits. Best if you have (or will get) an Apple Developer account.
-  Steps 1–3 below.
-- **Option B — Browser sign-in (no Apple Developer account).** A one-time browser
-  login captures your `media-user-token`; the developer token is harvested from
-  Apple's public web player. See [Option B](#option-b--browser-sign-in-no-apple-developer-account).
+- **Recommended — browser sign-in (no Apple Developer account).** One command, any OS:
+  ```bash
+  applemusic-mcp signin     # opens Chrome to music.apple.com; sign in once
+  applemusic-mcp status     # verify
+  ```
+  Captures your `media-user-token` from a local signed-in Chrome profile (your password
+  never touches this tool); the developer token comes from Apple's public web player. Uses
+  your installed Chrome when present. [Details](#option-b--browser-sign-in-no-apple-developer-account).
+- **Power users — Apple Developer token.** If you have an [Apple Developer Program](https://developer.apple.com/programs/)
+  membership ($99/yr), generate a sanctioned 6-month token instead — Option A below.
 
-### Option A — Apple Developer token
+### Option A — Apple Developer token (optional)
 
-**Requirements:** Python 3.10+, Apple Music app with subscription, active [Apple Developer Program](https://developer.apple.com/programs/) membership ($99/yr USD).
+**Requirements:** Python 3.10+, Apple Music app with subscription, active Apple Developer Program membership.
 
 ### 1. Get MusicKit Key
 
@@ -399,14 +402,20 @@ Exported files are accessible via MCP resources (any MCP client that supports re
 ### Windows/Linux
 | Limitation | Workaround |
 |------------|------------|
-| Only API-created playlists editable | `copy_playlist` makes editable copy |
-| Can't delete playlists or remove tracks | Create new playlist instead |
-| No playback control | Use Music app directly |
+| No playback control | Use Music app/web directly (cross-platform browser playback is in progress) |
+| Deleting playlists / removing tracks is macOS-only | Done via AppleScript; not yet exposed cross-platform |
+
+Adding songs to your library and to existing playlists works cross-platform (after `signin`).
 
 ### Both Platforms
-- **Tokens expire:** Developer token lasts 180 days. You'll see warnings starting 30 days before expiration. Run `applemusic-mcp generate-token` to renew.
-- **Screen must be unlocked for UI flows:** The catalog search / hover-to-add / play UI paths drive Music.app via System Events; a locked screen blocks them. The MCP detects this and returns a clear error.
-- **A few playlists silently revert AppleScript edits** ([known Music.app/AppleScript bug](https://www.macscripter.net/t/add-current-track-from-apple-music-to-playlist/72058)). The MCP detects the rollback automatically and returns an actionable error suggesting Music.app's right-click → Add to Playlist as a workaround.
+- **Brand-new playlists take a moment to be addable:** a just-created playlist needs to
+  propagate to the cloud library before tracks can be added over the API; existing playlists
+  are immediate.
+- **Sign-in persists, but can expire:** if catalog actions start failing, re-run
+  `applemusic-mcp signin` (or `applemusic-mcp generate-token` for the developer-token path).
+- **Screen must be unlocked for macOS playback/play-from-URL:** those drive Music.app via
+  System Events; a locked screen blocks them. The MCP detects this and returns a clear error.
+- **A few playlists silently revert AppleScript edits** ([known Music.app/AppleScript bug](https://www.macscripter.net/t/add-current-track-from-apple-music-to-playlist/72058)). The MCP detects the rollback automatically and returns an actionable error.
 
 ---
 
