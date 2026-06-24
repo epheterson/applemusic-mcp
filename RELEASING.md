@@ -34,8 +34,8 @@ This runs, in order:
    skip,
 3. the live API integration suite (`tests/test_live_integration.py`, `TEST_API=1`)
    against your real account — it creates/deletes `_UI_TEST_…` playlists and
-   folders and clears any rating it sets. One known residue: the probe song it
-   adds stays in your library (no verified remove-from-library API yet).
+   folders, clears any rating it sets, and removes the probe song it adds. Fully
+   self-cleaning — no residue.
 
 It refuses to pass if the core live tests **skipped** rather than passed (a
 half-ready environment that skips everything is a false green).

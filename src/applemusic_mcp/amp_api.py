@@ -116,6 +116,36 @@ def get_tracks(playlist_id: str) -> list[dict]:
     return out
 
 
+def search_library_songs(term: str, limit: int = 25) -> list[dict]:
+    """Search the user's library: [{id, name, artist, catalog_id}]. The ``id`` is
+    the library-song id (i.xxx) needed to remove it from the library."""
+    try:
+        r = requests.get(
+            f"{AMP}/me/library/search",
+            headers=_headers(),
+            params={"term": term, "types": "library-songs", "limit": min(limit, 25)},
+            timeout=TIMEOUT,
+        )
+        if r.status_code != 200:
+            return []
+        songs = r.json().get("results", {}).get("library-songs", {}).get("data", [])
+        out = []
+        for s in songs:
+            a = s.get("attributes", {})
+            pp = a.get("playParams", {})
+            out.append(
+                {
+                    "id": s.get("id"),  # library-song id (i.xxx) — needed for removal
+                    "name": a.get("name", ""),
+                    "artist": a.get("artistName", ""),
+                    "catalog_id": pp.get("catalogId") or pp.get("id"),
+                }
+            )
+        return out
+    except Exception:
+        return []
+
+
 def search_catalog_songs(term: str, limit: int = 5) -> list[dict]:
     """Catalog song search: [{id, name, artist}]."""
     try:
@@ -213,6 +243,23 @@ def remove_track(playlist_id: str, relationship_id: str) -> tuple[bool, str]:
         return (r.status_code in _OK), (
             "Removed" if r.status_code in _OK else f"status {r.status_code}"
         )
+    except Exception as e:
+        return False, str(e)
+
+
+def remove_from_library(library_song_id: str) -> tuple[bool, str]:
+    """Remove ONE song from the user's library — the web player's real call,
+    verified live: DELETE /me/library/songs/{libraryId} (the id is the
+    library-song id, i.xxx, from search_library_songs/get_tracks). Returns 204."""
+    try:
+        r = requests.delete(
+            f"{AMP}/me/library/songs/{library_song_id}", headers=_headers(), timeout=TIMEOUT
+        )
+        if r.status_code in _OK:
+            return True, "Removed from library"
+        if r.status_code in (401, 403):
+            return False, f"not authorized (status {r.status_code}) — re-run signin"
+        return False, f"status {r.status_code}"
     except Exception as e:
         return False, str(e)
 

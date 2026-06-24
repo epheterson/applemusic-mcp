@@ -78,6 +78,42 @@ def test_remove_track_real_query_format():
 
 
 @responses.activate
+def test_remove_from_library_deletes_by_library_id():
+    # Verified live: DELETE /me/library/songs/{libraryId} -> 204.
+    responses.add(responses.DELETE, f"{amp_api.AMP}/me/library/songs/i.ABC", status=204)
+    ok, msg = amp_api.remove_from_library("i.ABC")
+    assert ok and "library" in msg.lower()
+    assert "/me/library/songs/i.ABC" in responses.calls[0].request.url
+
+
+@responses.activate
+def test_search_library_songs_shape():
+    responses.add(
+        responses.GET,
+        f"{amp_api.AMP}/me/library/search",
+        json={
+            "results": {
+                "library-songs": {
+                    "data": [
+                        {
+                            "id": "i.XYZ",
+                            "attributes": {
+                                "name": "Time",
+                                "artistName": "Pink Floyd",
+                                "playParams": {"catalogId": "123"},
+                            },
+                        }
+                    ]
+                }
+            }
+        },
+        status=200,
+    )
+    out = amp_api.search_library_songs("Time")
+    assert out == [{"id": "i.XYZ", "name": "Time", "artist": "Pink Floyd", "catalog_id": "123"}]
+
+
+@responses.activate
 def test_delete_playlist_hits_amp_host():
     responses.add(responses.DELETE, f"{amp_api.AMP}/me/library/playlists/p.1", status=204)
     ok, _ = amp_api.delete_playlist("p.1")

@@ -17,14 +17,9 @@ They hit the live ``amp-api.music.apple.com`` and MUTATE the real account, so:
   * playlists/folders are deleted in teardown, and every playlist/folder name
     uses the ``_UI_TEST_`` prefix that ``conftest.py``'s session sweep also
     cleans (belt and suspenders if a test aborts before its inline cleanup),
-  * ratings are cleared in teardown.
-
-ONE known residue: adding a catalog track (to a playlist or directly to the
-library) also files it under the account library, and there is no *verified*
-remove-from-library API call yet, so the probe song (a well-known hit) is left
-in the library. The library-add coverage exists because that is the exact #37
-flow; the residue is one song per release run. Tracked as a follow-up to add a
-verified remove-from-library so the gate becomes fully self-cleaning.
+  * ratings are cleared in teardown, and the probe song the library-add test
+    files is removed again via the verified DELETE /me/library/songs/{id} — so
+    the gate is fully self-cleaning and leaves NO residue.
 
 This is the API successor to the old UI-automation gate: the fragile Music.app
 UI add path (split across macOS/Music.app versions) was removed in favor of the
@@ -178,12 +173,25 @@ class TestLiveApiRatings:
 
 
 class TestLiveLibraryAdd:
-    def test_add_catalog_track_to_library(self):
-        """The server-level catalog→library add (the #37 flow), end to end over
-        the API. Lenient on verification because library indexing lags; the
-        assertion is that the add itself reports success, not an error."""
+    def test_add_then_remove_from_library(self):
+        """The server-level catalog→library add (the #37 flow) end to end, then
+        remove it again via the verified DELETE /me/library/songs/{id} — so the
+        gate leaves NO residue. Library indexing lags, so the removal polls."""
         song = _probe_catalog_song()
         result = server.library(action="add", track=song["id"])
         assert "Error" not in result, result
-        # The catalog id echoes back, or the resolved name does.
         assert song["id"] in result or song["name"].split()[0].lower() in result.lower()
+
+        # Wait for the library to index it, then remove by its library-song id.
+        deadline = time.time() + 20.0
+        removed = False
+        while time.time() < deadline and not removed:
+            for s in amp_api.search_library_songs(song["name"]):
+                if s.get("catalog_id") == song["id"] or song["name"].lower() in s["name"].lower():
+                    ok, msg = amp_api.remove_from_library(s["id"])
+                    assert ok, f"remove_from_library failed: {msg}"
+                    removed = True
+                    break
+            if not removed:
+                time.sleep(2.0)
+        assert removed, "added song never became removable from the library (indexing lag)"

@@ -1085,6 +1085,39 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
     return out
 
 
+def _library_remove_api(track: str, artist: str = "") -> str:
+    """Remove track(s) from the user's library over the API (cross-platform):
+    find matching library songs, then DELETE each by its library-song id."""
+    if not track:
+        return "Error: Provide track parameter"
+    term = f"{track} {artist}".strip()
+    songs = amp_api.search_library_songs(term)
+    tl = track.lower()
+    al = artist.lower()
+    matches = [
+        s for s in songs if tl in s["name"].lower() and (not artist or al in s["artist"].lower())
+    ]
+    if not matches:
+        return f"Error: {track!r} not found in your library"
+    removed = []
+    errors = []
+    for s in matches:
+        ok, msg = amp_api.remove_from_library(s["id"])
+        if ok:
+            removed.append(f"{s['name']} - {s['artist']}")
+        else:
+            errors.append(f"{s['name']}: {msg}")
+    if removed:
+        audit_log.log_action("remove_from_library", {"track": track, "via": "api"})
+        out = f"Removed {len(removed)} track(s) from your library:\n" + "\n".join(
+            f"  - {n}" for n in removed
+        )
+        if errors:
+            out += "\n" + "\n".join(f"  ✗ {e}" for e in errors)
+        return out
+    return "Error: " + "; ".join(errors)
+
+
 def _browser_play(track: str, artist: str = "", url: str = "") -> str:
     """Play a track or Apple Music URL in the browser web player (cross-platform)."""
     from . import browser
@@ -3996,7 +4029,7 @@ def library(
     rate_action: str = "",
     stars: int = 0,
 ) -> str:
-    """Your library. Actions: search, add, recently_played, recently_added, browse, favorites (macOS), rate, remove (macOS), snapshot. action='search' searches the user's local library only — for catalog (Apple Music's full library) use catalog(action='search'). For search, types can be 'songs' (default), 'artists', 'albums', 'all', or 'genre' — types='genre' lists the user's own tracks whose genre matches query (e.g. query='Rock'); genre filtering is macOS-only (local Music app). Search returns one page: limit (default 25) caps results and offset pages through larger result sets — the text header shows 'start-end of total' so you know when more remain. action='favorites' lists songs marked Favorite (loved) in Music.app. action='add' adds catalog tracks/albums to your library over the API (developer token — generated or harvested — plus a media-user-token from `signin`); there is no UI-automation fallback. In api mode, search/browse read via the API and love/dislike rate via the API; star ratings (rate get/set) need native mode (local Music.app)."""
+    """Your library. Actions: search, add, recently_played, recently_added, browse, favorites (macOS), rate, remove, snapshot (macOS). action='search' searches the user's local library only — for catalog (Apple Music's full library) use catalog(action='search'). For search, types can be 'songs' (default), 'artists', 'albums', 'all', or 'genre' — types='genre' lists the user's own tracks whose genre matches query (e.g. query='Rock'); genre filtering is macOS-only (local Music app). Search returns one page: limit (default 25) caps results and offset pages through larger result sets — the text header shows 'start-end of total' so you know when more remain. action='favorites' lists songs marked Favorite (loved) in Music.app. action='add' adds catalog tracks/albums to your library over the API (developer token — generated or harvested — plus a media-user-token from `signin`); there is no UI-automation fallback. In api mode, search/browse read via the API and love/dislike rate via the API; star ratings (rate get/set) need native mode (local Music.app)."""
     action = action.lower().strip().replace("-", "_")
 
     if action == "search":
@@ -4024,6 +4057,8 @@ def library(
             return "Error: rate_action required (love, dislike, get, set)"
         return _library_rate(rate_action, track, artist, stars)
     elif action == "remove":
+        if _engine() == "api":
+            return _library_remove_api(track, artist)
         if err := _macos_only("remove"):
             return err
         return _library_remove(track, artist)
