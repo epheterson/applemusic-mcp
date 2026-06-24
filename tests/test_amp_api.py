@@ -93,6 +93,51 @@ def test_delete_playlist_401_message():
 
 
 @responses.activate
+def test_create_folder_posts_with_parent_relationship():
+    responses.add(
+        responses.POST,
+        f"{amp_api.AMP}/me/library/playlist-folders",
+        json={"data": [{"id": "p.FOLDER"}]},
+        status=201,
+    )
+    ok, fid = amp_api.create_folder("Mixes")
+    assert ok and fid == "p.FOLDER"
+    import json
+
+    body = json.loads(responses.calls[0].request.body)
+    assert body["attributes"]["name"] == "Mixes"
+    assert body["relationships"]["parent"]["data"][0]["type"] == "library-playlist-folders"
+
+
+@responses.activate
+def test_move_playlist_to_folder_puts_parent():
+    responses.add(responses.PUT, f"{amp_api.AMP}/me/library/playlists/p.1/parent", status=204)
+    ok, _ = amp_api.move_playlist_to_folder("p.1", "p.FOLDER")
+    assert ok
+    import json
+
+    body = json.loads(responses.calls[0].request.body)
+    assert body == {"data": [{"id": "p.FOLDER", "type": "library-playlist-folders"}]}
+
+
+@responses.activate
+def test_rate_love_puts_value_1():
+    responses.add(responses.PUT, f"{amp_api.AMP}/me/ratings/songs/123", status=200)
+    ok, msg = amp_api.rate("123", 1)
+    assert ok and msg == "Loved"
+    import json
+
+    assert json.loads(responses.calls[0].request.body) == {"attributes": {"value": 1}}
+
+
+@responses.activate
+def test_rate_clear_deletes():
+    responses.add(responses.DELETE, f"{amp_api.AMP}/me/ratings/songs/123", status=204)
+    ok, msg = amp_api.rate("123", 0)
+    assert ok and "Cleared" in msg
+
+
+@responses.activate
 def test_resolve_playlist_id_prefers_exact():
     responses.add(
         responses.GET,

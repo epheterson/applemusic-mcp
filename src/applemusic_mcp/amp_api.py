@@ -230,3 +230,110 @@ def delete_playlist(playlist_id: str) -> tuple[bool, str]:
         return False, f"status {r.status_code}"
     except Exception as e:
         return False, str(e)
+
+
+# --- folders (incl. moves the web UI doesn't even expose) ------------------
+
+ROOT_FOLDER = "p.playlistsroot"
+_FOLDER_TYPE = "library-playlist-folders"
+
+
+def create_folder(name: str, parent_id: str = ROOT_FOLDER) -> tuple[bool, str]:
+    """Create a playlist folder under ``parent_id`` (default the library root).
+    Pass another folder's id to nest. Returns (ok, folder_id or error)."""
+    try:
+        r = requests.post(
+            f"{AMP}/me/library/playlist-folders",
+            headers=_headers(),
+            json={
+                "attributes": {"name": name},
+                "relationships": {"parent": {"data": [{"id": parent_id, "type": _FOLDER_TYPE}]}},
+            },
+            timeout=TIMEOUT,
+        )
+        if r.status_code in _OK:
+            return True, r.json()["data"][0]["id"]
+        return False, f"status {r.status_code}"
+    except Exception as e:
+        return False, str(e)
+
+
+def delete_folder(folder_id: str) -> tuple[bool, str]:
+    try:
+        r = requests.delete(
+            f"{AMP}/me/library/playlist-folders/{folder_id}", headers=_headers(), timeout=TIMEOUT
+        )
+        return (r.status_code in _OK), (
+            "Deleted" if r.status_code in _OK else f"status {r.status_code}"
+        )
+    except Exception as e:
+        return False, str(e)
+
+
+def list_folders() -> list[dict]:
+    """Top-level folders: [{id, name}]."""
+    try:
+        r = requests.get(
+            f"{AMP}/me/library/playlist-folders/{ROOT_FOLDER}/children",
+            headers=_headers(),
+            timeout=TIMEOUT,
+        )
+        if r.status_code != 200:
+            return []
+        return [
+            {"id": c["id"], "name": c["attributes"].get("name", "")}
+            for c in r.json().get("data", [])
+            if c.get("type") == _FOLDER_TYPE
+        ]
+    except Exception:
+        return []
+
+
+def resolve_folder_id(name: str) -> Optional[str]:
+    for f in list_folders():
+        if _loose_eq(f["name"], name):
+            return f["id"]
+    return None
+
+
+def move_playlist_to_folder(playlist_id: str, folder_id: str = ROOT_FOLDER) -> tuple[bool, str]:
+    """Move a playlist into a folder (or the root) — PUT the parent relationship.
+    Note: the web player UI has no 'move to folder', so this goes beyond it."""
+    try:
+        r = requests.put(
+            f"{AMP}/me/library/playlists/{playlist_id}/parent",
+            headers=_headers(),
+            json={"data": [{"id": folder_id, "type": _FOLDER_TYPE}]},
+            timeout=TIMEOUT,
+        )
+        return (r.status_code in _OK), (
+            "Moved" if r.status_code in _OK else f"status {r.status_code}"
+        )
+    except Exception as e:
+        return False, str(e)
+
+
+# --- ratings (love / dislike) ----------------------------------------------
+
+
+def rate(catalog_id: str, value: int, content_type: str = "songs") -> tuple[bool, str]:
+    """Love (value=1) or dislike (value=-1) a catalog item. value=0 clears."""
+    try:
+        if value == 0:
+            r = requests.delete(
+                f"{AMP}/me/ratings/{content_type}/{catalog_id}", headers=_headers(), timeout=TIMEOUT
+            )
+        else:
+            r = requests.put(
+                f"{AMP}/me/ratings/{content_type}/{catalog_id}",
+                headers=_headers(),
+                json={"attributes": {"value": 1 if value > 0 else -1}},
+                timeout=TIMEOUT,
+            )
+        rv = 1 if value > 0 else (-1 if value < 0 else 0)
+        label = {1: "Loved", -1: "Disliked", 0: "Cleared rating"}[rv]
+        return (r.status_code in _OK), (
+            label if r.status_code in _OK else f"status {r.status_code}"
+        )
+    except Exception as e:
+        return False, str(e)
