@@ -495,6 +495,188 @@ def now_playing() -> Optional[dict]:
         return None
 
 
+# --- Up Next / play queue --------------------------------------------------
+# The personal playback queue lives in the MusicKit instance (no REST endpoint),
+# so these drive the same in-page MusicKit the web player's "Up Next" menu does.
+# Method names verified live against MusicKit v3: mk.playNext / mk.playLater /
+# mk.changeToMediaAtIndex / mk.clearQueue / mk.autoplayEnabled, mk.queue.remove(i).
+
+_QUEUE_LIST_JS = """
+() => {
+  const mk = window.MusicKit.getInstance();
+  const q = mk.queue;
+  if (!q) return { position: -1, autoplay: !!mk.autoplayEnabled, items: [] };
+  const items = q.items.map((it, i) => {
+    const a = (it && it.attributes) || {};
+    return { index: i, name: a.name || '', artist: a.artistName || '' };
+  });
+  return { position: q.position, autoplay: !!mk.autoplayEnabled, items };
+}
+"""
+
+_QUEUE_PLAY_NEXT_JS = """
+async (id) => {
+  const mk = window.MusicKit.getInstance();
+  await mk.playNext({ song: id });
+  return mk.queue.items.length;
+}
+"""
+
+_QUEUE_PLAY_LATER_JS = """
+async (id) => {
+  const mk = window.MusicKit.getInstance();
+  await mk.playLater({ song: id });
+  return mk.queue.items.length;
+}
+"""
+
+_QUEUE_REMOVE_JS = """
+async (i) => {
+  const mk = window.MusicKit.getInstance();
+  if (i < 0 || i >= mk.queue.items.length) return -1;
+  const r = mk.queue.remove(i);
+  if (r && typeof r.then === 'function') await r;
+  return mk.queue.items.length;
+}
+"""
+
+_QUEUE_CLEAR_JS = """
+async () => {
+  const mk = window.MusicKit.getInstance();
+  await mk.clearQueue();
+  return mk.queue.items.length;
+}
+"""
+
+_QUEUE_JUMP_JS = """
+async (i) => {
+  const mk = window.MusicKit.getInstance();
+  if (i < 0 || i >= mk.queue.items.length) return -1;
+  await mk.changeToMediaAtIndex(i);
+  return mk.queue.position;
+}
+"""
+
+_QUEUE_AUTOPLAY_JS = """
+(on) => {
+  const mk = window.MusicKit.getInstance();
+  mk.autoplayEnabled = !!on;
+  return !!mk.autoplayEnabled;
+}
+"""
+
+
+def queue_list() -> tuple[bool, Any]:
+    """Read the Up Next queue: {position, autoplay, items:[{index,name,artist}]}."""
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_QUEUE_LIST_JS)
+
+    try:
+        return True, _engine.submit(run)
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Queue read failed: {exc}"
+
+
+def _queue_insert(catalog_id: str, later: bool) -> tuple[bool, str]:
+    js = _QUEUE_PLAY_LATER_JS if later else _QUEUE_PLAY_NEXT_JS
+    where = "end of Up Next" if later else "Up Next"
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(js, str(catalog_id))
+
+    try:
+        n = _engine.submit(run)
+        return True, f"Queued to {where} ({n} in queue)"
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Queue insert failed: {exc}"
+
+
+def queue_play_next(catalog_id: str) -> tuple[bool, str]:
+    """Insert a catalog song right after the current track (Play Next)."""
+    return _queue_insert(catalog_id, later=False)
+
+
+def queue_play_later(catalog_id: str) -> tuple[bool, str]:
+    """Append a catalog song to the end of Up Next (Play Last)."""
+    return _queue_insert(catalog_id, later=True)
+
+
+def queue_remove(index: int) -> tuple[bool, str]:
+    """Remove the Up Next item at ``index`` (0-based)."""
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_QUEUE_REMOVE_JS, int(index))
+
+    try:
+        n = _engine.submit(run)
+        if n < 0:
+            return False, f"No queue item at index {index}"
+        return True, f"Removed item {index} ({n} left in queue)"
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Queue remove failed: {exc}"
+
+
+def queue_clear() -> tuple[bool, str]:
+    """Clear the entire Up Next queue."""
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_QUEUE_CLEAR_JS)
+
+    try:
+        _engine.submit(run)
+        return True, "Cleared the queue"
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Queue clear failed: {exc}"
+
+
+def queue_jump(index: int) -> tuple[bool, str]:
+    """Jump playback to the Up Next item at ``index`` (0-based)."""
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_QUEUE_JUMP_JS, int(index))
+
+    try:
+        pos = _engine.submit(run)
+        if pos < 0:
+            return False, f"No queue item at index {index}"
+        return True, f"Jumped to item {pos}"
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Queue jump failed: {exc}"
+
+
+def queue_autoplay(enabled: bool) -> tuple[bool, str]:
+    """Toggle Autoplay (the ∞ button) — keep playing similar music when the
+    queue runs out."""
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_QUEUE_AUTOPLAY_JS, bool(enabled))
+
+    try:
+        state = _engine.submit(run)
+        return True, f"Autoplay {'on' if state else 'off'}"
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Queue autoplay failed: {exc}"
+
+
 def is_available() -> bool:
     """Best-effort check that the engine can start (Playwright importable)."""
     try:

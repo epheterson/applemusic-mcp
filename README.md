@@ -16,6 +16,7 @@
 - **Library** — browse, search, and add catalog songs to your library
 - **Playlists** — create, rename, delete · add and remove tracks · organize into folders (create, nest, and move playlists between them)
 - **Playback** — play, play-by-URL, pause, skip, seek, volume, shuffle, repeat, now-playing
+- **Up Next queue** — view, play-next, play-last, remove, reorder-jump, clear, autoplay toggle (browser web player)
 - **Discover** — catalog search, recommendations, charts
 - **Rate** — love / dislike tracks
 - **Export** — CSV / JSON, readable as MCP resources

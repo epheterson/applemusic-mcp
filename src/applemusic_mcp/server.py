@@ -6575,6 +6575,97 @@ def _library_snapshot_delete(filename: str) -> str:
 
 
 # =============================================================================
+# Up Next / play queue (browser web player — cross-platform)
+# =============================================================================
+# The personal playback queue is MusicKit-instance state (no REST endpoint), so
+# these route through the browser engine that drives the web player's MusicKit.
+# Cross-platform; needs a signed-in browser session (`applemusic-mcp signin`).
+
+
+def _queue_resolve_catalog_id(track: str, artist: str = "") -> Optional[str]:
+    """Resolve a track param to a catalog song id: a bare catalog id passes
+    through; a name is resolved via catalog search."""
+    t = (track or "").strip()
+    if not t:
+        return None
+    if t.isdigit():
+        return t
+    songs = amp_api.search_catalog_songs(f"{t} {artist}".strip(), 1)
+    return songs[0]["id"] if songs else None
+
+
+def _format_queue(data: dict) -> str:
+    items = data.get("items", [])
+    autoplay = " · autoplay on" if data.get("autoplay") else ""
+    if not items:
+        return f"Up Next is empty{autoplay}"
+    pos = data.get("position", -1)
+    lines = [f"Up Next ({len(items)} item(s){autoplay}):"]
+    for it in items:
+        marker = "▶ " if it["index"] == pos else "  "
+        artist = f" — {it['artist']}" if it.get("artist") else ""
+        lines.append(f"{marker}{it['index']}. {it['name']}{artist}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def queue(
+    action: str = "list",
+    track: str = "",
+    artist: str = "",
+    index: int = -1,
+    enabled: bool = True,
+) -> str:
+    """The Up Next play queue, via the browser web player (cross-platform; needs
+    a signed-in browser session from `applemusic-mcp signin`). The queue is the
+    web player's own MusicKit state — the same Up Next you see in the player.
+
+    Actions:
+    - `list` — show Up Next (▶ marks the current item; indices are 0-based)
+    - `play_next` — insert a track right after the current one (`track`=name or catalog id, optional `artist`)
+    - `play_last` — append a track to the end of Up Next
+    - `remove` — remove the item at `index`
+    - `clear` — empty the queue
+    - `jump` — jump playback to the item at `index`
+    - `autoplay` — toggle Autoplay (∞: keep playing similar music when the queue ends) with `enabled`
+    """
+    from . import browser
+
+    action = action.lower().strip().replace("-", "_")
+
+    if action in ("list", "show", "up_next"):
+        ok, data = browser.queue_list()
+        return _format_queue(data) if ok else f"Error: {data}"
+    if action in ("play_next", "play_last"):
+        cid = _queue_resolve_catalog_id(track, artist)
+        if not cid:
+            return f"Error: '{track}' not found in catalog"
+        ok, msg = (
+            browser.queue_play_next(cid) if action == "play_next" else browser.queue_play_later(cid)
+        )
+        return msg if ok else f"Error: {msg}"
+    if action == "remove":
+        if index < 0:
+            return "Error: index required (0-based) for remove"
+        ok, msg = browser.queue_remove(index)
+        return msg if ok else f"Error: {msg}"
+    if action == "clear":
+        ok, msg = browser.queue_clear()
+        return msg if ok else f"Error: {msg}"
+    if action == "jump":
+        if index < 0:
+            return "Error: index required (0-based) for jump"
+        ok, msg = browser.queue_jump(index)
+        return msg if ok else f"Error: {msg}"
+    if action == "autoplay":
+        ok, msg = browser.queue_autoplay(enabled)
+        return msg if ok else f"Error: {msg}"
+    return (
+        f"Unknown action: {action}. Use: list, play_next, play_last, remove, clear, jump, autoplay"
+    )
+
+
+# =============================================================================
 # AppleScript-powered tools (macOS only)
 # =============================================================================
 # These tools provide capabilities not available through the REST API:
