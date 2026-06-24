@@ -1794,6 +1794,34 @@ class TestUserJourneyAPIOnly:
             },
             status=200,
         )
+        # api engine adds over amp-api: resolve playlist, catalog search, add tracks
+        _AMP = "https://amp-api.music.apple.com/v1"
+        responses.add(
+            responses.GET,
+            f"{_AMP}/me/library/playlists",
+            json={
+                "data": [{"id": "p.rock", "attributes": {"name": "Classic Rock", "canEdit": True}}]
+            },
+            status=200,
+        )
+        responses.add(
+            responses.GET,
+            f"{_AMP}/catalog/us/search",
+            json={
+                "results": {
+                    "songs": {
+                        "data": [
+                            {
+                                "id": "cat123",
+                                "attributes": {"name": "Dream On", "artistName": "Aerosmith"},
+                            }
+                        ]
+                    }
+                }
+            },
+            status=200,
+        )
+        responses.add(responses.POST, f"{_AMP}/me/library/playlists/p.rock/tracks", status=204)
         result = server.playlist(
             action="add", playlist="Classic Rock", track="Dream On", artist="Aerosmith"
         )
@@ -2013,6 +2041,29 @@ class TestUserJourneyFuzzyMatching:
             "https://api.music.apple.com/v1/me/library/playlists/p.fuzzy1/tracks",
             json={"data": [{"id": "i.new", "attributes": {"name": "Back in Black"}}]},
             status=200,
+        )
+        # add routes through the api engine: catalog search + add POST hit amp-api
+        responses.add(
+            responses.GET,
+            "https://amp-api.music.apple.com/v1/catalog/us/search",
+            json={
+                "results": {
+                    "songs": {
+                        "data": [
+                            {
+                                "id": "cat456",
+                                "attributes": {"name": "Back in Black", "artistName": "AC/DC"},
+                            }
+                        ]
+                    }
+                }
+            },
+            status=200,
+        )
+        responses.add(
+            responses.POST,
+            "https://amp-api.music.apple.com/v1/me/library/playlists/p.fuzzy1/tracks",
+            status=204,
         )
 
         result = server.playlist(

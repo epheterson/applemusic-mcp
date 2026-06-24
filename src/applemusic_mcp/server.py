@@ -1042,6 +1042,49 @@ def _playlist_move_api(playlist: str, folder: str) -> str:
     return f"Error: {msg}"
 
 
+def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
+    """Add track(s) to a playlist entirely over the API (cross-platform): resolve
+    the playlist's library id, resolve each track to a catalog id (direct id, or
+    catalog search by name), and POST them. Adds to the library implicitly."""
+    # Resolve the playlist id with the rich 3-pass fuzzy matcher (handles
+    # &/and, emoji, accents) rather than amp_api's plain substring match.
+    pid, _ = _find_api_playlist_by_name(playlist)
+    if not pid:
+        pid = amp_api.resolve_playlist_id(playlist)
+    if not pid:
+        return f"Error: playlist {playlist!r} not found in your library"
+    catalog_ids: list[str] = []
+    added_names: list[str] = []
+    errors: list[str] = []
+    for r in _resolve_track(track, artist):
+        if r.error:
+            errors.append(r.error)
+        elif r.input_type == InputType.CATALOG_ID:
+            catalog_ids.append(r.value)
+            added_names.append(f"track {r.value}")
+        elif r.input_type in (InputType.NAME, InputType.JSON_OBJECT):
+            q = f"{r.value} {r.artist or artist}".strip()
+            songs = amp_api.search_catalog_songs(q, 1)
+            if songs:
+                catalog_ids.append(songs[0]["id"])
+                added_names.append(f"{songs[0]['name']} - {songs[0]['artist']}")
+            else:
+                errors.append(f"{r.value}: not found in catalog")
+        else:
+            errors.append(f"{r.value}: already a library id, not a catalog track")
+    if not catalog_ids:
+        return "Error: nothing to add\n" + "\n".join(errors)
+    ok, msg = amp_api.add_tracks(pid, catalog_ids)
+    if not ok:
+        return f"Error: {msg}"
+    out = f"Added {len(catalog_ids)} track(s) to '{playlist}':\n" + "\n".join(
+        f"  + {n}" for n in added_names
+    )
+    if errors:
+        out += "\n" + "\n".join(f"  - {e}" for e in errors)
+    return out
+
+
 def _browser_play(track: str, artist: str = "", url: str = "") -> str:
     """Play a track or Apple Music URL in the browser web player (cross-platform)."""
     from . import browser
@@ -3848,6 +3891,8 @@ def playlist(
         else:
             return "Error: name and/or folder required for create"
     elif action == "add":
+        if _engine() == "api" and track and not album:
+            return _playlist_add_api(playlist, track, artist)
         return _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_search)
     elif action == "copy":
         return _playlist_copy(source, new_name)
