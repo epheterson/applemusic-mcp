@@ -31,30 +31,42 @@
 
 <sub>**Developer token** — included with Apple Developer membership (free for App Store developers), valid 6 months — [setup](#appendix-developer-token-setup). **Web token** — a free fallback captured by `applemusic-mcp signin`. The underlying web-player token is valid 35 days and is re-fetched automatically, so you don't re-authenticate — your sign-in persists. It uses Apple's web-player API the same way established open-source projects do — the [Cider](https://github.com/ciderapp/Cider-2) desktop player and the [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/) Home Assistant server among them.</sub>
 
-### Modes
+### Modes & what runs where
 
-Choose how it runs with the `mode` preference:
+Pick how it runs with the `mode` preference:
 
 - **`auto`** *(default)* — native Music.app on macOS, the cross-platform API everywhere else
 - **`native`** — all-in on the local Music.app (macOS; works with no account)
-- **`api`** — all-in on the Apple Music API + web player — runs on any platform, and even on a Mac that isn't signed into Music.app (or is signed into a different account)
+- **`api`** — all-in on the Apple Music API + web player; runs on any OS, even on a Mac that isn't signed into the Music app
 
-The only macOS-only pieces are **AirPlay**, native Music.app **playback**, and **1–5 star ratings** (the API model is love/dislike). **Browser playback** (api mode, or any non-Mac) needs a desktop session with **Google Chrome** installed for DRM — it plays in a local Chrome window and doesn't run on headless servers.
+| What you can do | Where it runs |
+|---|---|
+| Search & browse library and catalog · recommendations · charts | **API** — any OS, no app |
+| Add to library · love / dislike · remove | **API** — any OS, no app |
+| Create & edit playlists · folders · move playlists between folders | **API** — any OS, no app |
+| **Playback** — play, pause, skip, seek, volume, shuffle, repeat | **Music app** on macOS, **or Chrome** on any OS |
+| **Up Next queue** — view, play-next/last, remove, jump, clear, autoplay | **Chrome** — any OS |
+| 1–5 star ratings · favorites · snapshots · AirPlay · nested folder paths | **macOS only** (local Music app) |
+
+**Browser playback and the queue need Google Chrome** (for DRM audio) and a real desktop session — they open a local Chrome window and won't run on a headless server. Everything in the **API** rows runs anywhere with no browser and no Music app.
 
 ---
 
 ## Quick Start
 
-**Requirements:** Python 3.10+, Apple Music subscription. (macOS: the Music app for native playback. Windows/Linux: Google Chrome for playback.)
+**Requirements:** Python 3.10+ and an Apple Music subscription. For playback and the Up Next queue, install **Google Chrome** (macOS can use the Music app instead).
 
-**No Apple Developer account needed.** On macOS, local library and playback work instantly via AppleScript. To add catalog music — and to play on any platform — sign in once; see [Enable catalog features](#enable-catalog-features-sign-in-once) below.
+**No Apple Developer account needed.** On macOS, local library and playback work instantly via the Music app. To add catalog music — and to play or use the queue on any OS — sign in once; see [Enable catalog features](#enable-catalog-features-sign-in-once) below.
 
 ```bash
 git clone https://github.com/epheterson/applemusic-mcp.git
 cd applemusic-mcp
 python3 -m venv venv && source venv/bin/activate
 pip install -e .
+playwright install chromium     # browser engine for sign-in, playback & queue
 ```
+
+> Install **Google Chrome** too if you want audio playback — the bundled Chromium can't decode Apple's DRM. On macOS-only/native setups you can skip both Chrome and the `playwright install` step.
 
 Add to your MCP client config. **Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`); **Cursor / Cline / Windsurf** use the same `mcpServers` shape — see your client's docs for the file location.
 
@@ -71,8 +83,9 @@ Add to your MCP client config. **Claude Desktop** (`~/Library/Application Suppor
 
 **That's it!** Restart your client and try: "List my Apple Music playlists" or "Play my favorites playlist"
 
-> **Windows/Linux users:** everything — library, playlists, and playback — works after you
-> [sign in](#enable-catalog-features-sign-in-once). Playback uses a local Google Chrome window.
+> **Windows/Linux users:** library, playlists, catalog, and add/rate all work over the API after you
+> [sign in](#enable-catalog-features-sign-in-once). Playback and the queue additionally need Google
+> Chrome (they open a local Chrome window — not for headless servers).
 
 ---
 
@@ -128,7 +141,7 @@ Add to config.json:
 }
 ```
 
-- `auto_search`: Enables catalog search + library-add fallback for `playlist(action="add")` when a track isn't already in the user's library (default: false to avoid unintended library writes — set to true for "fill this playlist" workflows). On macOS works without an API token by falling back to Music.app UI automation (requires display + Accessibility permissions for the host process).
+- `auto_search`: For `playlist(action="add")`, search the catalog (and add to your library) when a track isn't already in your library — required to add catalog songs you don't own yet. Default false to avoid unintended library writes; set true for "fill this playlist" workflows.
 - `clean_only`: Filter explicit content, for `search_catalog`, `search_library`, `browse_library` (default: false)
 - `fetch_explicit`: Fetch explicit status (cached), for `get_playlist_tracks`, `search_library`, `browse_library` (default: false)
 - `reveal_on_library_miss`: Open catalog tracks in Music app, for `play` (default: false)
@@ -167,27 +180,25 @@ Add to config.json:
 ## Tools
 
 ### `playlist(action=...)`
-Playlist and folder operations - list, manage tracks, create, copy, remove (macOS), delete (macOS), rename (macOS), folder management (macOS)
+Playlist and folder operations. Most work on **any OS** over the API; a few folder niceties are macOS-only (see the "where it runs" table above).
 
-| Action | Parameters | Description | Platform |
-|--------|-----------|-------------|----------|
-| `list` | `format`, `export`, `full` | List all playlists | All |
-| `tracks` | `playlist`, `filter`, `limit`, `offset`, `format`, `export`, `full`, `fetch_explicit` | Get playlist tracks with filter/pagination | All (by-name: macOS) |
-| `search` | `query`, `playlist` | Search tracks in playlist | All |
-| `create` | `name`, `description`, `folder` | Create playlist and/or folder. `folder` supports slash paths (e.g. `Summer/Chill`). | All |
-| `add` | `playlist`, `track`, `album`, `artist`, `allow_duplicates`, `verify`, `auto_search` | Smart add: auto-search catalog, UI fallback when no API token, skip duplicates | All (by-name: macOS) |
-| `copy` | `source`, `new_name` | Copy playlist to editable version | All (by-name: macOS) |
-| `move` | `playlist`, `folder` | Move playlist/folder into a folder path. `folder=""` moves to root (recreates playlist*). | macOS |
-| `remove` | `playlist`, `track`, `artist` | Remove track(s) from playlist | macOS |
-| `delete` | `playlist` or `folder` | Delete a playlist or folder (supports slash paths) | macOS |
-| `rename` | `playlist` or `folder`, `new_name` | Rename a playlist or folder | macOS |
-| `path` | `playlist` or `folder` | Get full path of a playlist/folder. No args = show full hierarchy. | macOS |
+| Action | Parameters | Description | Where |
+|--------|-----------|-------------|-------|
+| `list` | `format`, `export`, `full` | List all playlists | Any OS |
+| `tracks` | `playlist`, `filter`, `limit`, `offset`, `format`, `export`, `full`, `fetch_explicit` | Get playlist tracks with filter/pagination | Any OS |
+| `search` | `query`, `playlist` | Search tracks in playlist | Any OS |
+| `create` | `name`, `description`, `folder` | Create a playlist and/or folder | Any OS · nested paths: macOS |
+| `add` | `playlist`, `track`, `album`, `artist`, `allow_duplicates`, `verify`, `auto_search` | Smart add: auto-search catalog, skip duplicates | Any OS |
+| `copy` | `source`, `new_name` | Copy a playlist to an editable version | macOS |
+| `move` | `playlist`, `folder` | Move a playlist into a folder, or to the top level (`folder=""`) | Any OS · nested paths: macOS |
+| `remove` | `playlist`, `track`, `artist` | Remove a track from a playlist | Any OS |
+| `delete` | `playlist` or `folder` | Delete a playlist or folder | Any OS · nested paths: macOS |
+| `rename` | `playlist` or `folder`, `new_name` | Rename a playlist (any OS) or folder (macOS) | Any OS · folder: macOS |
+| `path` | `playlist` or `folder` | Get full path / show hierarchy | macOS |
 
-**Folder paths:** Use `/` for nesting: `create(folder="Music/Genres/Jazz")` creates all levels. Works with `move`, `delete`, and `create`.
+**Folder paths:** Use `/` for nesting: `create(folder="Music/Genres/Jazz")`. Single-level folders and moving a playlist in/out of a folder work over the API on any OS; **nested paths and the folder tree/`path` view need macOS** (AppleScript).
 
-**Note:** The Apple Music API only supports creating single-level folders. Nested paths, move, delete, rename, tree, and path operations require macOS (AppleScript). Snapshots on macOS capture full folder hierarchy.
-
-*\*Move-to-root limitation: Music.app's AppleScript interface cannot move playlists out of folders. `folder=""` recreates the playlist at root with the same tracks — the playlist's persistent ID will change. Moving INTO folders preserves the ID.*
+*Native macOS note: the AppleScript interface can't move a playlist out of a folder, so on a tokenless/native Mac `folder=""` recreates the playlist at root (its persistent ID changes). The API path (any OS, incl. Mac in api mode) moves it directly with no recreate.*
 
 **Examples:**
 ```python
@@ -209,19 +220,19 @@ playlist(action="add", playlist="Road Trip", track="Hey Jude", artist="Beatles")
 **Unified `track` parameter** auto-detects and batches: a single name/ID, a comma-separated CSV, a newline-separated list (one per line — safe for titles containing commas), or a JSON array (`["A","B"]` or `[{"name":"A","artist":"X"}]`). Add entire albums with `album` parameter.
 
 ### `library(action=...)`
-Library management - search, add, browse, favorites (macOS), rate, recently played/added, remove (macOS), snapshot (macOS)
+Library management. Reads, add, remove, and love/dislike work on **any OS** over the API; favorites, snapshots, genre search, and 1–5 star ratings are macOS-only.
 
-| Action | Parameters | Description | Platform |
-|--------|-----------|-------------|----------|
-| `search` | `query`, `types`, `limit`, `format`, `export`, `full`, `fetch_explicit`, `clean_only` | Search your library (fast local on macOS) | All |
-| `add` | `track`, `album`, `artist` | Add tracks/albums from catalog | All |
-| `browse` | `item_type`, `limit`, `offset`, `format`, `export`, `full`, `fetch_explicit`, `clean_only` | List songs/albums/artists/videos | All |
+| Action | Parameters | Description | Where |
+|--------|-----------|-------------|-------|
+| `search` | `query`, `types`, `limit`, `format`, `export`, `full`, `fetch_explicit`, `clean_only` | Search your library (genre search: macOS) | Any OS · genre: macOS |
+| `add` | `track`, `album`, `artist` | Add tracks/albums from the catalog | Any OS |
+| `browse` | `item_type`, `limit`, `offset`, `format`, `export`, `full`, `fetch_explicit`, `clean_only` | List songs/albums/artists/videos | Any OS |
 | `favorites` | `limit`, `offset`, `format`, `export`, `full`, `fetch_explicit`, `clean_only` | List songs marked Favorite (loved) | macOS |
-| `recently_played` | `limit`, `format`, `export`, `full` | Recent listening history | All |
-| `recently_added` | `limit`, `format`, `export`, `full` | Recently added content | All |
-| `rate` | `rate_action`, `track`, `artist`, `stars` | Love/dislike/clear/get/set ratings | All (stars/clear: macOS) |
-| `remove` | `track`, `artist` | Remove track(s) from library | macOS |
-| `snapshot` | `query` | Library integrity checking — captures tracks, playlists, and folder hierarchy | macOS |
+| `recently_played` | `limit`, `format`, `export`, `full` | Recent listening history | Any OS |
+| `recently_added` | `limit`, `format`, `export`, `full` | Recently added content | Any OS |
+| `rate` | `rate_action`, `track`, `artist`, `stars` | Love / dislike / clear (any OS); 1–5 stars get/set (macOS) | Any OS · stars: macOS |
+| `remove` | `track`, `artist` | Remove one track from your library (exact match preferred) | Any OS |
+| `snapshot` | `query` | Library integrity checking — tracks, playlists, folder hierarchy | macOS |
 
 **Snapshot sub-commands** via `query`:
 
@@ -286,24 +297,39 @@ discover(action="charts", chart_type="songs", storefront="it")  # Italy charts
 discover(action="top_songs", artist="The Beatles")
 ```
 
-### Playback (macOS only)
-| Action | Description | Method |
-|--------|-------------|--------|
-| `playback(action="play", ...)` | Play track, playlist, album, or URL | API + AS |
-| `playback(action="control", ...)` | Play, pause, stop, next, previous, seek | AppleScript |
-| `playback(action="now_playing")` | Current track info and player state | AppleScript |
-| `playback(action="settings", ...)` | Get/set volume, shuffle, repeat | AppleScript |
-| `playback(action="airplay", ...)` | List or switch AirPlay devices | AppleScript |
+### Playback & Queue
 
-`play` accepts ONE of: `track`, `playlist`, `album`, or `url`. Use `shuffle=True` for shuffled playback. Response shows source: `[Library]`, `[Catalog]`, `[Catalog→Library]`, `[UI Catalog]` (UI played a track API resolved), or `[UI Search]` (UI played a track only the UI search found). Catalog items can be added first (`add_to_library=True`) or opened in Music (`reveal=True`).
+**Playback** is cross-platform: on macOS through the Music app, on any OS through the signed-in Chrome web player (the `playback` preference picks `auto`/`native`/`browser`).
 
-**URL playback** — albums, playlists (including personal `pl.u-`), and songs via `?i=`:
+| Action | Description | Where |
+|--------|-------------|-------|
+| `playback(action="play", ...)` | Play a track, playlist, album, or URL | macOS app · or Chrome |
+| `playback(action="control", control="play\|pause\|stop\|next\|previous\|seek")` | Transport controls | macOS app · or Chrome |
+| `playback(action="now_playing")` | Current track and player state | macOS app · or Chrome |
+| `playback(action="settings", volume=, shuffle_mode=, repeat=)` | Volume / shuffle / repeat | macOS app · or Chrome |
+| `playback(action="reveal", track=)` | Show a track in the Music app | macOS only |
+| `playback(action="airplay", device_name=)` | List or switch AirPlay devices | macOS only |
+
+`play` accepts ONE of `track`, `playlist`, `album`, or `url`; `shuffle=True` shuffles. **URL playback** handles albums, playlists (incl. personal `pl.u-`), and songs via `?i=`:
+
 ```
 playback(action="play", url="https://music.apple.com/us/album/ok-computer/1097861387")
-playback(action="play", url="https://music.apple.com/us/album/cowboy-carter/1738363766?i=1738363961")
 playback(action="play", url="https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb")
 ```
-Uses UI scripting (requires display + Accessibility permissions). The mouse cursor may briefly move for `?i=` track selection.
+
+Browser playback opens a local Chrome window (needs a desktop session). Native macOS URL playback uses UI scripting (display + Accessibility); the cursor may briefly move for `?i=` selection.
+
+**Up Next queue** — `queue(action=...)` drives the web player's play queue through Chrome, on any OS.
+
+| Action | Parameters | Description |
+|--------|-----------|-------------|
+| `list` | — | Show Up Next (▶ marks the current item; indices are 0-based) |
+| `play_next` | `track`, `artist` | Insert a track right after the current one |
+| `play_last` | `track`, `artist` | Append a track to the end of Up Next |
+| `remove` | `index` | Remove the item at `index` |
+| `jump` | `index` | Jump playback to the item at `index` |
+| `clear` | — | Empty the queue |
+| `autoplay` | `enabled` | Turn ∞ Autoplay on/off (keep playing similar music when the queue ends) |
 
 ### Utilities
 
@@ -355,12 +381,12 @@ Exported files are accessible via MCP resources (any MCP client that supports re
 ## Limitations
 
 ### Windows/Linux
-| Limitation | Workaround |
-|------------|------------|
-| No playback control | Use Music app/web directly (cross-platform browser playback is in progress) |
-| Deleting playlists / removing tracks is macOS-only | Done via AppleScript; not yet exposed cross-platform |
+Library, catalog, add/rate, and the full playlist + folder surface all work over the API after `signin`. Two caveats:
 
-Adding songs to your library and to existing playlists works cross-platform (after `signin`).
+| Limitation | Detail |
+|------------|--------|
+| Playback & queue need Google Chrome | They open a local Chrome window for DRM audio — install Chrome + run `playwright install chromium`; not for headless servers |
+| A few features are macOS-only | 1–5 star ratings, favorites, library snapshots, AirPlay, and nested folder paths have no Apple Music API equivalent |
 
 ### Both Platforms
 - **Brand-new playlists take a moment to be addable:** a just-created playlist needs to
