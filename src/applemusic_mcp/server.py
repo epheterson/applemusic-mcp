@@ -1747,6 +1747,11 @@ def _add_to_library_api(catalog_ids: list[str], content_type: str = "songs") -> 
         )
         if response.status_code in (200, 201, 202, 204):
             return True, f"Added {len(catalog_ids)} {type_label}(s) to library"
+        if response.status_code in (401, 403):
+            return False, (
+                f"Not authorized (status {response.status_code}) — your session may have "
+                "expired. Re-run `applemusic-mcp signin` or `applemusic-mcp generate-token`."
+            )
         return False, f"API returned status {response.status_code}"
     except Exception as e:
         return False, str(e)
@@ -2123,6 +2128,11 @@ def _rate_song_api(song_id: str, rating: str) -> tuple[bool, str]:
         )
         if response.status_code in (200, 201, 204):
             return True, f"Marked as {rating}"
+        if response.status_code in (401, 403):
+            return False, (
+                f"Not authorized (status {response.status_code}) — your session may have "
+                "expired. Re-run `applemusic-mcp signin` or `applemusic-mcp generate-token`."
+            )
         return False, f"API returned status {response.status_code}"
     except Exception as e:
         return False, str(e)

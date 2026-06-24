@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "applemusic-mcp"
-version = "0.15.0"
-description = "MCP server for Apple Music - playlist management, playback control (macOS), and library access"
+version = "1.0.0"
+description = "MCP server for Apple Music — cross-platform library, playlists, and playback; no Apple Developer account required"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"

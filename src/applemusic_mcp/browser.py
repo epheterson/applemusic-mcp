@@ -360,7 +360,17 @@ def _ensure_player_ready(page) -> None:
         except Exception:
             pass
     page.goto(BROWSE_URL, wait_until="domcontentloaded")
-    page.wait_for_function(_MUSICKIT_READY, timeout=20000)
+    # Surface a sign-in problem with a clear, actionable message instead of a
+    # cryptic MusicKit timeout (covers a signed-out or expired session).
+    if not _read_user_token(page):
+        raise BrowserUnavailable("Not signed in to Apple Music — run `applemusic-mcp signin`.")
+    try:
+        page.wait_for_function(_MUSICKIT_READY, timeout=20000)
+    except Exception as exc:
+        raise BrowserUnavailable(
+            "Apple Music web player didn't initialize (session may have expired) — "
+            "re-run `applemusic-mcp signin`."
+        ) from exc
 
 
 _NO_DRM_NOTE = (
@@ -425,7 +435,11 @@ def play_url(music_url: str) -> tuple[bool, str]:
     — cross-platform parity for the native macOS play-from-URL."""
     if not music_url.strip():
         return False, "Empty URL"
-    descriptor = _parse_music_url(music_url) or {"url": music_url}
+    if "music.apple.com" not in music_url:
+        return False, f"Not an Apple Music URL: {music_url}"
+    descriptor = _parse_music_url(music_url)
+    if descriptor is None:
+        return False, f"Unrecognized Apple Music URL shape: {music_url}"
 
     def run(page):
         _ensure_player_ready(page)

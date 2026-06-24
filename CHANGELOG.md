@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-06-23
+
+The cross-platform milestone: **full Apple Music control on macOS, Windows, and
+Linux with no $99 Apple Developer account** — library, playlists, *and playback*.
+
+### Added
+
+- **Cross-platform playback** via the music.apple.com web player (MusicKit in a
+  local Chrome window): play, play-by-URL (song/album/playlist), pause, skip,
+  seek, volume, shuffle, repeat, now-playing. Plays with DRM through Google
+  Chrome (Widevine).
+- **`playback` preference** — `auto` (native AppleScript on macOS, browser
+  elsewhere), `native`, or `browser`.
+
+### Requirements / notes
+
+- Browser playback needs a **desktop session and Google Chrome installed**; the
+  bundled Chromium has no DRM and stays silent. It does not run on headless
+  servers, and audio plays on the machine running the server.
+- macOS still uses native Music.app playback by default (and remains the only
+  platform for AirPlay, 1–5 star ratings, nested folders, and playlist/track
+  deletion).
+
 ## [0.15.0] - 2026-06-23
 
 ### Added
