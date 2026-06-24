@@ -464,7 +464,10 @@ def reveal_url(music_url: str) -> tuple[bool, str]:
     """Open an Apple Music URL in the web-player window so the user can see the
     track — the cross-platform counterpart to macOS 'reveal in Music.app'. Does
     not start playback (it just navigates the page)."""
-    if "music.apple.com" not in (music_url or ""):
+    from urllib.parse import urlparse
+
+    host = (urlparse(music_url or "").hostname or "").lower()
+    if host != "music.apple.com" and not host.endswith(".music.apple.com"):
         return False, f"Not an Apple Music URL: {music_url}"
 
     def run(page):

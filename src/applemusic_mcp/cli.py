@@ -178,14 +178,17 @@ def cmd_reset(args):
     session) for a clean slate or to drop a developer token for the web path.
     The downloaded .p8 key file is left in place."""
     from . import browser
-    from .auth import secret_delete
+    from .auth import get_config_dir, secret_delete
 
     if not args.force:
         print("This removes the developer token, config.json, the user/web tokens, and the")
         print("browser session (your .p8 key file is kept). Re-run with --force to proceed.")
         return 1
-    for key in ("developer_token", "config", "music_user_token", "harvested_token"):
+    for key in ("developer_token", "music_user_token", "harvested_token"):
         secret_delete(key)
+    cfg_file = get_config_dir() / "config.json"  # plain config, not a keychain secret
+    if cfg_file.exists():
+        cfg_file.unlink()
     browser.clear_session()
     print("✓ Reset complete. Run `applemusic-mcp signin` (web path) or `generate-token` (dev).")
     return 0

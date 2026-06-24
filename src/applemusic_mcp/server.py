@@ -6698,17 +6698,21 @@ def _library_snapshot_delete(filename: str) -> str:
 # assistant drives: check status, sign in, switch accounts, reset.
 
 
-def _clear_credentials(*names: str) -> list[str]:
-    """Forget the named credentials from BOTH the OS keychain and disk. Names may
-    be given with or without the ``.json`` suffix. Returns what was present and
-    removed. Used by logout/reset."""
-    removed = []
-    for n in names:
-        key = n[:-5] if n.endswith(".json") else n
-        if secret_get(key) is not None:
+def _clear_credentials(*keys: str) -> tuple[list[str], list[str]]:
+    """Forget the named SECRET keys (token names, no .json) from BOTH the keychain
+    and disk. Returns (removed, failed) — ``failed`` lists secrets that were
+    present but couldn't be fully cleared (e.g. a locked keychain), so logout/
+    reset never report success while a credential survives."""
+    removed: list[str] = []
+    failed: list[str] = []
+    for key in keys:
+        present = secret_get(key) is not None
+        cleared = secret_delete(key)
+        if not cleared:
+            failed.append(key)
+        elif present:
             removed.append(key)
-        secret_delete(key)
-    return removed
+    return removed, failed
 
 
 def _auth_action(action: str = "status", confirm: bool = False) -> str:
@@ -6755,11 +6759,16 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
                 "config(action='signin') to sign back in — with a different account if you "
                 "like. To proceed, call config(action='logout', confirm=True)."
             )
-        removed = _clear_credentials("music_user_token.json", "harvested_token.json")
+        removed, failed = _clear_credentials("music_user_token", "harvested_token")
         from . import browser
 
         browser.clear_session()
-        audit_log.log_action("logout", {"removed": removed})
+        audit_log.log_action("logout", {"removed": removed, "failed": failed})
+        if failed:
+            return (
+                f"⚠️ Partly signed out — couldn't clear {', '.join(failed)} "
+                "(keychain may be locked). Unlock it and try again."
+            )
         return (
             "✓ Signed out — user token and browser session cleared. Run "
             "config(action='signin') to sign in (you can switch accounts now)."
@@ -6774,16 +6783,26 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
                 "fall back to the free web path. To proceed, call "
                 "config(action='reset', confirm=True)."
             )
-        removed = _clear_credentials(
-            "developer_token.json",
-            "config.json",
-            "music_user_token.json",
-            "harvested_token.json",
+        removed, failed = _clear_credentials(
+            "developer_token", "music_user_token", "harvested_token"
         )
+        # config.json is plain config (team_id/key_id/prefs), not a keychain secret.
+        cfg_file = get_config_dir() / "config.json"
+        if cfg_file.exists():
+            try:
+                cfg_file.unlink()
+                removed.append("config.json")
+            except OSError:
+                failed.append("config.json")
         from . import browser
 
         browser.clear_session()
-        audit_log.log_action("reset", {"removed": removed})
+        audit_log.log_action("reset", {"removed": removed, "failed": failed})
+        if failed:
+            return (
+                f"⚠️ Partial reset — couldn't clear {', '.join(failed)} "
+                "(keychain may be locked). Unlock it and try again."
+            )
         return (
             "✓ Reset complete. Run config(action='signin') for the free web path, or set up an "
             "Apple Developer token with `applemusic-mcp generate-token`."

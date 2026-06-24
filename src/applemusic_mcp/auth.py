@@ -60,52 +60,64 @@ def _secret_file(key: str) -> Path:
 
 
 def secret_set(key: str, value: str) -> None:
-    """Persist a secret blob under ``key`` — keychain if available, else 0600 file."""
+    """Persist a secret blob under ``key``. Invariant: the secret lives in exactly
+    ONE place. Keychain write deletes the file; file write (keychain unavailable)
+    best-effort deletes any keychain copy. Combined with file-precedence in
+    ``secret_get``, this prevents a stale keychain value from shadowing a newer
+    file token (the SSH-writes-file / GUI-writes-keychain flap)."""
     if _keyring_ok():
         try:
             _keyring.set_password(_KEYRING_SERVICE, key, value)
-            # Drop any stale plaintext file once it's safely in the keychain.
             _secret_file(key).unlink(missing_ok=True)
             return
         except Exception:  # pragma: no cover - backend write failure → fall back
+            pass
+    # File path: drop any now-stale keychain copy so reads don't shadow this write.
+    if _keyring is not None:
+        try:
+            _keyring.delete_password(_KEYRING_SERVICE, key)
+        except Exception:  # pragma: no cover
             pass
     _write_private(_secret_file(key), value)
 
 
 def secret_get(key: str) -> Optional[str]:
-    """Read a secret blob: keychain first, then the file. Migrates a file-stored
-    secret into the keychain on read when a backend is available."""
-    if _keyring_ok():
-        try:
-            v = _keyring.get_password(_KEYRING_SERVICE, key)
-            if v is not None:
-                return v
-        except Exception:  # pragma: no cover
-            pass
+    """Read a secret blob. A file's EXISTENCE means it was the most recent write
+    (keychain writes always delete the file), so the file wins and is migrated
+    back into the keychain when one is available; otherwise read the keychain."""
     f = _secret_file(key)
     if f.exists():
         try:
             data = f.read_text()
         except OSError:
-            return None
-        if _keyring_ok():  # opportunistic migration off plaintext
-            try:
-                _keyring.set_password(_KEYRING_SERVICE, key, data)
-                f.unlink(missing_ok=True)
-            except Exception:  # pragma: no cover
-                pass
-        return data
+            data = None
+        if data is not None:
+            if _keyring_ok():  # migrate the newer file value into the keychain
+                try:
+                    _keyring.set_password(_KEYRING_SERVICE, key, data)
+                    f.unlink(missing_ok=True)
+                except Exception:  # pragma: no cover
+                    pass
+            return data
+    if _keyring_ok():
+        try:
+            return _keyring.get_password(_KEYRING_SERVICE, key)
+        except Exception:  # pragma: no cover
+            pass
     return None
 
 
-def secret_delete(key: str) -> None:
-    """Forget a secret from both the keychain and the file."""
+def secret_delete(key: str) -> bool:
+    """Forget a secret from both the keychain and the file. Returns True only if
+    the secret is actually gone afterward (so logout/reset can't report success
+    while a locked keychain still holds it)."""
     if _keyring_ok():
         try:
             _keyring.delete_password(_KEYRING_SERVICE, key)
-        except Exception:  # pragma: no cover - not present / backend error
+        except Exception:  # not present, or a real backend error — verify below
             pass
     _secret_file(key).unlink(missing_ok=True)
+    return secret_get(key) is None
 
 
 def has_user_token() -> bool:

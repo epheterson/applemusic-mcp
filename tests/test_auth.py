@@ -254,6 +254,35 @@ class TestSecretStoreKeychain:
         assert auth._secret_file("music_user_token").exists()
         assert auth.get_user_token() == "f"
 
+    def test_file_wins_over_stale_keychain(self, mock_config_dir, monkeypatch):
+        """The token-loss bug: keychain holds an OLD value (A) and a newer FILE
+        value (B) exists from a keychain-unavailable write. A file's existence
+        means it was the most recent write, so secret_get must return B, not A —
+        and migrate B back into the keychain."""
+        fake = self._enable(monkeypatch)
+        fake.d[("applemusic-mcp", "k")] = "A-stale"
+        auth._write_private(auth._secret_file("k"), "B-newer")
+        assert auth.secret_get("k") == "B-newer"
+        # B was migrated into the keychain and the file removed (single copy).
+        assert fake.d[("applemusic-mcp", "k")] == "B-newer"
+        assert not auth._secret_file("k").exists()
+
+    def test_secret_delete_reports_failure_when_backend_errors(self, mock_config_dir, monkeypatch):
+        """A locked keychain that can't delete must NOT report success."""
+
+        class _StuckKeyring(_FakeKeyring):
+            def delete_password(self, service, key):
+                pass  # pretend it succeeded but the value stays
+
+            def get_password(self, service, key):
+                return self.d.get((service, key))
+
+        monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
+        stuck = _StuckKeyring()
+        stuck.d[("applemusic-mcp", "k")] = "stuck"
+        monkeypatch.setattr(auth, "_keyring", stuck)
+        assert auth.secret_delete("k") is False  # still present → reports failure
+
 
 class TestGetUserToken:
     """Tests for get_user_token function."""
