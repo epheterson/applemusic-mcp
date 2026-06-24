@@ -1984,6 +1984,7 @@ def _resolve_library_playlist_id(name: str) -> Optional[str]:
     try:
         headers = get_headers()
         url = f"{BASE_URL}/me/library/playlists?limit=100"
+        loose_match = None
         while url:
             r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
             if r.status_code != 200:
@@ -1991,11 +1992,18 @@ def _resolve_library_playlist_id(name: str) -> Optional[str]:
             data = r.json()
             for pl in data.get("data", []):
                 attrs = pl.get("attributes", {})
-                if attrs.get("canEdit", True) and _loose_contains(name, attrs.get("name", "")):
+                if not attrs.get("canEdit", True):
+                    continue
+                pl_name = attrs.get("name", "")
+                # Prefer an exact (case-insensitive) name match to avoid adding to
+                # the wrong playlist when names overlap ("Workout" vs "Workout 2").
+                if pl_name.strip().lower() == name.strip().lower():
                     return pl.get("id")
+                if _loose_contains(name, pl_name):
+                    loose_match = loose_match or pl.get("id")
             nxt = data.get("next")
             url = ("https://api.music.apple.com" + nxt) if nxt else None
-        return None
+        return loose_match
     except Exception:
         return None
 
@@ -6389,7 +6397,7 @@ if APPLESCRIPT_AVAILABLE:
             if _use_browser_playback():
                 from . import browser
 
-                ok, msg = browser.playback_control(control)
+                ok, msg = browser.playback_control(control, seconds)
                 return msg if ok else f"Error: {msg}"
             return _playback_control(control, seconds)
         elif action == "now_playing":
@@ -6402,6 +6410,15 @@ if APPLESCRIPT_AVAILABLE:
                 return f"Now playing: {np.get('name')} — {np.get('artist')} ({np.get('album')})"
             return _playback_now_playing()
         elif action == "settings":
+            if _use_browser_playback():
+                from . import browser
+
+                shuffle_b = (
+                    {"on": True, "off": False}.get(shuffle_mode.lower()) if shuffle_mode else None
+                )
+                repeat_v = repeat.lower() if repeat else None
+                ok, msg = browser.browser_settings(volume, shuffle_b, repeat_v)
+                return msg if ok else f"Error: {msg}"
             return _playback_settings(volume, shuffle_mode, repeat)
         elif action == "reveal":
             name = track_name or track

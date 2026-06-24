@@ -9,32 +9,37 @@
 
 [MCP](https://modelcontextprotocol.io/) server for Apple Music — lets your AI assistant (Claude, Cursor, Cline, Windsurf, or any [MCP client](https://modelcontextprotocol.io/clients)) manage playlists, add music, control playback, and browse your library.
 
-**Works on macOS, Windows, and Linux. No $99 Apple Developer account required** — sign in once with `applemusic-mcp signin` and catalog/library/playlist features run over the Apple Music API. macOS additionally gets native playback control.
+**Works on macOS, Windows, and Linux. No $99 Apple Developer account required** — sign in once with `applemusic-mcp signin`. Catalog, library, playlists, **and playback** all work on every platform.
 
 ## Features
 
-| Feature | macOS | Cross-platform |
-|---------|:-----:|:--------------:|
-| List playlists | ✓ | ✓ |
-| Browse / search library | ✓ | ✓ |
+| Feature | macOS | Windows / Linux |
+|---------|:-----:|:---------------:|
+| List / browse / search library | ✓ | ✓ |
 | Create playlists | ✓ | ✓ |
-| Love/dislike tracks | ✓ | ✓ |
-| CSV/JSON export | ✓ | ✓ |
-| Search catalog | ✓ | ✓ |
+| Search catalog · recommendations · charts | ✓ | ✓ |
 | **Add songs to library** | ✓ | ✓ |
 | **Add tracks to playlists** | ✓ | ✓ |
-| Recommendations, charts, radio | ✓ | ✓ |
-| Play tracks | ✓ |   |
-| Play by URL (album, playlist, song) | ✓ |   |
-| Playback control (pause/skip/seek/volume) | ✓ |   |
-| Star ratings (1-5) | ✓ |   |
-| Remove tracks / delete playlists / folders | ✓ |   |
-| Rename / move playlists & folders | ✓ |   |
+| Love / dislike tracks | ✓ | ✓ |
+| CSV / JSON export | ✓ | ✓ |
+| **Play tracks · play by URL** | ✓ | ✓ |
+| **Pause / skip / seek** | ✓ | ✓ |
+| **Volume / shuffle / repeat** | ✓ | ✓ |
+| **Now playing** | ✓ | ✓ |
+| Star ratings (1–5) | ✓ | — |
+| AirPlay | ✓ | — |
+| Remove tracks · delete playlists | ✓ | — |
+| Nested folders · rename / move | ✓ | top-level |
 
-**Catalog, library, and playlist features run over the Apple Music API** — same on every
-platform (sign in once). **Playback** is macOS-only for now (native AppleScript control of
-Music.app); cross-platform browser playback is in progress. Play-from-URL on macOS uses a
-small AppleScript UI step and needs the screen unlocked + Accessibility permission.
+Everything in the top group runs over the **Apple Music API + web player** — identical on
+every platform after one sign-in. By default macOS uses native Music.app control (AppleScript)
+and adds AirPlay, star ratings, nested folders, and playlist/track deletion.
+
+**Browser playback** (Windows/Linux, or macOS with `playback=browser`) **requires a desktop
+session and Google Chrome installed** — it plays through a local Chrome window using Chrome's
+DRM (Widevine); the bundled Chromium has no DRM and stays silent. Audio comes out of the
+machine running the server. It does **not** work on headless servers (no display → the browser
+can't launch, and sign-in needs an interactive login).
 
 ---
 

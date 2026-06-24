@@ -167,6 +167,18 @@ class _BrowserEngine:
 
 _engine = _BrowserEngine()
 
+# Close the Chrome window + Playwright when the host process exits, so a
+# long-running MCP server doesn't leave a stray window holding the profile lock.
+import atexit as _atexit
+
+_atexit.register(_engine.shutdown)
+
+
+def drm_capable() -> bool:
+    """True if the launched browser is system Chrome (Widevine present). Playback
+    audio is silent on the bundled Chromium fallback. Meaningful only after launch."""
+    return bool(_engine._using_chrome)
+
 
 # ---------------------------------------------------------------------------
 # Page operations (run on the owner thread via _engine.submit)
@@ -294,16 +306,33 @@ async (songId) => {
 """
 
 _CONTROL_JS = """
-async (action) => {
+async (args) => {
   const mk = window.MusicKit.getInstance();
+  const { action, seconds } = args;
   switch (action) {
     case 'play':     await mk.play(); break;
     case 'pause':    await mk.pause(); break;
+    case 'stop':     await mk.stop(); break;
     case 'next':     await mk.skipToNextItem(); break;
     case 'previous': await mk.skipToPreviousItem(); break;
+    case 'seek':     await mk.seekToTime(seconds || 0); break;
     default: return 'unknown action: ' + action;
   }
   return 'ok';
+}
+"""
+
+# volume 0-100 (-1 = leave); shuffle/repeat null = leave.
+_SETTINGS_JS = """
+async (s) => {
+  const mk = window.MusicKit.getInstance();
+  if (s.volume >= 0) mk.volume = Math.max(0, Math.min(1, s.volume / 100));
+  if (s.shuffle !== null) mk.shuffleMode = s.shuffle ? 1 : 0;
+  if (s.repeat !== null) {
+    const map = { none: 0, one: 1, all: 2 };
+    mk.repeatMode = map[s.repeat] ?? 0;
+  }
+  return { volume: Math.round(mk.volume * 100), shuffle: mk.shuffleMode, repeat: mk.repeatMode };
 }
 """
 
@@ -313,14 +342,34 @@ _NOW_PLAYING_JS = """
   const it = mk && mk.nowPlayingItem;
   if (!it) return null;
   const a = it.attributes || {};
-  return { name: a.name, artist: a.artistName, album: a.albumName, playing: !mk.isPlaying === false };
+  return { name: a.name, artist: a.artistName, album: a.albumName, playing: !!mk.isPlaying };
 }
 """
 
 
 def _ensure_player_ready(page) -> None:
+    """Make sure the page has a configured MusicKit instance — navigating ONLY if
+    needed. Re-navigating reloads the page and destroys the player queue/playback
+    state, so once we're on a MusicKit-ready music.apple.com page we reuse it
+    (this is what lets pause/skip/seek/volume act on the *currently playing*
+    track instead of a freshly reloaded, empty player)."""
+    if "music.apple.com" in (page.url or ""):
+        try:
+            if page.evaluate(_MUSICKIT_READY):
+                return
+        except Exception:
+            pass
     page.goto(BROWSE_URL, wait_until="domcontentloaded")
     page.wait_for_function(_MUSICKIT_READY, timeout=20000)
+
+
+_NO_DRM_NOTE = (
+    " (note: no audio — this browser lacks DRM/Widevine; install Google Chrome " "for playback)"
+)
+
+
+def _play_message(name: str) -> str:
+    return f"Playing: {name}" + ("" if drm_capable() else _NO_DRM_NOTE)
 
 
 def play_catalog_track(catalog_id: str) -> tuple[bool, str]:
@@ -333,7 +382,7 @@ def play_catalog_track(catalog_id: str) -> tuple[bool, str]:
         return page.evaluate(_PLAY_SONG_JS, str(catalog_id))
 
     try:
-        return True, f"Playing: {_engine.submit(run)}"
+        return True, _play_message(_engine.submit(run))
     except BrowserUnavailable as exc:
         return False, str(exc)
     except Exception as exc:  # noqa: BLE001
@@ -383,25 +432,45 @@ def play_url(music_url: str) -> tuple[bool, str]:
         return page.evaluate(_PLAY_QUEUE_JS, descriptor)
 
     try:
-        return True, f"Playing: {_engine.submit(run)}"
+        return True, _play_message(_engine.submit(run))
     except BrowserUnavailable as exc:
         return False, str(exc)
     except Exception as exc:  # noqa: BLE001
         return False, f"Browser play-by-URL failed: {exc}"
 
 
-def playback_control(action: str) -> tuple[bool, str]:
-    """play | pause | next | previous on the browser web player."""
+def playback_control(action: str, seconds: float = 0) -> tuple[bool, str]:
+    """play | pause | stop | next | previous | seek on the browser web player."""
 
     def run(page):
         _ensure_player_ready(page)
-        return page.evaluate(_CONTROL_JS, action)
+        return page.evaluate(_CONTROL_JS, {"action": action, "seconds": seconds})
 
     try:
         res = _engine.submit(run)
         return (res == "ok"), res
     except Exception as exc:  # noqa: BLE001
         return False, f"Browser control failed: {exc}"
+
+
+def browser_settings(
+    volume: int = -1, shuffle: Optional[bool] = None, repeat: Optional[str] = None
+) -> tuple[bool, str]:
+    """Set volume (0-100, -1 = leave), shuffle (on/off), repeat (none/one/all) on
+    the browser web player. Returns the resulting state."""
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_SETTINGS_JS, {"volume": volume, "shuffle": shuffle, "repeat": repeat})
+
+    try:
+        state = _engine.submit(run)
+        return True, (
+            f"volume={state['volume']} shuffle={'on' if state['shuffle'] else 'off'} "
+            f"repeat={['none', 'one', 'all'][state['repeat']]}"
+        )
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Browser settings failed: {exc}"
 
 
 def now_playing() -> Optional[dict]:
