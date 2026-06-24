@@ -5497,6 +5497,15 @@ def _discover_song_station(song_id: str, storefront: str = "") -> str:
 # ============ RATINGS ============
 
 
+# Apple's API has no 1-5 star rating — only love/dislike. Stars live solely in
+# the local Music.app, so they're a native-engine capability. In api mode we
+# refuse rather than reach into a possibly-different local account.
+_STAR_NATIVE_ONLY = (
+    "Error: Star ratings (get/set) need native mode and the local Music.app on "
+    "macOS; api mode supports love/dislike only."
+)
+
+
 def _library_rate(
     action: str,
     track: str = "",
@@ -5540,8 +5549,8 @@ def _library_rate(
             return f"Error: {msg}"
 
         # For get/set, need to look up track name for AppleScript
-        if not APPLESCRIPT_AVAILABLE:
-            return "Error: Star ratings require macOS"
+        if _engine() != "native" or not APPLESCRIPT_AVAILABLE:
+            return _STAR_NATIVE_ONLY
         try:
             headers = get_headers()
             response = requests.get(
@@ -5575,8 +5584,8 @@ def _library_rate(
 
     # Now we have track_name, handle each action
     if action == "get":
-        if not APPLESCRIPT_AVAILABLE:
-            return "Error: Star ratings require macOS"
+        if _engine() != "native" or not APPLESCRIPT_AVAILABLE:
+            return _STAR_NATIVE_ONLY
         success, rating_val = asc.get_rating(track_name, track_artist if track_artist else None)
         if success:
             s = rating_val // 20
@@ -5584,8 +5593,8 @@ def _library_rate(
         return f"Error: {_format_applescript_error(str(rating_val), 'get star rating')}"
 
     if action == "set":
-        if not APPLESCRIPT_AVAILABLE:
-            return "Error: Star ratings require macOS"
+        if _engine() != "native" or not APPLESCRIPT_AVAILABLE:
+            return _STAR_NATIVE_ONLY
         rating_val = max(0, min(5, stars)) * 20
         success, result = asc.set_rating(
             track_name, rating_val, track_artist if track_artist else None
@@ -5599,8 +5608,9 @@ def _library_rate(
             return f"Set {track_name} to {'★' * stars}{'☆' * (5 - stars)}"
         return f"Error: {_format_applescript_error(str(result), 'set star rating')}"
 
-    # Love/dislike by name - try AppleScript first
-    if APPLESCRIPT_AVAILABLE:
+    # Love/dislike by name - try AppleScript first (native engine only; api
+    # mode goes straight to the catalog-rating API path below).
+    if _engine() == "native" and APPLESCRIPT_AVAILABLE:
         func = asc.love_track if action == "love" else asc.dislike_track
         success, result = func(track_name, track_artist if track_artist else None)
         if success:

@@ -2289,6 +2289,58 @@ class TestApiModeReadRouting:
         mock_asc.get_library_songs_page.assert_not_called()
         mock_asc.get_library_songs.assert_not_called()
 
+    @responses.activate
+    def test_love_by_name_in_api_mode_uses_catalog_rating(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(server, "_engine", lambda: "api")
+        self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+
+        mock_asc = MagicMock()
+        monkeypatch.setattr(server, "asc", mock_asc)
+
+        responses.add(
+            responses.GET,
+            "https://api.music.apple.com/v1/catalog/us/search",
+            json={
+                "results": {
+                    "songs": {
+                        "data": [
+                            {
+                                "id": "999",
+                                "attributes": {"name": "Money", "artistName": "Pink Floyd"},
+                            }
+                        ]
+                    }
+                }
+            },
+            status=200,
+        )
+        responses.add(
+            responses.PUT,
+            "https://api.music.apple.com/v1/me/ratings/songs/999",
+            status=204,
+        )
+
+        result = server.library(action="rate", rate_action="love", track="Money")
+        assert "Money" in result
+        mock_asc.love_track.assert_not_called()
+
+    def test_star_get_in_api_mode_refused(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(server, "_engine", lambda: "api")
+        self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+
+        mock_asc = MagicMock()
+        monkeypatch.setattr(server, "asc", mock_asc)
+
+        result = server.library(action="rate", rate_action="get", track="Money")
+        assert "native mode" in result.lower()
+        mock_asc.get_rating.assert_not_called()
+
 
 class TestAlbumDisambiguation:
     """Tests for album param behavior: disambiguation filter when track is present, whole-album add when alone."""
