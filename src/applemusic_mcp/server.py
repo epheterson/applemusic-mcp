@@ -6371,7 +6371,10 @@ if APPLESCRIPT_AVAILABLE:
         # airplay params
         device_name: str = "",
     ) -> str:
-        """Playback (macOS). Actions: play, control, now_playing, settings, reveal, airplay."""
+        """Playback. play/control/now_playing work cross-platform via the browser
+        web player (or native Music.app on macOS — see the `playback` preference:
+        auto/native/browser). settings/reveal/airplay are macOS-only.
+        Actions: play, control, now_playing, settings, reveal, airplay."""
         action = action.lower().strip().replace("-", "_")
 
         if action == "play":
