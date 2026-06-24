@@ -236,8 +236,10 @@ class TestCreateFolder:
         assert "ABCD1234" in result
 
     def test_requires_macos(self, monkeypatch):
-        """Should error when AppleScript not available."""
+        """In native mode without AppleScript, folder create errors macOS-only.
+        (Folders work cross-platform via the API engine.)"""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(server, "_engine", lambda: "native")
 
         result = server.playlist(action="create_folder", name="My Folder")
 
@@ -271,8 +273,10 @@ class TestMoveToFolder:
         assert "My Folder" in result
 
     def test_requires_macos(self, monkeypatch):
-        """Should error when AppleScript not available."""
+        """In native mode without AppleScript, move errors macOS-only.
+        (Move works cross-platform via the API engine — even out of folders.)"""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(server, "_engine", lambda: "native")
 
         result = server.playlist(action="move", playlist="My Playlist", name="My Folder")
 

@@ -999,6 +999,49 @@ def _playlist_remove_api(playlist: str, track: str, artist: str = "") -> str:
     return f"Error: remove failed for {track!r}"
 
 
+def _folder_create_api(name: str) -> str:
+    ok, res = amp_api.create_folder(name)
+    if ok:
+        audit_log.log_action("create_folder", {"name": name, "via": "api"})
+        return f"Created folder '{name}' (ID: {res})"
+    return f"Error: {res}"
+
+
+def _folder_delete_api(name: str) -> str:
+    fid = amp_api.resolve_folder_id(name)
+    if not fid:
+        return f"Error: folder {name!r} not found"
+    ok, msg = amp_api.delete_folder(fid)
+    if ok:
+        audit_log.log_action("delete_folder", {"name": name, "via": "api"})
+        return f"Deleted folder: {name}"
+    return f"Error: {msg}"
+
+
+def _playlist_move_api(playlist: str, folder: str) -> str:
+    pid = amp_api.resolve_playlist_id(playlist)
+    if not pid:
+        return f"Error: playlist {playlist!r} not found in your library"
+    # Move to root when folder is empty/"root"; else into the folder (create it
+    # if it doesn't exist yet, mirroring the native move-into-folder behavior).
+    if not folder or folder.strip().lower() in ("root", ""):
+        ok, msg = amp_api.move_playlist_to_folder(pid, amp_api.ROOT_FOLDER)
+        return f"Moved '{playlist}' to top level" if ok else f"Error: {msg}"
+    fid = amp_api.resolve_folder_id(folder)
+    if not fid:
+        cok, cres = amp_api.create_folder(folder)
+        if not cok:
+            return f"Error: could not create folder {folder!r}: {cres}"
+        fid = cres
+    ok, msg = amp_api.move_playlist_to_folder(pid, fid)
+    if ok:
+        audit_log.log_action(
+            "move_playlist", {"playlist": playlist, "folder": folder, "via": "api"}
+        )
+        return f"Moved '{playlist}' into folder '{folder}'"
+    return f"Error: {msg}"
+
+
 def _browser_play(track: str, artist: str = "", url: str = "") -> str:
     """Play a track or Apple Music URL in the browser web player (cross-platform)."""
     from . import browser
@@ -3793,7 +3836,9 @@ def playlist(
         return _playlist_search(query, playlist)
     elif action == "create":
         if folder and not name:
-            return _playlist_create_folder(folder)  # folders: native (macOS) only
+            if _engine() == "api":
+                return _folder_create_api(folder)
+            return _playlist_create_folder(folder)
         elif folder and name:
             return _playlist_create_in_folder(name, folder, description)
         elif name:
@@ -3814,6 +3859,8 @@ def playlist(
         return _playlist_remove(playlist, track, artist)
     elif action == "delete":
         if folder:
+            if _engine() == "api":
+                return _folder_delete_api(folder)
             if err := _macos_only("delete folder"):
                 return err
             return _playlist_delete_folder(folder)
@@ -3842,17 +3889,23 @@ def playlist(
         return _playlist_rename(playlist_name, new_name)
     elif action == "create_folder":
         # Backward compat — redirect to create(folder=...)
-        if err := _macos_only("create_folder"):
-            return err
         if not name:
             return "Error: name required for create_folder"
+        if _engine() == "api":
+            return _folder_create_api(name)
+        if err := _macos_only("create_folder"):
+            return err
         return _playlist_create_folder(name)
     elif action == "move":
-        if err := _macos_only("move"):
-            return err
         if not playlist:
             return "Error: playlist required for move"
         folder_target = folder or name
+        if _engine() == "api":
+            # The API moves a playlist into a folder OR back to the top level
+            # directly (the AppleScript path can't move out of folders at all).
+            return _playlist_move_api(playlist, folder_target or "root")
+        if err := _macos_only("move"):
+            return err
         if not folder_target:
             if allow_duplicates:
                 # User explicitly confirmed — recreate at root
