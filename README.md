@@ -28,7 +28,7 @@
 | Web token | Same | macOS · Windows · Linux |
 | No token | Control the local Music app — play, browse, edit local playlists | macOS |
 
-<sub>**Developer token** — included with Apple Developer membership (free for App Store developers), valid 6 months — [setup](#option-a--apple-developer-token-optional). **Web token** — a free fallback captured by `applemusic-mcp signin`. The underlying web-player token is valid 35 days and is re-fetched automatically, so you don't re-authenticate — your sign-in persists. It uses Apple's web-player API the same way established open-source projects do — the [Cider](https://github.com/ciderapp/Cider-2) desktop player and the [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/) Home Assistant server among them.</sub>
+<sub>**Developer token** — included with Apple Developer membership (free for App Store developers), valid 6 months — [setup](#appendix-developer-token-setup). **Web token** — a free fallback captured by `applemusic-mcp signin`. The underlying web-player token is valid 35 days and is re-fetched automatically, so you don't re-authenticate — your sign-in persists. It uses Apple's web-player API the same way established open-source projects do — the [Cider](https://github.com/ciderapp/Cider-2) desktop player and the [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/) Home Assistant server among them.</sub>
 
 ### Modes
 
@@ -86,65 +86,15 @@ Adding catalog music to your library and playlists runs over the Apple Music API
   ```
   Captures your `media-user-token` from a local signed-in Chrome profile (your password
   never touches this tool); the developer token comes from Apple's public web player. Uses
-  your installed Chrome when present. [Details](#option-b--browser-sign-in-no-apple-developer-account).
+  your installed Chrome when present. One-time sign-in persists, so you won't repeat it.
 - **Power users — Apple Developer token.** If you have an [Apple Developer Program](https://developer.apple.com/programs/)
-  membership ($99/yr), generate a sanctioned 6-month token instead — Option A below.
+  membership ($99/yr), generate a sanctioned 6-month token instead — see [Appendix: Developer token setup](#appendix-developer-token-setup).
 
-### Option A — Apple Developer token (optional)
+> Note: browser sign-in uses Apple's web-player API the same way many open-source Apple Music
+> clients do — an unofficial path; your own [generated token](#appendix-developer-token-setup)
+> is the sanctioned route.
 
-**Requirements:** Python 3.10+, Apple Music app with subscription, active Apple Developer Program membership.
-
-### 1. Get MusicKit Key
-
-1. [Apple Developer Portal → Keys](https://developer.apple.com/account/resources/authkeys/list) → Click **+**
-2. Name it anything, check **MusicKit**, click Continue → Register
-3. **Download the .p8 file** (one-time download!)
-4. Note your **Key ID** (10 chars) and **Team ID** (from [Membership](https://developer.apple.com/account/#!/membership))
-
-### 2. Configure
-
-```bash
-mkdir -p ~/.config/applemusic-mcp
-cp ~/Downloads/AuthKey_XXXXXXXXXX.p8 ~/.config/applemusic-mcp/
-```
-
-Create `~/.config/applemusic-mcp/config.json`:
-```json
-{
-  "team_id": "YOUR_TEAM_ID",
-  "key_id": "YOUR_KEY_ID",
-  "private_key_path": "~/.config/applemusic-mcp/AuthKey_XXXXXXXXXX.p8"
-}
-```
-
-### 3. Generate Tokens
-
-```bash
-applemusic-mcp generate-token   # Creates developer token (180 days)
-applemusic-mcp authorize        # Opens browser for Apple Music auth
-applemusic-mcp status           # Verify everything works
-```
-
-### Option B — Browser sign-in (no Apple Developer account)
-
-If you don't have an Apple Developer account, just sign in once. This captures
-your `media-user-token` from a local, signed-in Chrome profile (your password
-never touches this tool); the developer token is sourced from Apple's public web
-player.
-
-```bash
-applemusic-mcp signin            # opens Chrome to music.apple.com; sign in once
-applemusic-mcp status            # verify
-```
-
-Uses your installed Google Chrome when present (recommended). One-time sign-in
-persists, so you won't repeat it.
-
-> Note: this uses Apple's web-player API the same way many open-source Apple Music
-> clients do — an unofficial path; your own generated token (Option A) is the
-> sanctioned route.
-
-### 4. Add to Your MCP Client (Windows/Linux)
+### Add to Your MCP Client (Windows/Linux)
 
 Same `mcpServers` shape works across clients (Claude Desktop, Cursor, Cline, Windsurf, etc.) — only the config file path differs.
 
@@ -444,6 +394,41 @@ applemusic-mcp serve           # Run MCP server (auto-launched by your MCP clien
 ```
 
 **Config:** `~/.config/applemusic-mcp/` (config.json, .p8 key, tokens)
+
+---
+
+## Appendix: Developer token setup
+
+The preferred path if you have an [Apple Developer Program](https://developer.apple.com/programs/) membership — a sanctioned, 6-month token. (Browser sign-in above needs none of this.)
+
+**1. Get a MusicKit key** — [Apple Developer Portal → Keys](https://developer.apple.com/account/resources/authkeys/list) → **+** → name it, check **MusicKit**, Register → **download the .p8** (one-time). Note your **Key ID** and **Team ID** (from [Membership](https://developer.apple.com/account/#!/membership)).
+
+**2. Configure:**
+```bash
+mkdir -p ~/.config/applemusic-mcp
+cp ~/Downloads/AuthKey_XXXXXXXXXX.p8 ~/.config/applemusic-mcp/
+```
+Create `~/.config/applemusic-mcp/config.json`:
+```json
+{
+  "team_id": "YOUR_TEAM_ID",
+  "key_id": "YOUR_KEY_ID",
+  "private_key_path": "~/.config/applemusic-mcp/AuthKey_XXXXXXXXXX.p8"
+}
+```
+
+**3. Generate + authorize:**
+```bash
+applemusic-mcp generate-token   # developer token (180 days)
+applemusic-mcp authorize        # capture your user token
+applemusic-mcp status           # verify
+```
+
+---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=epheterson/applemusic-mcp&type=Date)](https://star-history.com/#epheterson/applemusic-mcp&Date)
 
 ---
 
