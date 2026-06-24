@@ -316,9 +316,16 @@ class TestAddToPlaylist:
         with open(user_token_file, "w") as f:
             json.dump({"music_user_token": mock_user_token}, f)
 
+        # macOS native posts to api.music.apple.com; non-mac (api engine) posts to
+        # amp-api. Mock both so the test passes on every platform.
         responses.add(
             responses.POST,
             "https://api.music.apple.com/v1/me/library/playlists/p.test123/tracks",
+            status=204,
+        )
+        responses.add(
+            responses.POST,
+            "https://amp-api.music.apple.com/v1/me/library/playlists/p.test123/tracks",
             status=204,
         )
 
@@ -2539,6 +2546,28 @@ class TestApiModeReadRouting:
         result = server.library(action="remove", track="Money")
         assert "Removed" in result and "Money" in result
         mock_asc.remove_from_library.assert_not_called()
+
+    @responses.activate
+    def test_add_by_ids_in_api_mode(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """api mode: a p.xxx playlist id is used directly (no name lookup) and a
+        library track id is added as type library-songs."""
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(server, "_engine", lambda: "api")
+        self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+
+        responses.add(
+            responses.POST,
+            "https://amp-api.music.apple.com/v1/me/library/playlists/p.rock/tracks",
+            status=204,
+        )
+        result = server.playlist(action="add", playlist="p.rock", track="i.lib1")
+        assert "Added 1 track" in result
+        import json as _json
+
+        body = _json.loads(responses.calls[-1].request.body)
+        assert body["data"][0] == {"id": "i.lib1", "type": "library-songs"}
 
     @responses.activate
     def test_remove_in_api_mode_never_fans_out(

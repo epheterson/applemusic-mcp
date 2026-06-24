@@ -233,21 +233,25 @@ def rename_playlist(playlist_id: str, name: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-def add_tracks(playlist_id: str, catalog_ids: list[str]) -> tuple[bool, str]:
-    """Add catalog songs to a playlist by catalog id."""
-    if not catalog_ids:
+def add_tracks(playlist_id: str, items: list) -> tuple[bool, str]:
+    """Add songs to a playlist. ``items`` is a list of either catalog ids (str →
+    ``type: songs``) or ``(id, type)`` tuples — e.g. ``(lib_id, "library-songs")``
+    to add a song already in the library."""
+    if not items:
         return False, "no track ids"
+    data = [
+        {"id": it[0], "type": it[1]} if isinstance(it, tuple) else {"id": it, "type": "songs"}
+        for it in items
+    ]
     try:
         r = requests.post(
             f"{AMP}/me/library/playlists/{playlist_id}/tracks",
             headers=_headers(),
-            json={"data": [{"id": cid, "type": "songs"} for cid in catalog_ids]},
+            json={"data": data},
             timeout=TIMEOUT,
         )
         return (r.status_code in _OK), (
-            f"Added {len(catalog_ids)} track(s)"
-            if r.status_code in _OK
-            else f"status {r.status_code}"
+            f"Added {len(items)} track(s)" if r.status_code in _OK else f"status {r.status_code}"
         )
     except Exception as e:
         return False, str(e)

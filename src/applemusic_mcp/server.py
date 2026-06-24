@@ -1096,43 +1096,49 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
     """Add track(s) to a playlist entirely over the API (cross-platform): resolve
     the playlist's library id, resolve each track to a catalog id (direct id, or
     catalog search by name), and POST them. Adds to the library implicitly."""
-    # Resolve the playlist id with the rich 3-pass fuzzy matcher (handles
-    # &/and, emoji, accents) rather than amp_api's plain substring match.
-    pid, fuzzy = _find_api_playlist_by_name(playlist)
-    if not pid:
-        pid = amp_api.resolve_playlist_id(playlist)
+    # A bare playlist id (p.XXXXX) is used directly; a name goes through the rich
+    # 3-pass fuzzy matcher (handles &/and, emoji, accents).
+    fuzzy = None
+    if playlist.startswith("p.") and len(playlist) > 2 and playlist[2:].isalnum():
+        pid = playlist
+    else:
+        pid, fuzzy = _find_api_playlist_by_name(playlist)
+        if not pid:
+            pid = amp_api.resolve_playlist_id(playlist)
     if not pid:
         return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
-    catalog_ids: list[str] = []
+    items: list = []  # str catalog id, or (id, "library-songs") for a library song
     added_names: list[str] = []
     errors: list[str] = []
     for r in _resolve_track(track, artist):
         if r.error:
             errors.append(r.error)
         elif r.input_type == InputType.CATALOG_ID:
-            catalog_ids.append(r.value)
+            items.append(r.value)
             added_names.append(f"track {r.value}")
+        elif r.input_type == InputType.LIBRARY_ID:
+            # Already in the library — add it by its library id (type library-songs).
+            items.append((r.value, "library-songs"))
+            added_names.append(f"library track {r.value}")
         elif r.input_type in (InputType.NAME, InputType.JSON_OBJECT):
             q = f"{r.value} {r.artist or artist}".strip()
             songs = amp_api.search_catalog_songs(q, 1)
             if songs:
-                catalog_ids.append(songs[0]["id"])
+                items.append(songs[0]["id"])
                 added_names.append(f"{songs[0]['name']} - {songs[0]['artist']}")
             else:
                 errors.append(f"{r.value}: not found in catalog")
         else:
-            errors.append(f"{r.value}: already a library id, not a catalog track")
-    if not catalog_ids:
+            errors.append(f"{r.value}: unsupported id type for add")
+    if not items:
         return "Error: nothing to add\n" + "\n".join(errors)
-    ok, msg = amp_api.add_tracks(pid, catalog_ids)
+    ok, msg = amp_api.add_tracks(pid, items)
     if not ok:
         return f"Error: {msg}"
     # Surface the playlist fuzzy match (parity with the native path) so the user
     # knows if "Rock" landed in "Rock & Roll Classics".
     dest = f"'{fuzzy.matched_name}'" if fuzzy and fuzzy.matched_name else f"'{playlist}'"
-    out = f"Added {len(catalog_ids)} track(s) to {dest}:\n" + "\n".join(
-        f"  + {n}" for n in added_names
-    )
+    out = f"Added {len(items)} track(s) to {dest}:\n" + "\n".join(f"  + {n}" for n in added_names)
     if fuzzy:
         out += f"\n{_format_fuzzy_match(fuzzy)}"
     if errors:
