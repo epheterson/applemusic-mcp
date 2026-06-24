@@ -7,20 +7,20 @@ step — which means **the version bump itself is the point of no return.**
 
 ## Why there is a LOCAL gate
 
-GitHub CI runs on Ubuntu with no Music.app and no Apple Music sign-in, so it can
-only test the mocked logic. The tokenless catalog→library/playlist add — the
-whole reason this tool's macOS path exists — is UI automation against a real,
-signed-in, unlocked Music.app. **CI structurally cannot validate it.** That gap
-is exactly how issue #28 shipped, and how a one-word AppleScript reserved-word
-bug (`by`) silently broke the entire macOS-15 add path with every unit test
-still green.
+GitHub CI runs on Ubuntu with no Apple Music account and no tokens, so it can
+only test the mocked logic. The catalog→library/playlist add, folders, move, and
+ratings — the core of this tool — run as live mutations against a real,
+signed-in account. **CI structurally cannot validate it.** That gap is exactly
+how issue #28/#37 shipped, and how the branch-A "DELETE is broken on the public
+host" bug reached a release with every unit test still green.
 
 So the gate is local and manual, and it is **mandatory before a version bump.**
 
 ## The ritual
 
-On a Mac signed into Apple Music (active subscription), unlocked, with
-Accessibility granted to your terminal:
+On a machine with tokens for a signed-in Apple Music account (active
+subscription) — a developer token (`applemusic-mcp generate-token`, or a
+harvested one) plus a media-user-token (`applemusic-mcp signin`):
 
 ```bash
 make preflight
@@ -29,19 +29,20 @@ make preflight
 This runs, in order:
 
 1. the fast/mocked suite (same as CI),
-2. a live-environment check (Music running, screen unlocked, catalog reachable)
-   that **fails loudly** instead of letting the live tests silently skip,
-3. the live UI integration suite (`tests/test_live_integration.py` +
-   `tests/test_applescript.py::TestUI*Live`) against your real library —
-   self-cleaning, but it does add and remove a throwaway catalog track and a
-   `_UI_TEST_…` playlist.
+2. a live-environment check (developer token + media-user-token + catalog
+   reachable) that **fails loudly** instead of letting the live tests silently
+   skip,
+3. the live API integration suite (`tests/test_live_integration.py`, `TEST_API=1`)
+   against your real account — it creates/deletes `_UI_TEST_…` playlists and
+   folders and clears any rating it sets. One known residue: the probe song it
+   adds stays in your library (no verified remove-from-library API yet).
 
-It refuses to pass if the live suite ran **zero** tests (a half-ready
-environment that skips everything is a false green).
+It refuses to pass if the core live tests **skipped** rather than passed (a
+half-ready environment that skips everything is a false green).
 
-**Run it on both a macOS 15 and a macOS 26 machine when you can.** Apple split
-the add surfaces across versions — the deep-link path runs on macOS 15, the
-pop-over path on macOS 26 — and a given machine only exercises one of them.
+This gate is cross-platform — it no longer needs macOS or the local Music.app.
+The native (AppleScript) paths still only run on macOS; validate those with
+`make test-all` on a signed-in Mac when you change them.
 
 ## Only when `make preflight` is green:
 

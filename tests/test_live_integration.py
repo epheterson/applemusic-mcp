@@ -1,68 +1,67 @@
-"""Live pre-release integration gate for the tokenless catalog→library/playlist
-add flows.
+"""Live pre-release integration gate for the API engine (catalog→library/playlist,
+folders, move, ratings).
 
 WHY THIS FILE EXISTS
 --------------------
-GitHub CI cannot validate these flows: they require a Mac signed into Apple
-Music (active subscription), an unlocked GUI session, and Accessibility
-permission. That gap is exactly how #28 shipped — and how a one-word AppleScript
-reserved-word bug (`by`) silently broke the entire macOS-15 deep-link add path
-without any test noticing. These tests are the local gate that runs on a real,
-signed-in Mac BEFORE a release (see ``scripts/preflight.sh`` / ``RELEASING.md``).
+GitHub CI cannot validate these flows: they require a real Apple Music account
+(active subscription) with a developer token (generated OR harvested) and a
+captured media-user-token. That gap is exactly how #28/#37 shipped breakage —
+a change that "passes CI" can still be broken against the live account. These
+tests are the local gate that runs on a real, signed-in account BEFORE a
+release (see ``scripts/preflight.sh`` / ``RELEASING.md``).
 
-They drive real Music.app UI automation and MUTATE the real library, so:
-  * they are gated behind ``TEST_UI=1`` and skipped otherwise (CI, headless),
+They hit the live ``amp-api.music.apple.com`` and MUTATE the real account, so:
+  * they are gated behind ``TEST_API=1`` and skipped otherwise (CI, headless),
   * they SKIP cleanly (never fail spuriously) when the environment isn't ready
-    (screen locked, Music not running, no signed-in catalog access),
-  * every test removes whatever it added in teardown, and the playlist name uses
-    the ``_UI_TEST_`` prefix that ``conftest.py``'s session sweep also cleans.
+    (no tokens, no network, storefront can't resolve a probe track),
+  * playlists/folders are deleted in teardown, and every playlist/folder name
+    uses the ``_UI_TEST_`` prefix that ``conftest.py``'s session sweep also
+    cleans (belt and suspenders if a test aborts before its inline cleanup),
+  * ratings are cleared in teardown.
 
-Run locally::
+ONE known residue: adding a catalog track (to a playlist or directly to the
+library) also files it under the account library, and there is no *verified*
+remove-from-library API call yet, so the probe song (a well-known hit) is left
+in the library. The library-add coverage exists because that is the exact #37
+flow; the residue is one song per release run. Tracked as a follow-up to add a
+verified remove-from-library so the gate becomes fully self-cleaning.
 
-    TEST_UI=1 uv run pytest tests/test_live_integration.py -v
+This is the API successor to the old UI-automation gate: the fragile Music.app
+UI add path (split across macOS/Music.app versions) was removed in favor of the
+cross-platform API, so the gate now exercises the API surface instead.
 
-OS-version awareness: Apple's two add surfaces are split across versions —
-the autocomplete pop-over is in the accessibility tree on macOS 26 (new Music)
-but not on macOS 15; catalog deep-links navigate on macOS 15 but not on macOS 26.
-The full-flow test auto-selects the right surface and runs on BOTH; the
-surface-specific tests skip on the version where their surface doesn't apply.
+Run locally (on the signed-in account)::
+
+    TEST_API=1 uv run pytest tests/test_live_integration.py -v
+
+The whole suite is also marked ``ui`` so the default ``-m "not ui"`` run skips it.
 """
 
 import os
-import platform
 import time
 
 import pytest
 
-from applemusic_mcp import applescript as asc
+from applemusic_mcp import amp_api
+from applemusic_mcp import auth
 from applemusic_mcp import server
 
 # --- environment preflight -------------------------------------------------
 
-
-def _macos_major() -> int:
-    try:
-        return int(platform.mac_ver()[0].split(".")[0])
-    except (ValueError, IndexError):
-        return 0
-
-
-def _music_running() -> bool:
-    ok, out = asc.run_applescript('return (application "Music" is running)')
-    return ok and out.strip() == "true"
+_PREFIX = "_UI_TEST_"
 
 
 def _env_skip_reason() -> str:
-    """Return a non-empty reason to skip, or '' when the live environment is
-    ready. Skips are CLEAN (env not ready) — never spurious failures."""
-    if not os.environ.get("TEST_UI"):
-        return "live UI gate is opt-in; run with TEST_UI=1"
-    if not asc.is_available():
-        return "AppleScript/Music.app not available on this platform"
-    if not _music_running():
-        return "Music.app is not running — open it and sign in"
-    if asc.is_screen_locked() is True:
-        return "screen is locked — unlock the Mac (UI automation needs the active display)"
+    """Non-empty reason to skip, or '' when the live API environment is ready.
+    Skips are CLEAN (env not ready) — never spurious failures."""
+    if not os.environ.get("TEST_API"):
+        return "live API gate is opt-in; run with TEST_API=1"
+    if not auth.has_any_developer_token():
+        return "no developer token (generate-token or a harvestable one) — can't reach the API"
+    try:
+        auth.get_user_token()
+    except Exception:
+        return "no media-user-token — run `applemusic-mcp signin` (or `authorize`)"
     return ""
 
 
@@ -72,238 +71,119 @@ pytestmark = [
 ]
 
 
-# Deliberately obscure-but-indexed ALBUM tracks (deep cuts, not lead singles):
-# unlikely to be in the tester's library (so the add is observable), stable on
-# Apple Music, and — importantly — tracks on multi-song albums so the song page
-# exposes a per-row "Add to Library" button. The fixture additionally PROBES
-# each candidate's page (see `_candidate_is_addable`) and skips any that don't
-# expose a row-level add control (e.g. standalone singles, whose add is
-# album-level) or whose row shows a stale "Download" from a prior run.
-# Genre/era-diverse so they're unlikely to ALL be in any one tester's library
-# (the fixture skips owned tracks; too narrow a list exhausts on a big library).
-_CANDIDATES = [
-    ("Casimir Pulaski Day", "Sufjan Stevens"),  # Illinois (22 tracks)
-    ("The Boy in the Bubble", "Paul Simon"),  # Graceland
-    ("Sleeping Lessons", "The Shins"),  # Wincing the Night Away
-    ("Mykonos", "Fleet Foxes"),  # Sun Giant EP
-    ("Bigmouth Strikes Again", "The Smiths"),  # The Queen Is Dead
-    ("Emmylou", "First Aid Kit"),  # The Lion's Roar
-    ("Cath...", "Death Cab for Cutie"),  # Narrow Stairs
-    ("Naeem", "Bon Iver"),  # i,i
-    ("Digital Witness", "St. Vincent"),  # St. Vincent
-    ("Gosh", "Jamie xx"),  # In Colour
-    ("Bubblegum", "Clairo"),  # diary 001
-    ("Seventeen Going Under", "Sam Fender"),  # newer
-    ("Brother", "Lord Huron"),  # Lonesome Dreams
-    ("Nara", "alt-J"),  # This Is All Yours
-    ("Avant Gardener", "Courtney Barnett"),  # The Double EP
-    ("Three Rings", "TV on the Radio"),  # Seeds
-]
+def _unique(suffix: str) -> str:
+    """A collision-proof, sweep-matchable test name."""
+    return f"{_PREFIX}{suffix}_{time.time_ns()}"
 
 
-def _candidate_is_addable(resolved: dict) -> bool:
-    """Navigate to the resolved track's page and confirm a per-row
-    'Add to Library' button is present after hover.
+def _probe_catalog_song() -> dict:
+    """Resolve a stable, widely-available catalog song for the signed-in
+    storefront. Skips (not fails) if the catalog search can't resolve one —
+    that's an environment problem, not a regression."""
+    for term in ("Bohemian Rhapsody Queen", "Billie Jean Michael Jackson", "Yesterday Beatles"):
+        songs = amp_api.search_catalog_songs(term, 1)
+        if songs:
+            return songs[0]
+    pytest.skip("catalog search resolved no probe song (storefront/network)")
 
-    Filters out (a) standalone singles whose add control is album-level (no
-    row button) and (b) candidates whose row shows a stale 'Download' from a
-    prior add/remove cycle (iCloud cache lag). Mirrors the freshness probe the
-    older TestUIFlowsLive uses — without it, one bad candidate fails the gate."""
-    ok, _ = asc.open_catalog_song(resolved["url"])
-    if not ok:
-        return False
-    asc._ensure_music_frontmost()
-    pos = None
-    for _ in range(8):
-        pos = asc._find_highlighted_track_position()
-        if pos:
-            break
+
+def _wait_for_track(playlist_id: str, name_fragment: str, timeout: float = 12.0) -> dict | None:
+    """Poll a playlist until a track whose name contains ``name_fragment`` shows
+    up (newly-added tracks propagate with a short lag), or return None on timeout."""
+    deadline = time.time() + timeout
+    frag = name_fragment.lower()
+    while time.time() < deadline:
+        for t in amp_api.get_tracks(playlist_id):
+            if frag in t.get("name", "").lower():
+                return t
         time.sleep(1.0)
-    if pos is None:
-        return False
-    asc._hover_with_nudge(pos[0], pos[1])
-    time.sleep(0.8)
-    # Require a fresh, row-level Add button (not album-level, not stale Download).
-    return asc._find_add_button_in_highlighted_row("Add to Library") is not None
+    return None
 
 
-def _delete_from_library(name: str, artist: str) -> None:
-    """Best-effort removal of a track we added, by name + artist."""
-    safe_name = name.replace('"', "")
-    safe_artist = (artist.split() or [""])[0].replace('"', "")
-    asc.run_applescript(f"""
-tell application "Music"
-    repeat with t in (every track of library playlist 1 whose name is "{safe_name}" and artist contains "{safe_artist}")
-        delete t
-    end repeat
-end tell""")
-
-
-def _in_library_index(name: str, artist: str, timeout: float = 8.0) -> bool:
-    """Poll the local library index (`library playlist 1`) for the track."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        found, _ = asc.find_library_track(name, artist)
-        if found:
+def _wait_for_folder(folder_id: str, timeout: float = 20.0) -> bool:
+    """Poll the folder listing until ``folder_id`` shows up — brand-new folders
+    propagate to the listing with a lag (longer than playlist tracks)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if any(f["id"] == folder_id for f in amp_api.list_folders()):
             return True
-        time.sleep(1.0)
+        time.sleep(1.5)
     return False
 
 
-def _in_library_via_current_page(name: str) -> bool:
-    """Confirm on the CURRENTLY-DISPLAYED song page that the track is in the
-    library: its row's add control has flipped from 'Add to Library' to
-    'Download'. This is Music's IMMEDIATE signal (no iCloud round-trip) and —
-    crucially — needs no navigation, so it works on macOS 26 too (where
-    deep-links no longer navigate). Both add paths leave Music on the song page,
-    so we read it where the add just happened."""
-    group_path = asc._wait_for_song_page(name, timeout=3.0)
-    if group_path is None:
-        return False
-    found, _ = asc._hover_and_find_button(group_path, "Download")
-    return found
+# --- the gate --------------------------------------------------------------
 
 
-def _confirm_added(resolved: dict, artist: str) -> bool:
-    """Robustly confirm a track landed in the library. Tries the fast local
-    index first, then falls back to the immediate current-page 'Download' signal
-    — so a genuine add is never a false failure (iCloud index lag), but a no-op
-    add (nothing landed by either signal) still fails the gate."""
-    if _in_library_index(resolved["name"], artist):
-        return True
-    return _in_library_via_current_page(resolved["name"])
-
-
-@pytest.fixture
-def fresh_track():
-    """Yield (name, artist, resolved) for the first candidate that is NOT in the
-    library AND resolves via the free iTunes API. Teardown removes the track
-    from the library iff it wasn't there before the test (i.e. we added it)."""
-    for name, artist in _CANDIDATES:
-        already, _ = asc.find_library_track(name, artist)
-        if already:
-            continue
-        resolved = server._resolve_catalog_track_itunes(name, artist)
-        if not resolved or not resolved.get("url"):
-            continue
-        if not _candidate_is_addable(resolved):
-            # Single (album-level add) or stale-cached row — try the next one.
-            asc.ui_clear_search()
-            continue
+class TestLiveApiPlaylist:
+    def test_playlist_add_remove_lifecycle(self):
+        """create → add catalog track → it appears → remove that track → delete.
+        Uses the playlist id from create throughout, so it doesn't depend on the
+        name-resolution propagation lag."""
+        song = _probe_catalog_song()
+        ok, pid = amp_api.create_playlist(_unique("LIFECYCLE"))
+        assert ok, f"create_playlist failed: {pid}"
         try:
-            yield name, artist, resolved
+            added, msg = amp_api.add_tracks(pid, [song["id"]])
+            assert added, f"add_tracks failed: {msg}"
+
+            track = _wait_for_track(pid, song["name"])
+            assert track is not None, f"added track never appeared in playlist {pid}"
+
+            removed, rmsg = amp_api.remove_track(pid, track["relationship_id"])
+            assert removed, f"remove_track failed: {rmsg}"
         finally:
-            # Remove only what we added (the candidate was not in library above).
-            _delete_from_library(resolved.get("name", name), artist)
-            asc.ui_clear_search()
-        return
-    pytest.skip(
-        "no candidate that is both absent from the library and resolvable via "
-        "the free iTunes API (library may already contain all candidates, or "
-        "the storefront lacks them)"
-    )
+            amp_api.delete_playlist(pid)
+
+    def test_delete_playlist_on_amp_host(self):
+        """Regression for the DELETE-is-broken finding: the public host 401s,
+        amp-api must accept it (this is what shipped broken in branch A)."""
+        ok, pid = amp_api.create_playlist(_unique("DELETE"))
+        assert ok, f"create_playlist failed: {pid}"
+        deleted, msg = amp_api.delete_playlist(pid)
+        assert deleted, f"delete_playlist failed on amp host: {msg}"
 
 
-@pytest.fixture
-def temp_playlist():
-    """Create a uniquely-named throwaway playlist (swept by conftest's
-    `_UI_TEST_` prefix sweep too) and delete it in teardown."""
-    name = "_UI_TEST_LIVE_INTEGRATION_"
-    asc.delete_playlist(name)  # clear any prior debris
-    ok, err = asc.create_playlist(name, "live integration test playlist")
-    if not ok:
-        pytest.skip(f"could not create test playlist: {err}")
-    try:
-        yield name
-    finally:
-        asc.delete_playlist(name)
+class TestLiveApiFolders:
+    def test_folder_create_move_delete(self):
+        """create folder → move a playlist into it (a capability the web UI only
+        exposes via drag) → folder lists → clean up."""
+        ok, fid = amp_api.create_folder(_unique("FOLDER"))
+        assert ok, f"create_folder failed: {fid}"
+        pid = None
+        try:
+            okp, pid = amp_api.create_playlist(_unique("FOLDER_CHILD"))
+            assert okp, f"create_playlist failed: {pid}"
+
+            moved, mmsg = amp_api.move_playlist_to_folder(pid, fid)
+            assert moved, f"move_playlist_to_folder failed: {mmsg}"
+
+            assert _wait_for_folder(fid), "new folder never appeared in the listing"
+        finally:
+            if pid:
+                # Move back to root before deleting the folder (defensive), then delete both.
+                amp_api.move_playlist_to_folder(pid, amp_api.ROOT_FOLDER)
+                amp_api.delete_playlist(pid)
+            amp_api.delete_folder(fid)
 
 
-# --- the gate tests --------------------------------------------------------
+class TestLiveApiRatings:
+    def test_love_then_clear(self):
+        """love a catalog song, then clear the rating — the love/dislike surface
+        that replaced the old star-rating exposure."""
+        song = _probe_catalog_song()
+        loved, lmsg = amp_api.rate(song["id"], 1)
+        assert loved, f"love failed: {lmsg}"
+        cleared, cmsg = amp_api.rate(song["id"], 0)
+        assert cleared, f"clear-rating failed: {cmsg}"
 
 
-class TestTokenlessAddLive:
-    """End-to-end tokenless add, exercising the production server flow that
-    auto-selects the right UI surface for the running macOS version."""
-
-    def test_resolver_returns_canonical_for_named_artist(self):
-        """Free iTunes API resolves a known track with the right artist (the
-        resolver is the foundation of every tokenless add)."""
-        resolved = server._resolve_catalog_track_itunes("Re: Stacks", "Bon Iver")
-        if not resolved:
-            pytest.skip("iTunes API did not resolve the probe track (storefront/network)")
-        assert "bon iver" in resolved["artist"].lower()
-        assert resolved["url"].startswith("https://music.apple.com")
-
-    def test_library_add_full_flow(self, fresh_track):
-        """server._library_add_track_via_ui → track lands in the library.
-
-        This is the PRIMARY gate: it resolves the canonical title, picks the
-        pop-over (macOS 26) or deep-link (macOS 15) surface, clicks Add, and the
-        track must actually appear in the library. Would have caught #28 (the
-        deep-link `by` syntax error fails this on macOS 15)."""
-        name, artist, resolved = fresh_track
-        ok, msg = server._library_add_track_via_ui(name, artist)
-        assert ok, f"tokenless library-add reported failure: {msg}"
-        assert _confirm_added(resolved, artist), (
-            f"add reported success ({msg!r}) but {resolved['name']!r} never "
-            f"appeared in the library within the sync window"
-        )
-
-    def test_add_to_playlist_full_flow(self, fresh_track, temp_playlist):
-        """The reporter's actual flow (#28): add a catalog track to a playlist.
-
-        Composes library-add (above) + duplicate-into-playlist + verify."""
-        name, artist, resolved = fresh_track
-        ok, msg = asc.ui_add_to_playlist(
-            temp_playlist, resolved["name"], artist, song_url=resolved["url"]
-        )
-        assert ok, f"add-to-playlist reported failure: {msg}"
-        # The track must be in the target playlist.
-        base = resolved["name"].split(" (")[0].replace('"', "")
-        deadline = time.monotonic() + 12.0
-        in_playlist = False
-        while time.monotonic() < deadline:
-            okc, out = asc.run_applescript(
-                f'tell application "Music" to return (count of (every track of '
-                f'user playlist "{temp_playlist}" whose name contains "{base}"))'
-            )
-            if okc and out.strip().isdigit() and int(out.strip()) > 0:
-                in_playlist = True
-                break
-            time.sleep(1.0)
-        assert in_playlist, f"track {resolved['name']!r} not found in {temp_playlist!r}"
-
-
-class TestSurfaceSpecificLive:
-    """Directly exercise each OS-specific add surface so a break in either is
-    caught even when the full-flow test happens to route around it."""
-
-    @pytest.mark.skipif(
-        _macos_major() >= 26,
-        reason="deep-link navigation doesn't work on macOS 26 (new Music) — "
-        "that surface is macOS 15 only",
-    )
-    def test_deep_link_add_path(self, fresh_track):
-        """asc.ui_add_to_library_via_url — the macOS-15 deep-link path. This is
-        the function the `by` reserved-word bug lived in; this test is its guard."""
-        name, artist, resolved = fresh_track
-        ok, msg = asc.ui_add_to_library_via_url(resolved["name"], resolved["url"], artist)
-        assert ok, f"deep-link add reported failure: {msg}"
-        assert _confirm_added(
-            resolved, artist
-        ), f"deep-link add reported success ({msg!r}) but the track never landed"
-
-    @pytest.mark.skipif(
-        _macos_major() < 26,
-        reason="search autocomplete pop-over is not in the accessibility tree on "
-        "macOS 15 (old Music) — that surface is macOS 26 only",
-    )
-    def test_popover_add_path(self, fresh_track):
-        """asc.ui_add_to_library — the macOS-26 pop-over path."""
-        name, artist, resolved = fresh_track
-        ok, msg = asc.ui_add_to_library(resolved["name"], artist)
-        assert ok, f"pop-over add reported failure: {msg}"
-        assert _confirm_added(
-            resolved, artist
-        ), f"pop-over add reported success ({msg!r}) but the track never landed"
+class TestLiveLibraryAdd:
+    def test_add_catalog_track_to_library(self):
+        """The server-level catalog→library add (the #37 flow), end to end over
+        the API. Lenient on verification because library indexing lags; the
+        assertion is that the add itself reports success, not an error."""
+        song = _probe_catalog_song()
+        result = server.library(action="add", track=song["id"])
+        assert "Error" not in result, result
+        # The catalog id echoes back, or the resolved name does.
+        assert song["id"] in result or song["name"].split()[0].lower() in result.lower()
