@@ -132,39 +132,23 @@ Or set any of these conversationally — `config(action="set-pref", preference="
 - `mode`: Engine — `auto` (default) / `native` (local Music.app) / `api` (Apple Music API + web player, any OS).
 - `playback`: Playback engine override — `auto` (default, follows `mode`) / `native` (macOS Music.app) / `browser` (Chrome web player).
 - `secure_storage`: Where tokens live — `file` (default, `0600` files; reliable everywhere) or `keychain` (OS keychain; opt-in, may prompt once for access).
-- `auto_search`: For `playlist(action="add")`, search the catalog (and add to your library) when a track isn't already in your library — required to add catalog songs you don't own yet. Default false to avoid unintended library writes; set true for "fill this playlist" workflows.
-- `clean_only`: Filter explicit content, for `search_catalog`, `search_library`, `browse_library` (default: false)
-- `fetch_explicit`: Fetch explicit status (cached), for `get_playlist_tracks`, `search_library`, `browse_library` (default: false)
-- `reveal_on_library_miss`: Open catalog tracks in Music app, for `play` (default: false)
+- `auto_search`: let `playlist(action="add")` pull catalog songs you don't own yet into your library (default false, to avoid unintended writes — set true for "fill this playlist").
+- `clean_only` / `fetch_explicit`: filter or fetch explicit status on searches/browse (default false).
+- `reveal_on_library_miss`: open catalog tracks in the Music app on `play` (default false).
 
 ---
 
 ## Usage Examples
 
-**Playlist management:**
-- "List my Apple Music playlists"
-- "Create a playlist called 'Road Trip' and add some upbeat songs"
-- "Add Hey Jude by The Beatles to my Road Trip playlist"
-- "Remove the last 3 tracks from my workout playlist"
-- "Export my library to CSV"
+Just talk to your assistant:
 
-**Folder organization (macOS):**
-- "Create a folder called Genres and put subfolders for Rock, Jazz, and Electronic in it"
-- "Move my Road Trip playlist into the Summer folder"
-- "Show me my folder hierarchy"
-- "Where is my workout playlist?"
-
-**Discovery & playback (macOS):**
-- "What have I been listening to recently?"
-- "Play my workout playlist on shuffle"
-- "Skip to the next track"
-- "What's playing right now?"
-
-**With API enabled:**
-- "Search Apple Music for 90s alternative rock"
-- "Find songs similar to Bohemian Rhapsody and add them to my library"
-- "What are the top charts right now?"
-- "Get me personalized recommendations"
+- *"Create a playlist called Road Trip and fill it with upbeat 90s alternative."*
+- *"Add Hey Jude to my Road Trip playlist; remove the last 3 tracks from my workout one."*
+- *"Organize my playlists into Rock, Jazz, and Electronic folders."*
+- *"Play my workout playlist on shuffle"* / *"what's playing?"* / *"queue up Bohemian Rhapsody next."*
+- *"Find songs similar to Bohemian Rhapsody and add them to my library."*
+- *"What have I been listening to lately, and what are the top charts?"*
+- *"Export my library to CSV."*
 
 ---
 
@@ -187,28 +171,9 @@ Playlist and folder operations. Most work on **any OS** over the API; a few fold
 | `rename` | `playlist` or `folder`, `new_name` | Rename a playlist (any OS) or folder (macOS) | Any OS · folder: macOS |
 | `path` | `playlist` or `folder` | Get full path / show hierarchy | macOS |
 
-**Folder paths:** Use `/` for nesting: `create(folder="Music/Genres/Jazz")`. Single-level folders and moving a playlist in/out of a folder work over the API on any OS; **nested paths and the folder tree/`path` view need macOS** (AppleScript).
+**Folders:** `/` nests paths (`create(folder="Music/Genres/Jazz")`). Single-level folders and moving a playlist in/out of one work over the API on any OS; **nested paths and the folder tree/`path` view need macOS**. (Native-macOS quirk: AppleScript can't move a playlist *out* of a folder, so `folder=""` recreates it at root with a new ID — the API path moves it in place.)
 
-*Native macOS note: the AppleScript interface can't move a playlist out of a folder, so on a tokenless/native Mac `folder=""` recreates the playlist at root (its persistent ID changes). The API path (any OS, incl. Mac in api mode) moves it directly with no recreate.*
-
-**Examples:**
-```python
-playlist(action="list")
-playlist(action="create", name="Road Trip", description="Summer vibes")
-playlist(action="create", folder="Summer/Chill")                           # nested folders
-playlist(action="create", name="Road Trip", folder="Summer/Chill")         # playlist in nested folder
-playlist(action="move", playlist="Road Trip", folder="Summer/Chill")       # into nested folder
-playlist(action="move", playlist="Road Trip", folder="")                   # back to root
-playlist(action="move", playlist="Chill", folder="Archive")                # folder into folder
-playlist(action="path")                                                    # show full hierarchy
-playlist(action="path", playlist="Road Trip")                              # "Summer/Chill/Road Trip"
-playlist(action="path", folder="Chill")                                    # "Summer/Chill"
-playlist(action="delete", folder="Summer/Chill")                           # delete nested folder
-playlist(action="rename", folder="Summer", new_name="Summer 2026")
-playlist(action="add", playlist="Road Trip", track="Hey Jude", artist="Beatles")
-```
-
-**Unified `track` parameter** auto-detects and batches: a single name/ID, a comma-separated CSV, a newline-separated list (one per line — safe for titles containing commas), or a JSON array (`["A","B"]` or `[{"name":"A","artist":"X"}]`). Add entire albums with `album` parameter.
+**Unified `track` parameter** auto-detects and batches: a single name/ID, a comma- or newline-separated list, or a JSON array (`["A","B"]` or `[{"name":"A","artist":"X"}]`). Whole albums via `album`.
 
 ### `library(action=...)`
 Library management. Reads, add, remove, and love/dislike work on **any OS** over the API; favorites, snapshots, genre search, and 1–5 star ratings are macOS-only.
@@ -235,14 +200,6 @@ Library management. Reads, add, remove, and love/dislike work on **any OS** over
 | `list` | List all saved snapshot/diff files |
 | `delete FILENAME` | Delete a specific diff file |
 
-**Examples:**
-```python
-library(action="search", query="Beatles", types="songs", limit=25)
-library(action="add", album="Abbey Road", artist="Beatles")
-library(action="recently_played", limit=30)
-library(action="rate", rate_action="love", track="Hey Jude")
-```
-
 ### `catalog(action=...)`
 Catalog search and details - search, albums, songs, artists, genres, stations
 
@@ -258,14 +215,6 @@ Catalog search and details - search, albums, songs, artists, genres, stations
 | `song_station` | `song_id` | Get radio station for song | All |
 | `genres` | - | List all available genres | All |
 
-**Examples:**
-```python
-catalog(action="search", query="90s alternative", types="songs", limit=50)
-catalog(action="album_tracks", album="Abbey Road", artist="Beatles")
-catalog(action="album_details", album="GNX", artist="Kendrick Lamar")
-catalog(action="artist_details", artist="The Beatles")
-```
-
 ### `discover(action=...)`
 Discovery and recommendations - personalized stations, charts, top songs, similar artists
 
@@ -279,14 +228,7 @@ Discovery and recommendations - personalized stations, charts, top songs, simila
 | `search_suggestions` | `term` | Autocomplete suggestions | All |
 | `personal_station` | - | Your personal radio station | All |
 
-**Optional:** All catalog-based discover actions (`charts`, `top_songs`, `similar_artists`, `song_station`) accept an optional `storefront` parameter to query other regions without changing your default storefront.
-
-**Examples:**
-```python
-discover(action="recommendations")
-discover(action="charts", chart_type="songs", storefront="it")  # Italy charts
-discover(action="top_songs", artist="The Beatles")
-```
+Catalog-based actions (`charts`, `top_songs`, `similar_artists`, `song_station`) take an optional `storefront` to query other regions (e.g. `storefront="it"`) without changing your default.
 
 ### Playback & Queue
 
@@ -349,27 +291,7 @@ Most list tools support these output options:
 | `export` | `"none"` (default), `"csv"`, `"json"` | Write file to disk |
 | `full` | `False` (default), `True` | Include all metadata |
 
-**Text format** auto-selects the best tier that fits:
-- **Full**: Name - Artist (duration) Album [Year] Genre id
-- **Compact**: Name - Artist (duration) id
-- **Minimal**: Name - Artist id
-
-**Examples:**
-```
-library(action="search", query="beatles", format="json")                      # JSON response
-library(action="browse", item_type="songs", export="csv")                     # Text + CSV file
-library(action="browse", item_type="songs", format="none", export="csv")      # CSV only (saves tokens)
-playlist(action="tracks", playlist="p.123", export="json", full=True)         # JSON file with all metadata
-```
-
-### MCP Resources
-
-Exported files are accessible via MCP resources (any MCP client that supports resource reads):
-
-| Resource | Description |
-|----------|-------------|
-| `exports://list` | List all exported files |
-| `exports://{filename}` | Read a specific export file |
+Text format auto-selects the tier that fits (Full → Compact → Minimal). Use `export="csv"` with `format="none"` to write a file without spending tokens on the response. Exported files are also readable as MCP resources: `exports://list` and `exports://{filename}`.
 
 ---
 
@@ -384,14 +306,10 @@ Library, catalog, add/rate, and the full playlist + folder surface all work over
 | A few features are macOS-only | 1–5 star ratings, favorites, library snapshots, AirPlay, and nested folder paths have no Apple Music API equivalent |
 
 ### Both Platforms
-- **Brand-new playlists take a moment to be addable:** a just-created playlist needs to
-  propagate to the cloud library before tracks can be added over the API; existing playlists
-  are immediate.
-- **Sign-in persists, but can expire:** if catalog actions start failing, re-run
-  `applemusic-mcp signin` (or `applemusic-mcp generate-token` for the developer-token path).
-- **Screen must be unlocked for macOS playback/play-from-URL:** those drive Music.app via
-  System Events; a locked screen blocks them. The MCP detects this and returns a clear error.
-- **A few playlists silently revert AppleScript edits** ([known Music.app/AppleScript bug](https://www.macscripter.net/t/add-current-track-from-apple-music-to-playlist/72058)). The MCP detects the rollback automatically and returns an actionable error.
+- **Brand-new playlists take a moment to be addable** over the API (cloud propagation); existing ones are immediate.
+- **Sign-in persists but can expire** — if catalog actions start failing, re-run `applemusic-mcp signin`.
+- **macOS playback/play-from-URL needs an unlocked screen** (it drives Music.app via System Events); the MCP returns a clear error if locked.
+- **A few playlists silently revert AppleScript edits** ([known Music.app bug](https://www.macscripter.net/t/add-current-track-from-apple-music-to-playlist/72058)); the MCP detects the rollback and surfaces it.
 
 ---
 
