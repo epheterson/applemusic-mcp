@@ -70,14 +70,22 @@ def _harvested_token_file() -> Path:
     return get_config_dir() / "harvested_token.json"
 
 
+# Re-harvest the web token once it's within this many days of expiry. Sparse
+# usage means we want plenty of runway, so a fresh token is fetched well before
+# the old one dies rather than at the last minute.
+_HARVEST_REFRESH_DAYS = 15
+
+
 def _load_harvested_token() -> Optional[str]:
-    """Return a cached harvested token if present and not expiring within a day."""
+    """Return the cached harvested token only if it has more than
+    ``_HARVEST_REFRESH_DAYS`` of life left; otherwise return None so
+    ``resolve_developer_token`` fetches a fresh one."""
     f = _harvested_token_file()
     if not f.exists():
         return None
     try:
         data = json.loads(f.read_text())
-        if data.get("expires", 0) > time.time() + 86400:
+        if data.get("expires", 0) > time.time() + _HARVEST_REFRESH_DAYS * 86400:
             return data["token"]
     except (json.JSONDecodeError, OSError, KeyError):
         return None
@@ -134,13 +142,28 @@ def get_config_dir() -> Path:
     return config_dir
 
 
+_config_cache: "Optional[tuple[float, dict]]" = None
+
+
 def load_config() -> dict:
-    """Load configuration from config.json, returning empty dict if not found."""
+    """Load config.json (empty dict if absent). Cached by file mtime — `_engine()`
+    reads prefs many times per tool call, so this avoids re-parsing on every read;
+    a `set-pref` write changes the mtime and invalidates the cache automatically."""
+    global _config_cache
     config_file = get_config_dir() / "config.json"
     if not config_file.exists():
+        _config_cache = None
         return {}
+    try:
+        mtime = config_file.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    if _config_cache is not None and _config_cache[0] == mtime:
+        return _config_cache[1]
     with open(config_file) as f:
-        return json.load(f)
+        data = json.load(f)
+    _config_cache = (mtime, data)
+    return data
 
 
 def get_user_preferences() -> dict:
@@ -221,22 +244,57 @@ def generate_developer_token(expiry_days: int = 180) -> str:
     return token
 
 
+# The MCP may be used only occasionally, so a passive "expiring soon" warning
+# can arrive after the token has already died. Whenever the generated token is
+# within this many days of expiry AND the signing key (.p8) is present, mint a
+# fresh one on use — the same self-healing the harvested web token already has.
+_DEV_TOKEN_RENEW_DAYS = 30
+
+
+def can_generate_developer_token() -> bool:
+    """True if we have everything needed to mint a fresh generated token (config
+    + a readable .p8). When True, the generated token self-renews and no manual
+    `generate-token` is needed."""
+    try:
+        config = load_config()
+        if not config.get("team_id") or not config.get("key_id"):
+            return False
+        get_private_key_path(config)  # raises if the .p8 is missing
+        return True
+    except Exception:
+        return False
+
+
 def get_developer_token() -> str:
-    """Get existing developer token or raise if not found/expired."""
+    """Get the generated developer token, auto-renewing it when it's within
+    ``_DEV_TOKEN_RENEW_DAYS`` of expiry and the signing key is available.
+
+    Raises FileNotFoundError/ValueError when there's no usable token and none can
+    be minted — callers (``resolve_developer_token``) then fall back to the
+    harvested web token."""
     token_file = get_config_dir() / "developer_token.json"
-    if not token_file.exists():
-        raise FileNotFoundError("Developer token not found. Run: applemusic-mcp generate-token")
-
-    with open(token_file) as f:
-        data = json.load(f)
-
-    # Check if expired (with 1 day buffer)
-    if data["expires"] < time.time() + 86400:
+    if token_file.exists():
+        try:
+            with open(token_file) as f:
+                data = json.load(f)
+            days_left = (data["expires"] - time.time()) / 86400
+        except Exception:
+            data, days_left = None, -1.0
+        if data is not None and days_left > _DEV_TOKEN_RENEW_DAYS:
+            return data["token"]
+        # In the renewal window (or already expired): mint a fresh one if we can.
+        if can_generate_developer_token():
+            return generate_developer_token()
+        if data is not None and days_left > 1:
+            return data["token"]  # still valid; no key to renew with, so keep using it
         raise ValueError(
-            "Developer token expired or expiring soon. Run: applemusic-mcp generate-token"
+            "Developer token expired or expiring soon and no signing key is available "
+            "to renew it. Run: applemusic-mcp generate-token (or `signin` for the web path)."
         )
-
-    return data["token"]
+    # No token file yet — generate if we have the key, else signal "not found".
+    if can_generate_developer_token():
+        return generate_developer_token()
+    raise FileNotFoundError("Developer token not found. Run: applemusic-mcp generate-token")
 
 
 def get_user_token() -> str:

@@ -40,6 +40,27 @@ def _loose_eq(a: str, b: str) -> bool:
     return a.strip().lower() == b.strip().lower()
 
 
+def session_status() -> str:
+    """Cheap one-request probe of the live session: ``ok`` | ``expired`` |
+    ``throttled`` | ``error``. The reads below swallow errors and return empty,
+    so a resolver can't tell "genuinely not found" from "your token expired".
+    Call this on the failure path to turn a misleading "not found" into the
+    real cause (an expired session or a 429), at the cost of one extra GET."""
+    try:
+        r = requests.get(
+            f"{AMP}/me/library/playlists", headers=_headers(), params={"limit": 1}, timeout=TIMEOUT
+        )
+        if r.status_code == 200:
+            return "ok"
+        if r.status_code in (401, 403):
+            return "expired"
+        if r.status_code == 429:
+            return "throttled"
+        return "error"
+    except Exception:
+        return "error"
+
+
 # --- reads -----------------------------------------------------------------
 
 

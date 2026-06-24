@@ -130,6 +130,27 @@ def test_queue_unknown_action():
     assert "Unknown action" in server.queue(action="bogus")
 
 
+def test_resolve_failure_msg_expired(monkeypatch):
+    """A resolve miss while the session is expired must say so, not 'not found'."""
+    monkeypatch.setattr(server.amp_api, "session_status", lambda: "expired")
+    msg = server._resolve_failure_msg("playlist 'X' not found in your library")
+    assert "expired" in msg.lower() and "signin" in msg.lower()
+    assert "not found" not in msg.lower()
+
+
+def test_resolve_failure_msg_throttled(monkeypatch):
+    monkeypatch.setattr(server.amp_api, "session_status", lambda: "throttled")
+    msg = server._resolve_failure_msg("playlist 'X' not found in your library")
+    assert "429" in msg or "rate" in msg.lower()
+
+
+def test_resolve_failure_msg_genuinely_not_found(monkeypatch):
+    """Session is fine → keep the honest 'not found' message."""
+    monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
+    msg = server._resolve_failure_msg("playlist 'X' not found in your library")
+    assert "not found" in msg.lower()
+
+
 def test_queue_surfaces_browser_error(monkeypatch):
     monkeypatch.setattr(
         browser,

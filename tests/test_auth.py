@@ -142,6 +142,63 @@ class TestGetDeveloperToken:
         assert "expired" in str(exc_info.value).lower()
 
 
+def _write_signing_config(config_dir):
+    """Write a real ES256 .p8 + config.json so generate_developer_token works."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    key_path = config_dir / "AuthKey_TEST.p8"
+    key_path.write_text(pem)
+    (config_dir / "config.json").write_text(
+        json.dumps(
+            {"team_id": "TEAM123456", "key_id": "KEY1234567", "private_key_path": str(key_path)}
+        )
+    )
+
+
+class TestDeveloperTokenAutoRenew:
+    """The generated token self-renews when within 30 days AND the .p8 is present."""
+
+    def test_can_generate_true_with_key(self, mock_config_dir):
+        _write_signing_config(mock_config_dir)
+        assert auth.can_generate_developer_token() is True
+
+    def test_can_generate_false_without_key(self, mock_config_dir):
+        assert auth.can_generate_developer_token() is False
+
+    def test_auto_renews_when_within_30_days(self, mock_config_dir):
+        _write_signing_config(mock_config_dir)
+        token_file = mock_config_dir / "developer_token.json"
+        token_file.write_text(
+            json.dumps({"token": "old.stale.token", "expires": time.time() + 86400 * 10})
+        )
+
+        result = auth.get_developer_token()
+
+        assert result != "old.stale.token"  # minted fresh
+        data = json.loads(token_file.read_text())
+        assert (data["expires"] - time.time()) / 86400 > 150  # ~180-day token
+
+    def test_keeps_token_when_far_from_expiry(self, mock_config_dir):
+        _write_signing_config(mock_config_dir)
+        token_file = mock_config_dir / "developer_token.json"
+        token_file.write_text(
+            json.dumps({"token": "still.good.token", "expires": time.time() + 86400 * 90})
+        )
+
+        assert auth.get_developer_token() == "still.good.token"  # no needless renew
+
+    def test_generates_when_no_token_file_but_key_present(self, mock_config_dir):
+        _write_signing_config(mock_config_dir)
+        assert auth.get_developer_token()  # mints one instead of raising
+
+
 class TestGetUserToken:
     """Tests for get_user_token function."""
 

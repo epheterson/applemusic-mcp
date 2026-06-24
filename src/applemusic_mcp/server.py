@@ -27,6 +27,7 @@ from .auth import (
     get_user_preferences,
     resolve_developer_token,
     has_any_developer_token,
+    can_generate_developer_token,
 )
 from . import applescript as asc
 from . import amp_api
@@ -836,24 +837,36 @@ def read_export(filename: str) -> str:
 
 
 def get_token_expiration_warning() -> str | None:
-    """Check if developer token expires within 30 days. Returns warning message or None."""
-    config_dir = get_config_dir()
-    token_file = config_dir / "developer_token.json"
+    """Heads-up for the GENERATED (Apple Developer) token only — it does NOT
+    auto-refresh, so the user has to renew it. The harvested web-player token
+    refreshes itself (re-fetched ~1 day before expiry), so it needs no warning.
 
+    Escalates as expiry nears and stays silent until 14 days out so it doesn't
+    nag: notice at ≤14 days, urgent at ≤7, and a hard error once expired."""
+    token_file = get_config_dir() / "developer_token.json"
     if not token_file.exists():
-        return None
+        return None  # web/harvested path auto-refreshes — nothing to warn about
+    if can_generate_developer_token():
+        return None  # the signing key is present — it auto-renews, no nudge needed
 
     try:
         with open(token_file) as f:
             data = json.load(f)
-
-        expires = data.get("expires", 0)
-        days_left = (expires - time.time()) / 86400
-
-        if days_left < 30:
-            return f"⚠️ Developer token expires in {int(days_left)} days. Run: applemusic-mcp generate-token"
+        days_left = (data.get("expires", 0) - time.time()) / 86400
     except Exception:
-        pass
+        return None
+
+    # Only reaches here for a keyless generated token (no .p8 to auto-renew), so
+    # give plenty of runway given sparse use: notice ≤30 days, urgent ≤7.
+    renew = "renew with `applemusic-mcp generate-token`"
+    days = round(days_left)
+    if days_left < 0:
+        return f"⚠️ Apple Developer token EXPIRED — {renew} (issues a fresh 180-day token)."
+    if days_left <= 7:
+        return f"⚠️ Apple Developer token expires in {days} day(s) — {renew} now."
+    if days_left <= 30:
+        return f"ℹ️ Apple Developer token expires in {days} days — {renew} soon."
+    return None
 
     return None
 
@@ -961,7 +974,7 @@ def _playlist_create_api(name: str, description: str = "") -> str:
 def _playlist_delete_api(name: str) -> str:
     pid = amp_api.resolve_playlist_id(name)
     if not pid:
-        return f"Error: playlist {name!r} not found in your library"
+        return _resolve_failure_msg(f"playlist {name!r} not found in your library")
     ok, msg = amp_api.delete_playlist(pid)
     if ok:
         audit_log.log_action("delete_playlist", {"name": name, "via": "api"})
@@ -972,9 +985,30 @@ def _playlist_delete_api(name: str) -> str:
 def _playlist_rename_api(name: str, new_name: str) -> str:
     pid = amp_api.resolve_playlist_id(name)
     if not pid:
-        return f"Error: playlist {name!r} not found in your library"
+        return _resolve_failure_msg(f"playlist {name!r} not found in your library")
     ok, msg = amp_api.rename_playlist(pid, new_name)
     return f"Renamed '{name}' to '{new_name}'" if ok else f"Error: {msg}"
+
+
+_SESSION_EXPIRED_MSG = (
+    "Error: your Apple Music session has expired — re-run `applemusic-mcp signin` "
+    "(browser) or `applemusic-mcp authorize` (developer-token path)."
+)
+_SESSION_THROTTLED_MSG = (
+    "Error: Apple Music is rate-limiting requests (HTTP 429) — wait a moment and retry."
+)
+
+
+def _resolve_failure_msg(not_found_msg: str) -> str:
+    """A resolve/read came back empty. Disambiguate genuinely-not-found from an
+    expired session or a 429 (which the swallow-and-return-empty reads hide) so
+    the user sees the real cause and the right fix, not a misleading 'not found'."""
+    st = amp_api.session_status()
+    if st == "expired":
+        return _SESSION_EXPIRED_MSG
+    if st == "throttled":
+        return _SESSION_THROTTLED_MSG
+    return f"Error: {not_found_msg}"
 
 
 def _safe_single_match(matches: list[dict], term: str) -> tuple[dict, int]:
@@ -993,7 +1027,7 @@ def _safe_single_match(matches: list[dict], term: str) -> tuple[dict, int]:
 def _playlist_remove_api(playlist: str, track: str, artist: str = "") -> str:
     pid = amp_api.resolve_playlist_id(playlist)
     if not pid:
-        return f"Error: playlist {playlist!r} not found in your library"
+        return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
     tracks = amp_api.get_tracks(pid)
     tl = track.lower()
     al = artist.lower()
@@ -1038,7 +1072,7 @@ def _folder_delete_api(name: str) -> str:
 def _playlist_move_api(playlist: str, folder: str) -> str:
     pid = amp_api.resolve_playlist_id(playlist)
     if not pid:
-        return f"Error: playlist {playlist!r} not found in your library"
+        return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
     # Move to root when folder is empty/"root"; else into the folder (create it
     # if it doesn't exist yet, mirroring the native move-into-folder behavior).
     if not folder or folder.strip().lower() in ("root", ""):
@@ -1069,7 +1103,7 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
     if not pid:
         pid = amp_api.resolve_playlist_id(playlist)
     if not pid:
-        return f"Error: playlist {playlist!r} not found in your library"
+        return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
     catalog_ids: list[str] = []
     added_names: list[str] = []
     errors: list[str] = []
@@ -1120,7 +1154,7 @@ def _library_remove_api(track: str, artist: str = "") -> str:
         s for s in songs if tl in s["name"].lower() and (not artist or al in s["artist"].lower())
     ]
     if not matches:
-        return f"Error: {track!r} not found in your library"
+        return _resolve_failure_msg(f"{track!r} not found in your library")
     # Library removal is permanent and not cheaply reversible, so NEVER fan a
     # fuzzy term across many songs — remove exactly one (exact title preferred),
     # matching the native path, and tell the user what else matched.
@@ -6263,35 +6297,57 @@ def _config_auth_status() -> str:
 
     status = []
 
-    # Check developer token
-    if dev_token_file.exists():
+    # Developer token. Two sources: a GENERATED (Apple Developer, 180-day) token
+    # the user renews themselves, or the HARVESTED web-player token that the tool
+    # auto-refreshes. Only the generated one needs a renewal nudge.
+    if dev_token_file.exists() and can_generate_developer_token():
+        status.append(
+            "Developer Token: OK (generated — auto-renews ≤30 days out, no action needed)"
+        )
+    elif dev_token_file.exists():
         try:
             with open(dev_token_file) as f:
                 data = json.load(f)
-            expires = data.get("expires", 0)
-            days_left = (expires - time.time()) / 86400
-
+            days_left = (data.get("expires", 0) - time.time()) / 86400
+            days = round(days_left)
             if days_left < 0:
-                status.append("Developer Token: EXPIRED - Run: applemusic-mcp generate-token")
-            elif days_left < 30:
+                status.append("Developer Token: EXPIRED — run `applemusic-mcp generate-token`")
+            elif days_left <= 7:
                 status.append(
-                    f"Developer Token: ⚠️ EXPIRES IN {int(days_left)} DAYS - Run: applemusic-mcp generate-token"
+                    f"Developer Token: ⚠️ EXPIRES IN {days} DAY(S) — "
+                    "run `applemusic-mcp generate-token` now"
+                )
+            elif days_left <= 30:
+                status.append(
+                    f"Developer Token: expires in {days} days — "
+                    "run `applemusic-mcp generate-token` soon"
                 )
             else:
-                status.append(f"Developer Token: OK ({int(days_left)} days remaining)")
+                status.append(f"Developer Token: OK ({days} days remaining, generated)")
         except Exception:
             status.append("Developer Token: ERROR reading file")
+    elif has_any_developer_token():
+        # No generated token, but a harvestable web-player token is available.
+        status.append("Developer Token: OK (web player — auto-refreshes, no action needed)")
     else:
-        status.append("Developer Token: MISSING - Run: applemusic-mcp generate-token")
+        status.append(
+            "Developer Token: MISSING — run `applemusic-mcp signin` (browser, no account) "
+            "or `applemusic-mcp generate-token` (Apple Developer)"
+        )
 
-    # Check user token
+    # User token (media-user-token). Persists; re-auth = signin (browser) or authorize.
     if user_token_file.exists():
-        status.append("Music User Token: OK")
+        status.append(
+            "Music User Token: OK (persists; re-auth with `applemusic-mcp signin` if it fails)"
+        )
     else:
-        status.append("Music User Token: MISSING - Run: applemusic-mcp authorize")
+        status.append(
+            "Music User Token: MISSING — run `applemusic-mcp signin` (browser) "
+            "or `applemusic-mcp authorize` (dev token)"
+        )
 
     # Test API connection
-    if dev_token_file.exists() and user_token_file.exists():
+    if has_any_developer_token() and user_token_file.exists():
         try:
             headers = get_headers()
             response = requests.get(
@@ -6302,10 +6358,13 @@ def _config_auth_status() -> str:
             )
             if response.status_code == 200:
                 status.append("API Connection: OK")
-            elif response.status_code == 401:
+            elif response.status_code in (401, 403):
                 status.append(
-                    "API Connection: UNAUTHORIZED - Token may be expired. Run: applemusic-mcp authorize"
+                    "API Connection: UNAUTHORIZED — your session expired. Re-run "
+                    "`applemusic-mcp signin` (browser) or `applemusic-mcp authorize` (dev token)."
                 )
+            elif response.status_code == 429:
+                status.append("API Connection: RATE-LIMITED (429) — wait a moment and retry.")
             else:
                 status.append(f"API Connection: FAILED ({response.status_code})")
         except Exception as e:

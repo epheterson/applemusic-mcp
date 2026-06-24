@@ -543,7 +543,9 @@ class TestCheckAuthStatus:
 
         result = server.config(action="auth-status")
 
-        assert "EXPIRES IN" in result or "10" in result
+        # Keyless generated token (no .p8 to auto-renew) → escalating nudge.
+        assert "expires in" in result.lower()
+        assert "generate-token" in result
 
 
 class TestFormatDuration:
