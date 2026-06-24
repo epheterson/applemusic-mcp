@@ -92,3 +92,33 @@ def test_api_mode_implies_browser_playback(monkeypatch):
     monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": "api", "playback": "auto"})
     monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
     assert server._use_browser_playback() is True
+
+
+def test_playback_tool_registered_unconditionally():
+    """Regression: `playback` used to live inside `if APPLESCRIPT_AVAILABLE`, so
+    it was missing entirely on Windows/Linux. It must be a module-level tool."""
+    assert callable(getattr(server, "playback", None))
+
+
+def test_playback_play_routes_to_browser_on_non_mac(monkeypatch):
+    """Non-mac, browser engine: play dispatches to the browser, never the
+    (absent) AppleScript helper."""
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+    monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+    monkeypatch.setattr(server, "_browser_play", lambda t, a="", u="": "Playing: X")
+    assert server.playback(action="play", track="X") == "Playing: X"
+
+
+def test_playback_native_pin_on_non_mac_gives_clear_message(monkeypatch):
+    """Non-mac with native playback pinned (no browser) returns an actionable
+    message instead of a NameError on the missing AppleScript helper."""
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+    monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
+    out = server.playback(action="play", track="X")
+    assert "browser" in out.lower() and "signin" in out.lower()
+
+
+def test_playback_reveal_macos_only(monkeypatch):
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+    out = server.playback(action="reveal", track="X")
+    assert "macos" in out.lower() or "only" in out.lower()

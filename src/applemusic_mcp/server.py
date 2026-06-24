@@ -6679,6 +6679,111 @@ def queue(
 
 
 # =============================================================================
+# Playback transport (cross-platform — browser web player or native Music.app)
+# =============================================================================
+# Registered unconditionally so non-macOS clients get it too. play/control/
+# now_playing/settings run through the browser web player or, on macOS, the
+# local Music.app (the `playback` preference: auto/native/browser). reveal/
+# airplay are macOS-only and gated at runtime.
+
+_PLAYBACK_NEEDS_BROWSER = (
+    "Playback isn't available: you've pinned native (macOS) playback, but this "
+    "isn't macOS. Set the `playback` preference to `browser` (config set-pref) "
+    "and run `applemusic-mcp signin`, or use `auto`."
+)
+
+
+@mcp.tool()
+def playback(
+    action: str = "now_playing",
+    # play params
+    track: str = "",
+    playlist: str = "",
+    album: str = "",
+    artist: str = "",
+    url: str = "",
+    shuffle: bool = False,
+    reveal: Optional[bool] = None,
+    add_to_library: bool = False,
+    # control params
+    control: str = "",
+    seconds: float = 0,
+    # settings params
+    volume: int = -1,
+    shuffle_mode: str = "",
+    repeat: str = "",
+    # reveal params
+    track_name: str = "",
+    # airplay params
+    device_name: str = "",
+) -> str:
+    """Playback transport. play/control/now_playing/settings work cross-platform
+    via the browser web player, or natively through Music.app on macOS (the
+    `playback` preference: auto/native/browser). Browser playback needs a
+    signed-in Chrome (`applemusic-mcp signin`) + a desktop session. reveal and
+    airplay are macOS-only. For the Up Next queue, use the separate `queue` tool.
+    Actions: play, control, now_playing, settings, reveal, airplay."""
+    action = action.lower().strip().replace("-", "_")
+
+    if action == "play":
+        if _use_browser_playback():
+            return _browser_play(track, artist, url)
+        if not APPLESCRIPT_AVAILABLE:
+            return _PLAYBACK_NEEDS_BROWSER
+        return _playback_play(track, playlist, album, artist, shuffle, reveal, add_to_library, url)
+    elif action == "control":
+        if not control:
+            return "Error: control param required. Use: play, pause, stop, next, previous, seek"
+        if _use_browser_playback():
+            from . import browser
+
+            ok, msg = browser.playback_control(control, seconds)
+            return msg if ok else f"Error: {msg}"
+        if not APPLESCRIPT_AVAILABLE:
+            return _PLAYBACK_NEEDS_BROWSER
+        return _playback_control(control, seconds)
+    elif action == "now_playing":
+        if _use_browser_playback():
+            from . import browser
+
+            np = browser.now_playing()
+            if not np:
+                return "Nothing playing"
+            return f"Now playing: {np.get('name')} — {np.get('artist')} ({np.get('album')})"
+        if not APPLESCRIPT_AVAILABLE:
+            return _PLAYBACK_NEEDS_BROWSER
+        return _playback_now_playing()
+    elif action == "settings":
+        if _use_browser_playback():
+            from . import browser
+
+            shuffle_b = (
+                {"on": True, "off": False}.get(shuffle_mode.lower()) if shuffle_mode else None
+            )
+            repeat_v = repeat.lower() if repeat else None
+            ok, msg = browser.browser_settings(volume, shuffle_b, repeat_v)
+            return msg if ok else f"Error: {msg}"
+        if not APPLESCRIPT_AVAILABLE:
+            return _PLAYBACK_NEEDS_BROWSER
+        return _playback_settings(volume, shuffle_mode, repeat)
+    elif action == "reveal":
+        if err := _macos_only("reveal"):
+            return err
+        name = track_name or track
+        if not name:
+            return "Error: track_name or track required for reveal action"
+        return _playback_reveal(name, artist)
+    elif action == "airplay":
+        if err := _macos_only("airplay"):
+            return err
+        return _playback_airplay(device_name)
+    else:
+        return (
+            f"Unknown action: {action}. Use: play, control, now_playing, settings, reveal, airplay"
+        )
+
+
+# =============================================================================
 # AppleScript-powered tools (macOS only)
 # =============================================================================
 # These tools provide capabilities not available through the REST API:
@@ -6689,81 +6794,6 @@ def queue(
 # - Get currently playing track
 
 if APPLESCRIPT_AVAILABLE:
-
-    @mcp.tool()
-    def playback(
-        action: str = "now_playing",
-        # play params
-        track: str = "",
-        playlist: str = "",
-        album: str = "",
-        artist: str = "",
-        url: str = "",
-        shuffle: bool = False,
-        reveal: Optional[bool] = None,
-        add_to_library: bool = False,
-        # control params
-        control: str = "",
-        seconds: float = 0,
-        # settings params
-        volume: int = -1,
-        shuffle_mode: str = "",
-        repeat: str = "",
-        # reveal params
-        track_name: str = "",
-        # airplay params
-        device_name: str = "",
-    ) -> str:
-        """Playback. play/control/now_playing work cross-platform via the browser
-        web player (or native Music.app on macOS — see the `playback` preference:
-        auto/native/browser). settings/reveal/airplay are macOS-only.
-        Actions: play, control, now_playing, settings, reveal, airplay."""
-        action = action.lower().strip().replace("-", "_")
-
-        if action == "play":
-            if _use_browser_playback():
-                return _browser_play(track, artist, url)
-            return _playback_play(
-                track, playlist, album, artist, shuffle, reveal, add_to_library, url
-            )
-        elif action == "control":
-            if not control:
-                return "Error: control param required. Use: play, pause, stop, next, previous, seek"
-            if _use_browser_playback():
-                from . import browser
-
-                ok, msg = browser.playback_control(control, seconds)
-                return msg if ok else f"Error: {msg}"
-            return _playback_control(control, seconds)
-        elif action == "now_playing":
-            if _use_browser_playback():
-                from . import browser
-
-                np = browser.now_playing()
-                if not np:
-                    return "Nothing playing"
-                return f"Now playing: {np.get('name')} — {np.get('artist')} ({np.get('album')})"
-            return _playback_now_playing()
-        elif action == "settings":
-            if _use_browser_playback():
-                from . import browser
-
-                shuffle_b = (
-                    {"on": True, "off": False}.get(shuffle_mode.lower()) if shuffle_mode else None
-                )
-                repeat_v = repeat.lower() if repeat else None
-                ok, msg = browser.browser_settings(volume, shuffle_b, repeat_v)
-                return msg if ok else f"Error: {msg}"
-            return _playback_settings(volume, shuffle_mode, repeat)
-        elif action == "reveal":
-            name = track_name or track
-            if not name:
-                return "Error: track_name or track required for reveal action"
-            return _playback_reveal(name, artist)
-        elif action == "airplay":
-            return _playback_airplay(device_name)
-        else:
-            return f"Unknown action: {action}. Use: play, control, now_playing, settings, reveal, airplay"
 
     def _convert_song_url_to_album(url: str) -> Optional[str]:
         """Convert a /song/ URL to /album/?i= format via Apple Music API.
