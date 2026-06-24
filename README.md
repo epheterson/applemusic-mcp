@@ -20,6 +20,16 @@
 - **Rate** — love / dislike tracks
 - **Export** — CSV / JSON, readable as MCP resources
 
+### Access
+
+| Access | What you get | Platforms |
+|---|---|---|
+| **Developer token** — recommended | The full Apple Music API — library, playlists, catalog, ratings | macOS · Windows · Linux |
+| Web token | Same | macOS · Windows · Linux |
+| No token | Control the local Music app — play, browse, edit local playlists | macOS |
+
+<sub>**Developer token** — included with Apple Developer membership (free for App Store developers), valid 6 months — [setup](#option-a--apple-developer-token-optional). **Web token** — a free fallback captured by `applemusic-mcp signin`. The underlying web-player token is valid 35 days and is re-fetched automatically, so you don't re-authenticate — your sign-in persists. It uses Apple's web-player API the same way established open-source projects do — the [Cider](https://github.com/ciderapp/Cider-2) desktop player and the [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/) Home Assistant server among them.</sub>
+
 ### Modes
 
 Choose how it runs with the `mode` preference:
