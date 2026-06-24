@@ -11,17 +11,15 @@
 
 **Works on macOS, Windows, and Linux.** Sign in once with `applemusic-mcp signin` and it all runs over the Apple Music API — the same everywhere.
 
-## Features
+## What it does
 
-Just talk to your assistant — *"add this to my workout playlist," "what should I put on next?"* — and it happens in your real Apple Music account.
-
-- 🎵 **Your whole library, on tap** — search and browse everything you've saved, and add catalog tracks by name. Typos and half-remembered titles are fine; it fuzzy-matches.
-- 📝 **Playlists that build themselves** — create, rename, and delete playlists, add and remove tracks, and organize them into nested folders — including moving playlists *between* folders, something the web app only lets you do by dragging.
-- ▶️ **Real playback** — play any song, album, playlist, or Apple Music link, then pause, skip, seek, and set volume, shuffle, and repeat. Native through the Music app on macOS, or in a signed-in browser on any platform.
-- ⏭️ **Up Next, your way** — see the queue, slot a track in to play next or last, remove or jump to one, clear it, or flip on autoplay — the same Up Next you see in the player.
-- ✨ **Discovery** — search Apple Music's full catalog, pull personalized recommendations, and check the charts.
-- ❤️ **Tune your taste** — love or dislike tracks to shape what Apple Music suggests.
-- 📤 **Take it with you** — export any list to CSV or JSON, readable straight from your MCP client.
+- **Library** — browse, search, and add catalog songs to your library
+- **Playlists** — create, rename, delete · add and remove tracks · organize into folders (create, nest, and move playlists between them)
+- **Playback** — play, play-by-URL, pause, skip, seek, volume, shuffle, repeat, now-playing
+- **Up Next queue** — view, play-next, play-last, remove, reorder-jump, clear, autoplay toggle (browser web player)
+- **Discover** — catalog search, recommendations, charts
+- **Rate** — love / dislike tracks
+- **Export** — CSV / JSON, readable as MCP resources
 
 ### Access
 
