@@ -29,6 +29,7 @@ from .auth import (
     has_any_developer_token,
 )
 from . import applescript as asc
+from . import amp_api
 from .track_cache import get_track_cache, get_cache_dir
 from . import audit_log
 
@@ -918,19 +919,84 @@ def _can_use_library_api() -> bool:
     return has_any_developer_token() and _has_user_token()
 
 
+def _engine() -> str:
+    """Resolve the active engine: ``native`` (AppleScript / local Music.app) or
+    ``api`` (amp-api + browser, cross-platform). From the ``mode`` preference —
+    native | api | auto (auto = native on macOS, api elsewhere). Honors
+    APPLEMUSIC_FORCE_API_MODE for testing."""
+    if os.environ.get("APPLEMUSIC_FORCE_API_MODE") == "1":
+        return "api"
+    mode = (get_user_preferences().get("mode") or "auto").lower()
+    if mode == "native":
+        return "native"
+    if mode == "api":
+        return "api"
+    return "native" if APPLESCRIPT_AVAILABLE else "api"
+
+
 def _use_browser_playback() -> bool:
-    """Decide the playback engine. ``playback`` preference: ``auto`` (default) uses
-    native AppleScript on macOS and the browser web player elsewhere; ``native``
-    forces AppleScript; ``browser`` forces the web player. Browser playback needs
-    a signed-in session (a media-user-token)."""
+    """Decide the playback engine. The ``playback`` preference overrides
+    (``native``/``browser``); otherwise follows the global ``mode`` (``api`` →
+    browser web player, ``native`` → AppleScript). Browser playback needs a
+    signed-in session (a media-user-token)."""
     pref = (get_user_preferences().get("playback") or "auto").lower()
-    if os.environ.get("APPLEMUSIC_FORCE_BROWSER_PLAYBACK") == "1":
-        pref = "browser"
+    if os.environ.get("APPLEMUSIC_FORCE_BROWSER_PLAYBACK") == "1" or pref == "browser":
+        return True
     if pref == "native":
         return False
-    if pref == "browser":
-        return True
-    return not APPLESCRIPT_AVAILABLE  # auto
+    return _engine() == "api"  # auto: follow the global mode
+
+
+# --- playlist mutations over the API engine (cross-platform, no AppleScript) ---
+
+
+def _playlist_create_api(name: str, description: str = "") -> str:
+    ok, res = amp_api.create_playlist(name, description)
+    if ok:
+        audit_log.log_action("create_playlist", {"name": name, "via": "api"})
+        return f"Created playlist '{name}' (ID: {res})"
+    return f"Error: {res}"
+
+
+def _playlist_delete_api(name: str) -> str:
+    pid = amp_api.resolve_playlist_id(name)
+    if not pid:
+        return f"Error: playlist {name!r} not found in your library"
+    ok, msg = amp_api.delete_playlist(pid)
+    if ok:
+        audit_log.log_action("delete_playlist", {"name": name, "via": "api"})
+        return f"Deleted playlist: {name}"
+    return f"Error: {msg}"
+
+
+def _playlist_rename_api(name: str, new_name: str) -> str:
+    pid = amp_api.resolve_playlist_id(name)
+    if not pid:
+        return f"Error: playlist {name!r} not found in your library"
+    ok, msg = amp_api.rename_playlist(pid, new_name)
+    return f"Renamed '{name}' to '{new_name}'" if ok else f"Error: {msg}"
+
+
+def _playlist_remove_api(playlist: str, track: str, artist: str = "") -> str:
+    pid = amp_api.resolve_playlist_id(playlist)
+    if not pid:
+        return f"Error: playlist {playlist!r} not found in your library"
+    tracks = amp_api.get_tracks(pid)
+    tl = track.lower()
+    al = artist.lower()
+    matches = [
+        t for t in tracks if tl in t["name"].lower() and (not artist or al in t["artist"].lower())
+    ]
+    if not matches:
+        return f"Error: {track!r} not found in {playlist!r}"
+    removed = 0
+    for t in matches:
+        ok, _ = amp_api.remove_track(pid, t["relationship_id"])
+        removed += int(ok)
+    if removed:
+        audit_log.log_action("remove_track", {"playlist": playlist, "track": track, "via": "api"})
+        return f"Removed {removed} track(s) matching {track!r} from {playlist!r}"
+    return f"Error: remove failed for {track!r}"
 
 
 def _browser_play(track: str, artist: str = "", url: str = "") -> str:
@@ -3727,12 +3793,12 @@ def playlist(
         return _playlist_search(query, playlist)
     elif action == "create":
         if folder and not name:
-            # folder only = create a folder
-            return _playlist_create_folder(folder)
+            return _playlist_create_folder(folder)  # folders: native (macOS) only
         elif folder and name:
-            # both = create playlist inside folder (create folder if needed)
             return _playlist_create_in_folder(name, folder, description)
         elif name:
+            if _engine() == "api":
+                return _playlist_create_api(name, description)
             return _playlist_create(name, description)
         else:
             return "Error: name and/or folder required for create"
@@ -3741,28 +3807,38 @@ def playlist(
     elif action == "copy":
         return _playlist_copy(source, new_name)
     elif action == "remove":
+        if _engine() == "api":
+            return _playlist_remove_api(playlist, track, artist)
         if err := _macos_only("remove"):
             return err
         return _playlist_remove(playlist, track, artist)
     elif action == "delete":
-        if err := _macos_only("delete"):
-            return err
         if folder:
+            if err := _macos_only("delete folder"):
+                return err
             return _playlist_delete_folder(folder)
         playlist_name = name or playlist
         if not playlist_name:
             return "Error: name, playlist, or folder required for delete"
+        if _engine() == "api":
+            return _playlist_delete_api(playlist_name)
+        if err := _macos_only("delete"):
+            return err
         return _playlist_delete(playlist_name)
     elif action == "rename":
-        if err := _macos_only("rename"):
-            return err
         if not new_name:
             return "Error: new_name required for rename"
         if folder:
+            if err := _macos_only("rename folder"):
+                return err
             return _playlist_rename_folder(folder, new_name)
         playlist_name = name or playlist
         if not playlist_name:
             return "Error: playlist, name, or folder required for rename"
+        if _engine() == "api":
+            return _playlist_rename_api(playlist_name, new_name)
+        if err := _macos_only("rename"):
+            return err
         return _playlist_rename(playlist_name, new_name)
     elif action == "create_folder":
         # Backward compat — redirect to create(folder=...)

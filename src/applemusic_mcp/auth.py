@@ -156,8 +156,14 @@ def get_user_preferences() -> dict:
             "auto_search", False
         ),  # Default FALSE (don't modify library without permission)
         "storefront": prefs.get("storefront", "us"),  # Apple Music region (default: US)
-        # Playback engine: "auto" (native AppleScript on macOS, browser elsewhere),
-        # "native" (AppleScript only), or "browser" (always the web player).
+        # Global engine mode: "auto" (native Music.app on macOS / API+browser
+        # elsewhere), "native" (all-in on the local Music.app — macOS, no token),
+        # or "api" (all-in on the cross-platform Apple Music API + web player, so a
+        # Mac user who isn't signed into Music.app — or whose Music.app is a
+        # different account — can stay fully API). Governs playlist/library ops and
+        # playback engine selection.
+        "mode": prefs.get("mode", "auto"),
+        # Back-compat playback-only override (falls back to `mode` when "auto").
         "playback": prefs.get("playback", "auto"),
     }
 

@@ -156,9 +156,10 @@ class TestCreatePlaylist:
         with open(user_token_file, "w") as f:
             json.dump({"music_user_token": mock_user_token}, f)
 
+        # API engine creates over amp-api (the web player's host).
         responses.add(
             responses.POST,
-            "https://api.music.apple.com/v1/me/library/playlists",
+            "https://amp-api.music.apple.com/v1/me/library/playlists",
             json={"data": [{"id": "p.newplaylist123"}]},
             status=201,
         )
@@ -198,8 +199,10 @@ class TestRenamePlaylist:
         assert "New Name" in result
 
     def test_requires_macos(self, monkeypatch):
-        """Should error when AppleScript not available."""
+        """In NATIVE mode without AppleScript, rename errors macOS-only.
+        (In api/auto mode rename works cross-platform via the API engine.)"""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(server, "_engine", lambda: "native")
 
         result = server.playlist(action="rename", playlist="Old Name", new_name="New Name")
 
@@ -1800,10 +1803,10 @@ class TestUserJourneyAPIOnly:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
 
-        # 6. Create a new playlist
+        # 6. Create a new playlist (API engine -> amp-api host)
         responses.add(
             responses.POST,
-            "https://api.music.apple.com/v1/me/library/playlists",
+            "https://amp-api.music.apple.com/v1/me/library/playlists",
             json={"data": [{"id": "p.new123", "attributes": {"name": "My New Playlist"}}]},
             status=201,
         )

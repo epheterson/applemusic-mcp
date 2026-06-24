@@ -62,3 +62,33 @@ def test_browser_play_track_not_found(monkeypatch):
     monkeypatch.setattr(server, "_resolve_catalog_track_itunes", lambda t, a="": None)
     out = server._browser_play(track="zzznope", artist="")
     assert "not found" in out.lower()
+
+
+@pytest.mark.parametrize(
+    "mode,applescript,expected",
+    [
+        ("auto", True, "native"),  # macOS + AppleScript -> native
+        ("auto", False, "api"),  # no AppleScript -> api
+        ("native", False, "native"),  # pinned native even off-Mac
+        ("api", True, "api"),  # pinned api even on macOS
+    ],
+)
+def test_engine_mode(monkeypatch, mode, applescript, expected):
+    monkeypatch.delenv("APPLEMUSIC_FORCE_API_MODE", raising=False)
+    monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": mode})
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", applescript)
+    assert server._engine() == expected
+
+
+def test_force_api_mode_env(monkeypatch):
+    monkeypatch.setenv("APPLEMUSIC_FORCE_API_MODE", "1")
+    monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": "native"})
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+    assert server._engine() == "api"
+
+
+def test_api_mode_implies_browser_playback(monkeypatch):
+    monkeypatch.delenv("APPLEMUSIC_FORCE_BROWSER_PLAYBACK", raising=False)
+    monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": "api", "playback": "auto"})
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+    assert server._use_browser_playback() is True
