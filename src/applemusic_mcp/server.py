@@ -6645,6 +6645,119 @@ def _library_snapshot_delete(filename: str) -> str:
 
 
 # =============================================================================
+# Auth — conversational sign-in / status / switch-account (no terminal needed)
+# =============================================================================
+# Local stdio MCP servers can't use Claude Code's native /mcp OAuth chip (that's
+# for remote HTTP servers), so the idiomatic "smooth auth" is a tool the
+# assistant drives: check status, sign in, switch accounts, reset.
+
+
+def _clear_credentials(*names: str) -> list[str]:
+    """Delete the named credential files from the config dir; return what was
+    removed. Used by logout/reset."""
+    removed = []
+    cfg = get_config_dir()
+    for n in names:
+        p = cfg / n
+        try:
+            if p.exists():
+                p.unlink()
+                removed.append(n)
+        except OSError:
+            pass
+    return removed
+
+
+@mcp.tool()
+def auth(action: str = "status", confirm: bool = False) -> str:
+    """Manage your Apple Music sign-in — no terminal needed; just ask.
+
+    Actions:
+    - status (default): which tokens are active, expiry/auto-renew, what works, and the next step
+    - signin: open a browser to sign in to Apple Music (any OS) and capture your session — also how you switch accounts (run logout first, then signin)
+    - logout: sign out — clears your user token + browser session so you can sign in with a different account. Your library/playlists are untouched. Needs confirm=True.
+    - reset: wipe ALL credentials (developer token, config, user/web tokens, browser session) for a clean slate, or to drop an Apple Developer token and fall back to the free web path. Your downloaded .p8 key file is left in place. Needs confirm=True.
+    """
+    action = action.lower().strip().replace("-", "_")
+
+    if action in ("status", "info"):
+        mode = (get_user_preferences().get("mode") or "auto").lower()
+        body = _config_auth_status()
+        ready = has_any_developer_token() and (get_config_dir() / "music_user_token.json").exists()
+        nxt = (
+            "✅ Ready — catalog, playlists, add, and rate all work."
+            if ready
+            else "⚠️ Not signed in yet — run auth(action='signin') to finish setup."
+        )
+        return f"{body}\nMode: {mode}\n\n{nxt}"
+
+    if action in ("signin", "login"):
+        from . import browser
+
+        try:
+            ok, msg = browser.signin_interactive()
+        except Exception as exc:  # noqa: BLE001
+            return f"Error: {exc}"
+        if ok:
+            return f"✓ {msg}"
+        if msg == "still-waiting":
+            return (
+                "A Chrome window is open on music.apple.com — finish signing in "
+                "(Apple ID + 2FA), then run auth(action='signin') again and I'll capture "
+                "your session."
+            )
+        return (
+            f"Error: {msg}\n\nBrowser sign-in needs Google Chrome installed and "
+            "`playwright install chromium` run once, plus a desktop session (not a "
+            "headless server)."
+        )
+
+    if action == "logout":
+        if not confirm:
+            return (
+                "This signs you out: it clears your Apple Music user token and the browser "
+                "session (your library and playlists are untouched). Afterwards, run "
+                "auth(action='signin') to sign back in — with a different account if you "
+                "like. To proceed, call auth(action='logout', confirm=True)."
+            )
+        removed = _clear_credentials("music_user_token.json", "harvested_token.json")
+        from . import browser
+
+        browser.clear_session()
+        audit_log.log_action("logout", {"removed": removed})
+        return (
+            "✓ Signed out — user token and browser session cleared. Run "
+            "auth(action='signin') to sign in (you can switch accounts now)."
+        )
+
+    if action == "reset":
+        if not confirm:
+            return (
+                "This wipes ALL credentials: developer token, config.json, user token, web "
+                "token, and the browser session. Your downloaded .p8 key file is left in "
+                "place. Use it for a clean slate, or to drop an Apple Developer token and "
+                "fall back to the free web path. To proceed, call "
+                "auth(action='reset', confirm=True)."
+            )
+        removed = _clear_credentials(
+            "developer_token.json",
+            "config.json",
+            "music_user_token.json",
+            "harvested_token.json",
+        )
+        from . import browser
+
+        browser.clear_session()
+        audit_log.log_action("reset", {"removed": removed})
+        return (
+            "✓ Reset complete. Run auth(action='signin') for the free web path, or set up an "
+            "Apple Developer token with `applemusic-mcp generate-token`."
+        )
+
+    return f"Unknown action: {action}. Use: status, signin, logout, reset"
+
+
+# =============================================================================
 # Up Next / play queue (browser web player — cross-platform)
 # =============================================================================
 # The personal playback queue is MusicKit-instance state (no REST endpoint), so

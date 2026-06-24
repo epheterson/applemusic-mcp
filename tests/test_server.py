@@ -548,6 +548,93 @@ class TestCheckAuthStatus:
         assert "generate-token" in result
 
 
+class TestAuthTool:
+    """The conversational `auth` tool: status / signin / logout / reset."""
+
+    def _tokens(self, d, dev, user):
+        (d / "developer_token.json").write_text(
+            json.dumps({"token": dev, "expires": time.time() + 86400 * 60})
+        )
+        (d / "music_user_token.json").write_text(json.dumps({"music_user_token": user}))
+
+    def test_status_ready(self, mock_config_dir, mock_developer_token, mock_user_token):
+        self._tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        with patch.object(server, "get_headers", return_value={}):
+            with patch("requests.get") as mg:
+                mg.return_value.status_code = 200
+                out = server.auth(action="status")
+        assert "Mode:" in out and "Ready" in out
+
+    def test_status_not_signed_in(self, mock_config_dir):
+        out = server.auth(action="status")
+        assert "signin" in out.lower()
+
+    def test_signin_success(self, monkeypatch):
+        import applemusic_mcp.browser as browser
+
+        monkeypatch.setattr(
+            browser,
+            "signin_interactive",
+            lambda *a, **k: (True, "Signed in — session captured and saved."),
+        )
+        out = server.auth(action="signin")
+        assert "✓" in out and "Signed in" in out
+
+    def test_signin_still_waiting(self, monkeypatch):
+        import applemusic_mcp.browser as browser
+
+        monkeypatch.setattr(browser, "signin_interactive", lambda *a, **k: (False, "still-waiting"))
+        out = server.auth(action="signin")
+        assert "finish signing in" in out.lower()
+
+    def test_logout_requires_confirm(self, mock_config_dir, mock_developer_token, mock_user_token):
+        self._tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        out = server.auth(action="logout")
+        assert "confirm=True" in out
+        # nothing deleted without confirm
+        assert (mock_config_dir / "music_user_token.json").exists()
+
+    def test_logout_clears_user_session(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        self._tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        (mock_config_dir / "harvested_token.json").write_text("{}")
+        import applemusic_mcp.browser as browser
+
+        cleared = {}
+        monkeypatch.setattr(browser, "clear_session", lambda: cleared.update(done=True))
+        out = server.auth(action="logout", confirm=True)
+        assert "Signed out" in out
+        assert not (mock_config_dir / "music_user_token.json").exists()
+        assert not (mock_config_dir / "harvested_token.json").exists()
+        # dev token is preserved on logout
+        assert (mock_config_dir / "developer_token.json").exists()
+        assert cleared.get("done") is True
+
+    def test_reset_requires_confirm(self, mock_config_dir, mock_developer_token, mock_user_token):
+        self._tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        out = server.auth(action="reset")
+        assert "confirm=True" in out
+        assert (mock_config_dir / "developer_token.json").exists()
+
+    def test_reset_wipes_everything(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        self._tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        (mock_config_dir / "config.json").write_text("{}")
+        import applemusic_mcp.browser as browser
+
+        monkeypatch.setattr(browser, "clear_session", lambda: None)
+        out = server.auth(action="reset", confirm=True)
+        assert "Reset complete" in out
+        assert not (mock_config_dir / "developer_token.json").exists()
+        assert not (mock_config_dir / "config.json").exists()
+        assert not (mock_config_dir / "music_user_token.json").exists()
+
+    def test_unknown_action(self):
+        assert "Unknown action" in server.auth(action="bogus")
+
+
 class TestFormatDuration:
     """Tests for format_duration helper function."""
 

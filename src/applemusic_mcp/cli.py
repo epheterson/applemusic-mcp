@@ -163,6 +163,49 @@ def cmd_status(args):
     return 0
 
 
+def cmd_logout(args):
+    """Sign out: clear the media-user-token + browser session so you can sign in
+    with a different account. Leaves the developer token in place."""
+    from . import browser
+    from .auth import get_config_dir
+
+    cfg = get_config_dir()
+    for name in ("music_user_token.json", "harvested_token.json"):
+        p = cfg / name
+        if p.exists():
+            p.unlink()
+    browser.clear_session()
+    print("✓ Signed out — user token and browser session cleared.")
+    print("  Run `applemusic-mcp signin` to sign in (you can switch accounts now).")
+    return 0
+
+
+def cmd_reset(args):
+    """Wipe ALL credentials (developer token, config, user/web tokens, browser
+    session) for a clean slate or to drop a developer token for the web path.
+    The downloaded .p8 key file is left in place."""
+    from . import browser
+    from .auth import get_config_dir
+
+    if not args.force:
+        print("This removes developer_token.json, config.json, the user/web tokens, and the")
+        print("browser session (your .p8 key file is kept). Re-run with --force to proceed.")
+        return 1
+    cfg = get_config_dir()
+    for name in (
+        "developer_token.json",
+        "config.json",
+        "music_user_token.json",
+        "harvested_token.json",
+    ):
+        p = cfg / name
+        if p.exists():
+            p.unlink()
+    browser.clear_session()
+    print("✓ Reset complete. Run `applemusic-mcp signin` (web path) or `generate-token` (dev).")
+    return 0
+
+
 def cmd_serve(args):
     """Start the MCP server."""
     from .server import main
@@ -200,6 +243,15 @@ def main():
     # status
     subparsers.add_parser("status", help="Check authentication status")
 
+    # logout / reset
+    subparsers.add_parser(
+        "logout", help="Sign out (clear user token + browser session; keep dev token)"
+    )
+    reset_parser = subparsers.add_parser(
+        "reset", help="Wipe ALL credentials for a clean slate (keeps your .p8 key file)"
+    )
+    reset_parser.add_argument("--force", action="store_true", help="Confirm the wipe")
+
     # serve
     subparsers.add_parser("serve", help="Start MCP server")
 
@@ -215,6 +267,10 @@ def main():
         sys.exit(cmd_signin(args))
     elif args.command == "status":
         sys.exit(cmd_status(args))
+    elif args.command == "logout":
+        sys.exit(cmd_logout(args))
+    elif args.command == "reset":
+        sys.exit(cmd_reset(args))
     elif args.command == "serve":
         cmd_serve(args)
     else:

@@ -737,6 +737,50 @@ def capture_and_save_user_token() -> bool:
     return True
 
 
+def signin_interactive(timeout_s: int = 90) -> tuple[bool, str]:
+    """Open a Chrome window on music.apple.com and capture the media-user-token
+    once the user has signed in. Returns ``(ok, message)``.
+
+    If the persistent profile is already signed in, captures immediately. Polls
+    for up to ``timeout_s`` so an MCP tool call stays bounded; the caller can
+    invoke it again to keep waiting (the window stays open)."""
+    import time as _time
+
+    try:
+        if capture_and_save_user_token():
+            return True, "Already signed in — your Apple Music session is captured."
+        _engine.submit(_goto_music)  # bring up the window once
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+
+    deadline = _time.monotonic() + timeout_s
+    while _time.monotonic() < deadline:
+        _time.sleep(3)
+        try:
+            if capture_and_save_user_token():
+                return True, "Signed in — session captured and saved."
+        except Exception:
+            pass
+    return False, "still-waiting"
+
+
+def clear_session() -> None:
+    """Shut the browser engine down and delete the persistent Chrome profile (the
+    signed-in Apple ID session). Lets logout/reset hand the user a clean slate so
+    the next sign-in can use a different account."""
+    import shutil
+
+    try:
+        _engine.shutdown()
+    except Exception:
+        pass
+    try:
+        if PROFILE_DIR.exists():
+            shutil.rmtree(PROFILE_DIR, ignore_errors=True)
+    except Exception:
+        pass
+
+
 def _cli_signin(timeout_s: int = 600) -> int:
     """Interactive sign-in helper: open the window once, then poll the cookie
     (without navigating) until the user has signed in. The persistent profile
