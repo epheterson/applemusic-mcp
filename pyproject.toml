@@ -39,6 +39,10 @@ dependencies = [
     # path works out of the box — the sign-in is offered automatically when a token
     # is needed and none is configured. Uses system Chrome when present.
     "playwright>=1.44.0",
+    # OS keychain for token storage (macOS Keychain / Windows Credential Locker /
+    # Linux Secret Service). Falls back to a 0600 file when no backend is available
+    # (e.g. headless servers), so this never blocks the API path.
+    "keyring>=24.0.0",
 ]
 
 [project.optional-dependencies]

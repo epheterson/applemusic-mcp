@@ -29,6 +29,10 @@ from .auth import (
     resolve_developer_token,
     has_any_developer_token,
     can_generate_developer_token,
+    developer_token_info,
+    has_user_token,
+    secret_get,
+    secret_delete,
 )
 from . import applescript as asc
 from . import amp_api
@@ -844,18 +848,12 @@ def get_token_expiration_warning() -> str | None:
 
     Escalates as expiry nears and stays silent until 14 days out so it doesn't
     nag: notice at ≤14 days, urgent at ≤7, and a hard error once expired."""
-    token_file = get_config_dir() / "developer_token.json"
-    if not token_file.exists():
+    data = developer_token_info()
+    if data is None:
         return None  # web/harvested path auto-refreshes — nothing to warn about
     if can_generate_developer_token():
         return None  # the signing key is present — it auto-renews, no nudge needed
-
-    try:
-        with open(token_file) as f:
-            data = json.load(f)
-        days_left = (data.get("expires", 0) - time.time()) / 86400
-    except Exception:
-        return None
+    days_left = (data.get("expires", 0) - time.time()) / 86400
 
     # Only reaches here for a keyless generated token (no .p8 to auto-renew), so
     # give plenty of runway given sparse use: notice ≤30 days, urgent ≤7.
@@ -6327,24 +6325,21 @@ def config(
 
 def _config_auth_status() -> str:
     """Check if authentication tokens are valid and API is accessible."""
-    config_dir = get_config_dir()
-    dev_token_file = config_dir / "developer_token.json"
-    user_token_file = config_dir / "music_user_token.json"
+    dev_info = developer_token_info()
+    user_present = has_user_token()
 
     status = []
 
     # Developer token. Two sources: a GENERATED (Apple Developer, 180-day) token
     # the user renews themselves, or the HARVESTED web-player token that the tool
     # auto-refreshes. Only the generated one needs a renewal nudge.
-    if dev_token_file.exists() and can_generate_developer_token():
+    if dev_info is not None and can_generate_developer_token():
         status.append(
             "Developer Token: OK (generated — auto-renews ≤30 days out, no action needed)"
         )
-    elif dev_token_file.exists():
+    elif dev_info is not None:
         try:
-            with open(dev_token_file) as f:
-                data = json.load(f)
-            days_left = (data.get("expires", 0) - time.time()) / 86400
+            days_left = (dev_info.get("expires", 0) - time.time()) / 86400
             days = round(days_left)
             if days_left < 0:
                 status.append("Developer Token: EXPIRED — run `applemusic-mcp generate-token`")
@@ -6361,7 +6356,7 @@ def _config_auth_status() -> str:
             else:
                 status.append(f"Developer Token: OK ({days} days remaining, generated)")
         except Exception:
-            status.append("Developer Token: ERROR reading file")
+            status.append("Developer Token: ERROR reading token")
     elif has_any_developer_token():
         # No generated token, but a harvestable web-player token is available.
         status.append("Developer Token: OK (web player — auto-refreshes, no action needed)")
@@ -6372,7 +6367,7 @@ def _config_auth_status() -> str:
         )
 
     # User token (media-user-token). Persists; re-auth = signin (browser) or authorize.
-    if user_token_file.exists():
+    if user_present:
         status.append(
             "Music User Token: OK (persists; re-auth with `applemusic-mcp signin` if it fails)"
         )
@@ -6383,7 +6378,7 @@ def _config_auth_status() -> str:
         )
 
     # Test API connection
-    if has_any_developer_token() and user_token_file.exists():
+    if has_any_developer_token() and user_present:
         try:
             headers = get_headers()
             response = requests.get(
@@ -6689,18 +6684,15 @@ def _library_snapshot_delete(filename: str) -> str:
 
 
 def _clear_credentials(*names: str) -> list[str]:
-    """Delete the named credential files from the config dir; return what was
+    """Forget the named credentials from BOTH the OS keychain and disk. Names may
+    be given with or without the ``.json`` suffix. Returns what was present and
     removed. Used by logout/reset."""
     removed = []
-    cfg = get_config_dir()
     for n in names:
-        p = cfg / n
-        try:
-            if p.exists():
-                p.unlink()
-                removed.append(n)
-        except OSError:
-            pass
+        key = n[:-5] if n.endswith(".json") else n
+        if secret_get(key) is not None:
+            removed.append(key)
+        secret_delete(key)
     return removed
 
 

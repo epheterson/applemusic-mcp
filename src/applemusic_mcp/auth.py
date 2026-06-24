@@ -25,6 +25,104 @@ def _write_private(path, text: str) -> None:
         f.write(text)
 
 
+# --- Secret store: OS keychain with a 0600-file fallback --------------------
+# Tokens live in the OS keychain (macOS Keychain / Windows Credential Locker /
+# Linux Secret Service) when a backend is available, else a 0600 JSON file (the
+# same filenames/format as before, so existing installs and headless servers
+# keep working). The stored VALUE is always the JSON blob the file used to hold,
+# so callers parse it identically regardless of backend.
+
+try:  # keyring is a dependency, but import defensively
+    import keyring as _keyring
+except Exception:  # pragma: no cover - keyring import failure
+    _keyring = None  # type: ignore
+
+_KEYRING_SERVICE = "applemusic-mcp"
+
+
+def _keyring_ok() -> bool:
+    """True when a real keychain backend is usable. False under the test guard
+    (APPLEMUSIC_NO_KEYRING=1), when keyring is missing, or when the active
+    backend is the null/fail backend (e.g. a headless Linux box)."""
+    if os.environ.get("APPLEMUSIC_NO_KEYRING") == "1" or _keyring is None:
+        return False
+    try:
+        kr = _keyring.get_keyring()
+        name = f"{type(kr).__module__}.{type(kr).__name__}".lower()
+        return "fail" not in name and "null" not in name
+    except Exception:
+        return False
+
+
+def _secret_file(key: str) -> Path:
+    # Back-compat: same filenames the tokens have always used.
+    return get_config_dir() / f"{key}.json"
+
+
+def secret_set(key: str, value: str) -> None:
+    """Persist a secret blob under ``key`` — keychain if available, else 0600 file."""
+    if _keyring_ok():
+        try:
+            _keyring.set_password(_KEYRING_SERVICE, key, value)
+            # Drop any stale plaintext file once it's safely in the keychain.
+            _secret_file(key).unlink(missing_ok=True)
+            return
+        except Exception:  # pragma: no cover - backend write failure → fall back
+            pass
+    _write_private(_secret_file(key), value)
+
+
+def secret_get(key: str) -> Optional[str]:
+    """Read a secret blob: keychain first, then the file. Migrates a file-stored
+    secret into the keychain on read when a backend is available."""
+    if _keyring_ok():
+        try:
+            v = _keyring.get_password(_KEYRING_SERVICE, key)
+            if v is not None:
+                return v
+        except Exception:  # pragma: no cover
+            pass
+    f = _secret_file(key)
+    if f.exists():
+        try:
+            data = f.read_text()
+        except OSError:
+            return None
+        if _keyring_ok():  # opportunistic migration off plaintext
+            try:
+                _keyring.set_password(_KEYRING_SERVICE, key, data)
+                f.unlink(missing_ok=True)
+            except Exception:  # pragma: no cover
+                pass
+        return data
+    return None
+
+
+def secret_delete(key: str) -> None:
+    """Forget a secret from both the keychain and the file."""
+    if _keyring_ok():
+        try:
+            _keyring.delete_password(_KEYRING_SERVICE, key)
+        except Exception:  # pragma: no cover - not present / backend error
+            pass
+    _secret_file(key).unlink(missing_ok=True)
+
+
+def has_user_token() -> bool:
+    return secret_get("music_user_token") is not None
+
+
+def developer_token_info() -> Optional[dict]:
+    """Parsed generated-developer-token record ({token, expires, ...}) or None."""
+    raw = secret_get("developer_token")
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
 # --- Harvested (fallback) developer token -----------------------------------
 # Apple ships a public developer token (issuer "AMPWebPlay") to every browser
 # that loads music.apple.com, embedded in the web player's JS bundle. It's the
@@ -80,14 +178,14 @@ def _load_harvested_token() -> Optional[str]:
     """Return the cached harvested token only if it has more than
     ``_HARVEST_REFRESH_DAYS`` of life left; otherwise return None so
     ``resolve_developer_token`` fetches a fresh one."""
-    f = _harvested_token_file()
-    if not f.exists():
+    raw = secret_get("harvested_token")
+    if not raw:
         return None
     try:
-        data = json.loads(f.read_text())
+        data = json.loads(raw)
         if data.get("expires", 0) > time.time() + _HARVEST_REFRESH_DAYS * 86400:
             return data["token"]
-    except (json.JSONDecodeError, OSError, KeyError):
+    except (json.JSONDecodeError, ValueError, KeyError):
         return None
     return None
 
@@ -98,8 +196,9 @@ def _save_harvested_token(token: str) -> None:
         exp = int(claims.get("exp", time.time() + 30 * 86400))
     except Exception:
         exp = int(time.time() + 30 * 86400)
-    f = _harvested_token_file()
-    _write_private(f, json.dumps({"token": token, "expires": exp, "source": "harvested"}, indent=2))
+    secret_set(
+        "harvested_token", json.dumps({"token": token, "expires": exp, "source": "harvested"})
+    )
 
 
 def resolve_developer_token() -> str:
@@ -231,7 +330,6 @@ def generate_developer_token(expiry_days: int = 180) -> str:
     token = jwt.encode(payload, private_key, algorithm="ES256", headers=headers)
 
     # Save token
-    token_file = get_config_dir() / "developer_token.json"
     token_data = {
         "token": token,
         "created": now,
@@ -239,7 +337,7 @@ def generate_developer_token(expiry_days: int = 180) -> str:
         "team_id": config["team_id"],
         "key_id": config["key_id"],
     }
-    _write_private(token_file, json.dumps(token_data, indent=2))
+    secret_set("developer_token", json.dumps(token_data))
 
     return token
 
@@ -272,26 +370,24 @@ def get_developer_token() -> str:
     Raises FileNotFoundError/ValueError when there's no usable token and none can
     be minted — callers (``resolve_developer_token``) then fall back to the
     harvested web token."""
-    token_file = get_config_dir() / "developer_token.json"
-    if token_file.exists():
+    data = developer_token_info()
+    if data is not None:
         try:
-            with open(token_file) as f:
-                data = json.load(f)
             days_left = (data["expires"] - time.time()) / 86400
-        except Exception:
-            data, days_left = None, -1.0
-        if data is not None and days_left > _DEV_TOKEN_RENEW_DAYS:
+        except (KeyError, TypeError):
+            days_left = -1.0
+        if days_left > _DEV_TOKEN_RENEW_DAYS:
             return data["token"]
         # In the renewal window (or already expired): mint a fresh one if we can.
         if can_generate_developer_token():
             return generate_developer_token()
-        if data is not None and days_left > 1:
+        if days_left > 1:
             return data["token"]  # still valid; no key to renew with, so keep using it
         raise ValueError(
             "Developer token expired or expiring soon and no signing key is available "
             "to renew it. Run: applemusic-mcp generate-token (or `signin` for the web path)."
         )
-    # No token file yet — generate if we have the key, else signal "not found".
+    # No stored token yet — generate if we have the key, else signal "not found".
     if can_generate_developer_token():
         return generate_developer_token()
     raise FileNotFoundError("Developer token not found. Run: applemusic-mcp generate-token")
@@ -299,24 +395,19 @@ def get_developer_token() -> str:
 
 def get_user_token() -> str:
     """Get the music user token or raise if not found."""
-    token_file = get_config_dir() / "music_user_token.json"
-    if not token_file.exists():
+    raw = secret_get("music_user_token")
+    if not raw:
         raise FileNotFoundError("Music user token not found. Run: applemusic-mcp authorize")
-
-    with open(token_file) as f:
-        data = json.load(f)
-
-    return data["music_user_token"]
+    return json.loads(raw)["music_user_token"]
 
 
 def save_user_token(token: str) -> None:
     """Save the music user token."""
-    token_file = get_config_dir() / "music_user_token.json"
     data = {
         "music_user_token": token,
         "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    _write_private(token_file, json.dumps(data, indent=2))
+    secret_set("music_user_token", json.dumps(data))
 
 
 def create_auth_html(developer_token: str, port: int) -> str:

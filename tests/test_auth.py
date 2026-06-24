@@ -199,6 +199,62 @@ class TestDeveloperTokenAutoRenew:
         assert auth.get_developer_token()  # mints one instead of raising
 
 
+class _FakeKeyring:
+    """Minimal in-memory stand-in for the keyring module."""
+
+    def __init__(self):
+        self.d = {}
+
+    def get_keyring(self):
+        class _Backend:  # name isn't fail/null → treated as usable
+            pass
+
+        return _Backend()
+
+    def set_password(self, service, key, value):
+        self.d[(service, key)] = value
+
+    def get_password(self, service, key):
+        return self.d.get((service, key))
+
+    def delete_password(self, service, key):
+        self.d.pop((service, key), None)
+
+
+class TestSecretStoreKeychain:
+    """The keychain path of the secret store (file path is covered everywhere else)."""
+
+    def _enable(self, monkeypatch):
+        monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
+        fake = _FakeKeyring()
+        monkeypatch.setattr(auth, "_keyring", fake)
+        return fake
+
+    def test_round_trip_uses_keychain_not_file(self, mock_config_dir, monkeypatch):
+        fake = self._enable(monkeypatch)
+        auth.secret_set("music_user_token", '{"music_user_token": "tok"}')
+        assert ("applemusic-mcp", "music_user_token") in fake.d
+        # no plaintext file written when the keychain holds it
+        assert not auth._secret_file("music_user_token").exists()
+        assert auth.get_user_token() == "tok"
+        auth.secret_delete("music_user_token")
+        assert auth.secret_get("music_user_token") is None
+
+    def test_migrates_existing_file_into_keychain(self, mock_config_dir, monkeypatch):
+        # Pre-existing plaintext file (an upgrade from the old file-based storage).
+        auth._write_private(auth._secret_file("harvested_token"), '{"token": "h", "expires": 0}')
+        self._enable(monkeypatch)
+        # First read migrates it off disk and into the keychain.
+        assert auth.secret_get("harvested_token") is not None
+        assert not auth._secret_file("harvested_token").exists()
+
+    def test_disabled_by_env_uses_file(self, mock_config_dir, monkeypatch):
+        monkeypatch.setenv("APPLEMUSIC_NO_KEYRING", "1")
+        auth.secret_set("music_user_token", '{"music_user_token": "f"}')
+        assert auth._secret_file("music_user_token").exists()
+        assert auth.get_user_token() == "f"
+
+
 class TestGetUserToken:
     """Tests for get_user_token function."""
 

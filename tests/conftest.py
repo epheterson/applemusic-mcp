@@ -1,9 +1,15 @@
 """Shared test fixtures."""
 
 import json
+import os
 from unittest.mock import patch
 
 import pytest
+
+# Tests use file-based token storage (not the OS keychain) for determinism and so
+# the fixtures that write token JSON files keep working. The keychain path is
+# exercised explicitly in test_auth.py.
+os.environ.setdefault("APPLEMUSIC_NO_KEYRING", "1")
 
 from applemusic_mcp import applescript as asc
 from applemusic_mcp import audit_log

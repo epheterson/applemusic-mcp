@@ -112,26 +112,22 @@ def cmd_status(args):
 
     print()
 
-    # Check developer token
-    dev_token_file = config_dir / "developer_token.json"
-    if dev_token_file.exists():
-        try:
-            with open(dev_token_file) as f:
-                data = json.load(f)
-            exp = data.get("expires", 0)
-            if exp > time.time():
-                days_left = (exp - time.time()) / 86400
-                print(f"✓ Developer token valid ({days_left:.0f} days remaining)")
-            else:
-                print("✗ Developer token expired")
-        except Exception as e:
-            print(f"✗ Developer token error: {e}")
+    # Check developer token (keychain or file)
+    from .auth import developer_token_info, has_user_token
+
+    data = developer_token_info()
+    if data is not None:
+        exp = data.get("expires", 0)
+        if exp > time.time():
+            days_left = (exp - time.time()) / 86400
+            print(f"✓ Developer token valid ({days_left:.0f} days remaining)")
+        else:
+            print("✗ Developer token expired")
     else:
         print("✗ Developer token missing")
 
     # Check user token
-    user_token_file = config_dir / "music_user_token.json"
-    if user_token_file.exists():
+    if has_user_token():
         print("✓ Music user token exists")
     else:
         print("✗ Music user token missing")
@@ -167,13 +163,10 @@ def cmd_logout(args):
     """Sign out: clear the media-user-token + browser session so you can sign in
     with a different account. Leaves the developer token in place."""
     from . import browser
-    from .auth import get_config_dir
+    from .auth import secret_delete
 
-    cfg = get_config_dir()
-    for name in ("music_user_token.json", "harvested_token.json"):
-        p = cfg / name
-        if p.exists():
-            p.unlink()
+    for key in ("music_user_token", "harvested_token"):
+        secret_delete(key)
     browser.clear_session()
     print("✓ Signed out — user token and browser session cleared.")
     print("  Run `applemusic-mcp signin` to sign in (you can switch accounts now).")
@@ -185,22 +178,14 @@ def cmd_reset(args):
     session) for a clean slate or to drop a developer token for the web path.
     The downloaded .p8 key file is left in place."""
     from . import browser
-    from .auth import get_config_dir
+    from .auth import secret_delete
 
     if not args.force:
-        print("This removes developer_token.json, config.json, the user/web tokens, and the")
+        print("This removes the developer token, config.json, the user/web tokens, and the")
         print("browser session (your .p8 key file is kept). Re-run with --force to proceed.")
         return 1
-    cfg = get_config_dir()
-    for name in (
-        "developer_token.json",
-        "config.json",
-        "music_user_token.json",
-        "harvested_token.json",
-    ):
-        p = cfg / name
-        if p.exists():
-            p.unlink()
+    for key in ("developer_token", "config", "music_user_token", "harvested_token"):
+        secret_delete(key)
     browser.clear_session()
     print("✓ Reset complete. Run `applemusic-mcp signin` (web path) or `generate-token` (dev).")
     return 0
