@@ -307,7 +307,7 @@ discover(action="top_songs", artist="The Beatles")
 | `playback(action="control", control="play\|pause\|stop\|next\|previous\|seek")` | Transport controls | macOS app · or Chrome |
 | `playback(action="now_playing")` | Current track and player state | macOS app · or Chrome |
 | `playback(action="settings", volume=, shuffle_mode=, repeat=)` | Volume / shuffle / repeat | macOS app · or Chrome |
-| `playback(action="reveal", track=)` | Show a track in the Music app | macOS only |
+| `playback(action="reveal", track=)` | Show a track — opens it in the Music app (macOS) or in the Chrome web player (any OS) | macOS app · or Chrome |
 | `playback(action="airplay", device_name=)` | List or switch AirPlay devices | macOS only |
 
 `play` accepts ONE of `track`, `playlist`, `album`, or `url`; `shuffle=True` shuffles. **URL playback** handles albums, playlists (incl. personal `pl.u-`), and songs via `?i=`:
@@ -331,30 +331,22 @@ Browser playback opens a local Chrome window (needs a desktop session). Native m
 | `clear` | — | Empty the queue |
 | `autoplay` | `enabled` | Turn ∞ Autoplay on/off (keep playing similar music when the queue ends) |
 
-### Auth — conversational sign-in
+### `config(action=...)`
 
-Manage your Apple Music session by just asking — no terminal needed. (Claude Code's native `/mcp` auth UI is for remote servers; this local server exposes auth as a tool instead.)
+Settings, cache, and authentication — all in one tool. (AirPlay and reveal-in-app are `playback` actions; see above.)
 
-| `auth(action=...)` | Description |
+**Settings & cache:** `info`, `set-pref`, `list-storefronts`, `audit-log`, `clear-tracks`, `clear-exports`, `clear-audit-log`. All modifying operations are logged — view with `config(action="audit-log")`.
+
+**Auth — conversational sign-in, no terminal needed** (Claude Code's native `/mcp` auth UI is for remote servers; this local server exposes auth through this tool):
+
+| `config(action=...)` | Description |
 |---|---|
 | `status` | Which tokens are active, expiry / auto-renew, what works, and the next step |
 | `signin` | Open a browser to sign in (any OS) and capture your session |
 | `logout` | Sign out — clears your user token + browser session so you can switch accounts (needs `confirm=True`) |
 | `reset` | Wipe all credentials for a clean slate, or to drop a developer token for the web path (needs `confirm=True`) |
 
-Tokens **self-heal**: the developer token auto-renews from your `.p8` when ≤30 days out, and the web token re-fetches itself ≤15 days out — so you rarely re-authenticate. To **switch accounts**, run `logout` then `signin`. Same actions exist on the CLI: `applemusic-mcp signin | logout | reset | status`.
-
-### Utilities
-
-| Tool | Description | Platform |
-|------|-------------|----------|
-| `config(action=...)` | Preferences, storefronts, cache, audit log | All |
-| `airplay(device_name=...)` | List or switch AirPlay devices | macOS |
-| `reveal_in_music(track, artist)` | Show track in Music app | macOS |
-
-**Config actions:** `info`, `set-pref`, `list-storefronts`, `audit-log`, `clear-tracks`, `clear-exports`, `clear-audit-log`
-
-All modifying operations are logged — view with `config(action="audit-log")`.
+Tokens **self-heal**: the developer token auto-renews from your `.p8` when ≤30 days out, and the web token re-fetches itself ≤15 days out — so you rarely re-authenticate. To **switch accounts**, run `logout` then `signin`. The same actions exist on the CLI: `applemusic-mcp signin | logout | reset | status`.
 
 ### Output Format
 
@@ -430,8 +422,9 @@ applemusic-mcp signin          # Browser sign-in (no Apple Developer account)
 applemusic-mcp status          # Check tokens and connection
 applemusic-mcp logout          # Sign out (switch accounts: logout then signin)
 applemusic-mcp reset --force   # Wipe all credentials (keeps your .p8 key file)
+applemusic-mcp init            # Scaffold config.json for the developer-token path
 applemusic-mcp generate-token  # New developer token (180 days; auto-renews on use)
-applemusic-mcp authorize       # Browser auth for user token
+applemusic-mcp authorize       # Browser auth for a user token (developer-token path)
 applemusic-mcp serve           # Run MCP server (auto-launched by your MCP client)
 ```
 

@@ -118,7 +118,22 @@ def test_playback_native_pin_on_non_mac_gives_clear_message(monkeypatch):
     assert "browser" in out.lower() and "signin" in out.lower()
 
 
-def test_playback_reveal_macos_only(monkeypatch):
+def test_playback_reveal_in_browser(monkeypatch):
+    """reveal now works cross-platform: in browser mode it opens the track's
+    page in Chrome instead of being macOS-only."""
+    import applemusic_mcp.browser as browser
+
     monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+    monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+    monkeypatch.setattr(
+        server,
+        "_resolve_catalog_track_itunes",
+        lambda n, a="": {"url": "https://music.apple.com/us/song/x/1"},
+    )
+    seen = {}
+    monkeypatch.setattr(
+        browser, "reveal_url", lambda u: seen.update(url=u) or (True, f"Showing in browser: {u}")
+    )
     out = server.playback(action="reveal", track="X")
-    assert "macos" in out.lower() or "only" in out.lower()
+    assert "/song/x/1" in seen["url"]
+    assert "browser" in out.lower()

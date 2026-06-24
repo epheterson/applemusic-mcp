@@ -460,6 +460,26 @@ def play_url(music_url: str) -> tuple[bool, str]:
         return False, f"Browser play-by-URL failed: {exc}"
 
 
+def reveal_url(music_url: str) -> tuple[bool, str]:
+    """Open an Apple Music URL in the web-player window so the user can see the
+    track — the cross-platform counterpart to macOS 'reveal in Music.app'. Does
+    not start playback (it just navigates the page)."""
+    if "music.apple.com" not in (music_url or ""):
+        return False, f"Not an Apple Music URL: {music_url}"
+
+    def run(page):
+        page.goto(music_url, wait_until="domcontentloaded")
+        return music_url
+
+    try:
+        _engine.submit(run)
+        return True, f"Showing in browser: {music_url}"
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Browser reveal failed: {exc}"
+
+
 def playback_control(action: str, seconds: float = 0) -> tuple[bool, str]:
     """play | pause | stop | next | previous | seek on the browser web player."""
 

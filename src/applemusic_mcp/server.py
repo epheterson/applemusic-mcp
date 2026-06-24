@@ -6026,8 +6026,19 @@ def config(
     value: Optional[bool] = None,
     string_value: str = "",
     limit: int = 20,
+    confirm: bool = False,
 ) -> str:
-    """Config and cache. Actions: info, auth-status, set-pref, list-storefronts, audit-log, clear-tracks, clear-exports, clear-audit-log."""
+    """Config, cache, and authentication.
+
+    Settings/cache actions: info, set-pref, list-storefronts, audit-log,
+    clear-tracks, clear-exports, clear-audit-log.
+
+    Auth actions (no terminal needed — just ask):
+    - auth-status (or status): which tokens are active, expiry/auto-renew, what works, next step
+    - signin: open a browser to sign in (any OS) and capture your session
+    - logout: sign out — clears your user token + browser session so you can switch accounts (needs confirm=True)
+    - reset: wipe ALL credentials for a clean slate or to drop a dev token for the web path; keeps your .p8 (needs confirm=True)
+    """
     try:
         action = action.lower()
 
@@ -6277,12 +6288,16 @@ def config(
 
             return "\n".join(output)
 
-        # === AUTH STATUS ===
-        if action in ("auth-status", "auth_status"):
-            return _config_auth_status()
+        # === AUTH (status / signin / logout / reset) ===
+        if action in ("auth-status", "auth_status", "status", "signin", "login", "logout", "reset"):
+            sub = "status" if action in ("auth-status", "auth_status", "status") else action
+            return _auth_action(sub, confirm)
 
         # === UNKNOWN ACTION ===
-        valid_actions = "info, set-pref, list-storefronts, audit-log, clear-tracks, clear-exports, clear-audit-log, auth-status"
+        valid_actions = (
+            "info, set-pref, list-storefronts, audit-log, clear-tracks, clear-exports, "
+            "clear-audit-log, status, signin, logout, reset"
+        )
         return f"Error: Unknown action '{action}'. Valid: {valid_actions}"
 
     except Exception as e:
@@ -6668,16 +6683,8 @@ def _clear_credentials(*names: str) -> list[str]:
     return removed
 
 
-@mcp.tool()
-def auth(action: str = "status", confirm: bool = False) -> str:
-    """Manage your Apple Music sign-in — no terminal needed; just ask.
-
-    Actions:
-    - status (default): which tokens are active, expiry/auto-renew, what works, and the next step
-    - signin: open a browser to sign in to Apple Music (any OS) and capture your session — also how you switch accounts (run logout first, then signin)
-    - logout: sign out — clears your user token + browser session so you can sign in with a different account. Your library/playlists are untouched. Needs confirm=True.
-    - reset: wipe ALL credentials (developer token, config, user/web tokens, browser session) for a clean slate, or to drop an Apple Developer token and fall back to the free web path. Your downloaded .p8 key file is left in place. Needs confirm=True.
-    """
+def _auth_action(action: str = "status", confirm: bool = False) -> str:
+    """Auth management, exposed through ``config`` (status/signin/logout/reset)."""
     action = action.lower().strip().replace("-", "_")
 
     if action in ("status", "info"):
@@ -6687,7 +6694,7 @@ def auth(action: str = "status", confirm: bool = False) -> str:
         nxt = (
             "✅ Ready — catalog, playlists, add, and rate all work."
             if ready
-            else "⚠️ Not signed in yet — run auth(action='signin') to finish setup."
+            else "⚠️ Not signed in yet — run config(action='signin') to finish setup."
         )
         return f"{body}\nMode: {mode}\n\n{nxt}"
 
@@ -6703,7 +6710,7 @@ def auth(action: str = "status", confirm: bool = False) -> str:
         if msg == "still-waiting":
             return (
                 "A Chrome window is open on music.apple.com — finish signing in "
-                "(Apple ID + 2FA), then run auth(action='signin') again and I'll capture "
+                "(Apple ID + 2FA), then run config(action='signin') again and I'll capture "
                 "your session."
             )
         return (
@@ -6717,8 +6724,8 @@ def auth(action: str = "status", confirm: bool = False) -> str:
             return (
                 "This signs you out: it clears your Apple Music user token and the browser "
                 "session (your library and playlists are untouched). Afterwards, run "
-                "auth(action='signin') to sign back in — with a different account if you "
-                "like. To proceed, call auth(action='logout', confirm=True)."
+                "config(action='signin') to sign back in — with a different account if you "
+                "like. To proceed, call config(action='logout', confirm=True)."
             )
         removed = _clear_credentials("music_user_token.json", "harvested_token.json")
         from . import browser
@@ -6727,7 +6734,7 @@ def auth(action: str = "status", confirm: bool = False) -> str:
         audit_log.log_action("logout", {"removed": removed})
         return (
             "✓ Signed out — user token and browser session cleared. Run "
-            "auth(action='signin') to sign in (you can switch accounts now)."
+            "config(action='signin') to sign in (you can switch accounts now)."
         )
 
     if action == "reset":
@@ -6737,7 +6744,7 @@ def auth(action: str = "status", confirm: bool = False) -> str:
                 "token, and the browser session. Your downloaded .p8 key file is left in "
                 "place. Use it for a clean slate, or to drop an Apple Developer token and "
                 "fall back to the free web path. To proceed, call "
-                "auth(action='reset', confirm=True)."
+                "config(action='reset', confirm=True)."
             )
         removed = _clear_credentials(
             "developer_token.json",
@@ -6750,7 +6757,7 @@ def auth(action: str = "status", confirm: bool = False) -> str:
         browser.clear_session()
         audit_log.log_action("reset", {"removed": removed})
         return (
-            "✓ Reset complete. Run auth(action='signin') for the free web path, or set up an "
+            "✓ Reset complete. Run config(action='signin') for the free web path, or set up an "
             "Apple Developer token with `applemusic-mcp generate-token`."
         )
 
@@ -6939,11 +6946,22 @@ def playback(
             return _PLAYBACK_NEEDS_BROWSER
         return _playback_settings(volume, shuffle_mode, repeat)
     elif action == "reveal":
+        name = track_name or track
+        if not name and not url:
+            return "Error: track_name, track, or url required for reveal action"
+        if _use_browser_playback():
+            from . import browser
+
+            target = url
+            if not target:
+                resolved = _resolve_catalog_track_itunes(name, artist)
+                if not resolved:
+                    return f"Error: '{name}' not found in catalog"
+                target = resolved["url"]
+            ok, msg = browser.reveal_url(target)
+            return msg if ok else f"Error: {msg}"
         if err := _macos_only("reveal"):
             return err
-        name = track_name or track
-        if not name:
-            return "Error: track_name or track required for reveal action"
         return _playback_reveal(name, artist)
     elif action == "airplay":
         if err := _macos_only("airplay"):
