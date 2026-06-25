@@ -405,6 +405,25 @@ def move_playlist_to_folder(playlist_id: str, folder_id: str = ROOT_FOLDER) -> t
 # --- ratings (love / dislike) ----------------------------------------------
 
 
+def get_rating(catalog_id: str, content_type: str = "songs") -> Optional[int]:
+    """Current rating for a catalog item: 1 (loved), -1 (disliked), or None if
+    unrated. Lets a caller snapshot a rating before changing it and restore it
+    afterward (the live test gate uses this to leave no residue). Returns None
+    on any error rather than raising."""
+    try:
+        r = requests.get(
+            f"{AMP}/me/ratings/{content_type}/{catalog_id}", headers=_headers(), timeout=TIMEOUT
+        )
+        if r.status_code != 200:
+            return None  # 404 = unrated
+        data = r.json().get("data", [])
+        if not data:
+            return None
+        return data[0].get("attributes", {}).get("value")
+    except Exception:
+        return None
+
+
 def rate(catalog_id: str, value: int, content_type: str = "songs") -> tuple[bool, str]:
     """Love (value=1) or dislike (value=-1) a catalog item. value=0 clears."""
     try:

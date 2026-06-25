@@ -224,3 +224,20 @@ def test_401_reason_hints_signin():
     ok, msg = amp_api.delete_playlist("p.x")
     assert ok is False
     assert "signin" in msg.lower()
+
+
+@responses.activate
+def test_get_rating_returns_value():
+    responses.add(
+        responses.GET,
+        f"{amp_api.AMP}/me/ratings/songs/123",
+        json={"data": [{"attributes": {"value": 1}}]},
+        status=200,
+    )
+    assert amp_api.get_rating("123") == 1
+
+
+@responses.activate
+def test_get_rating_none_when_unrated():
+    responses.add(responses.GET, f"{amp_api.AMP}/me/ratings/songs/123", status=404)
+    assert amp_api.get_rating("123") is None

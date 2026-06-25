@@ -52,9 +52,7 @@ fi
 # Guard: the gate is only satisfied if the core mutation flows actually PASSED.
 # A run where they SKIPPED (no tokens / storefront didn't resolve) but pytest
 # still exited 0 must NOT read as green — that's a false-green worse than no gate.
-for t in test_playlist_add_remove_lifecycle test_delete_playlist_on_amp_host \
-         test_folder_create_move_delete test_love_then_clear \
-         test_add_then_remove_from_library; do
+for t in test_full_mutation_lifecycle test_rating_roundtrip; do
   if ! echo "$out" | grep -q "$t PASSED"; then
     echo
     echo "❌ $t did not PASS (skipped or failed) — gate NOT satisfied."
