@@ -178,10 +178,7 @@ class TrackCache:
             metadata["album"] = album
 
         # Cache by all provided IDs
-        ids_to_cache = [
-            id for id in [persistent_id, library_id, catalog_id]
-            if id
-        ]
+        ids_to_cache = [id for id in [persistent_id, library_id, catalog_id] if id]
 
         primary_id = ids_to_cache[0] if ids_to_cache else None
 

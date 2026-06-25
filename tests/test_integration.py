@@ -34,9 +34,9 @@ TEST_PLAYLIST = "🧪 Integration Test Playlist"
 
 def setup_test_playlist():
     """Create test playlist and return its name."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("SETUP: Creating test playlist")
-    print("="*80)
+    print("=" * 80)
 
     # Delete if exists
     success, _ = asc.delete_playlist(TEST_PLAYLIST)
@@ -54,9 +54,9 @@ def setup_test_playlist():
 
 def cleanup_test_playlist():
     """Delete test playlist."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("CLEANUP: Removing test playlist")
-    print("="*80)
+    print("=" * 80)
 
     success, result = asc.delete_playlist(TEST_PLAYLIST)
     if success:
@@ -67,9 +67,9 @@ def cleanup_test_playlist():
 
 def test_partial_matching_playlist():
     """Test that partial playlist names work (e.g., 'Jack & Norah' finds '🤟👶🎸 Jack & Norah')."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST 1: Partial Playlist Name Matching")
-    print("="*80)
+    print("=" * 80)
 
     # Try finding Jack & Norah playlist with partial name
     success, tracks = asc.get_playlist_tracks("Jack & Norah")
@@ -88,15 +88,13 @@ def test_partial_matching_playlist():
 
 def test_partial_matching_track_removal():
     """Test the critical 'If I Had a Hammer' partial matching bug fix."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST 2: Partial Track Name Matching in remove_from_playlist")
-    print("="*80)
+    print("=" * 80)
 
     # First, add a track with a long name to our test playlist
     success, _ = asc.add_track_to_playlist(
-        TEST_PLAYLIST,
-        "What a Wonderful World",  # Common track
-        "Louis Armstrong"
+        TEST_PLAYLIST, "What a Wonderful World", "Louis Armstrong"  # Common track
     )
 
     if not success:
@@ -107,9 +105,7 @@ def test_partial_matching_track_removal():
 
     # Now try to remove it with partial name (should work with 'contains')
     success, result = asc.remove_track_from_playlist(
-        TEST_PLAYLIST,
-        track_name="What a Wonderful",  # Partial name
-        artist="Louis Armstrong"
+        TEST_PLAYLIST, track_name="What a Wonderful", artist="Louis Armstrong"  # Partial name
     )
 
     if success and "Removed" in result:
@@ -124,9 +120,9 @@ def test_partial_matching_track_removal():
 
 def test_array_removal():
     """Test removing multiple tracks at once (comma-separated)."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST 3: Array-based Track Removal (Server Function)")
-    print("="*80)
+    print("=" * 80)
 
     # Add same tracks multiple times to test array removal
     tracks_to_add = [
@@ -162,9 +158,7 @@ def test_array_removal():
         # The server function returns a string result, not (bool, str) tuple
         # v0.3.0: Uses unified 'track' parameter instead of 'track_name'
         result = server_remove_from_playlist(
-            playlist=TEST_PLAYLIST,
-            track="Yesterday,Hey Jude",
-            artist="The Beatles"
+            playlist=TEST_PLAYLIST, track="Yesterday,Hey Jude", artist="The Beatles"
         )
         print(f"  Result: {result}")
 
@@ -177,22 +171,19 @@ def test_array_removal():
     except Exception as e:
         print(f"✗ FAIL: Exception during array removal: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
 
 def test_id_based_removal():
     """Test removing tracks by persistent ID."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST 4: ID-based Track Removal")
-    print("="*80)
+    print("=" * 80)
 
     # Add a track and get its ID
-    success, _ = asc.add_track_to_playlist(
-        TEST_PLAYLIST,
-        "Imagine",
-        "John Lennon"
-    )
+    success, _ = asc.add_track_to_playlist(TEST_PLAYLIST, "Imagine", "John Lennon")
 
     if not success:
         print("⚠ Could not add test track, skipping ID removal test")
@@ -227,10 +218,7 @@ def test_id_based_removal():
     print(f"✓ Found track ID: {track_id}")
 
     # Remove by ID
-    success, result = asc.remove_track_from_playlist(
-        TEST_PLAYLIST,
-        track_id=track_id
-    )
+    success, result = asc.remove_track_from_playlist(TEST_PLAYLIST, track_id=track_id)
 
     if success and "Removed" in result:
         print(f"✓ PASS: ID-based removal works")
@@ -244,9 +232,9 @@ def test_id_based_removal():
 
 def test_preferences_loading():
     """Test that user preferences load correctly."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST 5: User Preferences System")
-    print("="*80)
+    print("=" * 80)
 
     prefs = auth.get_user_preferences()
 
@@ -255,7 +243,7 @@ def test_preferences_loading():
     print(f"  clean_only: {prefs['clean_only']}")
 
     # Check that it returns a dict with the right keys
-    required_keys = ['fetch_explicit', 'clean_only']
+    required_keys = ["fetch_explicit", "clean_only"]
     has_all_keys = all(k in prefs for k in required_keys)
 
     if has_all_keys:
@@ -268,12 +256,13 @@ def test_preferences_loading():
 
 def test_search_library_parameter():
     """Test that search_library uses 'types' parameter (not 'search_type')."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST 6: search_library Parameter Standardization")
-    print("="*80)
+    print("=" * 80)
 
     # This is more of a code inspection test - check the function signature
     import inspect
+
     sig = inspect.signature(asc.search_library)
     params = list(sig.parameters.keys())
 
@@ -292,9 +281,9 @@ def test_search_library_parameter():
 
 def test_copy_playlist_with_name():
     """Test that playlist(action='copy') supports unified 'source' parameter (auto-detects ID vs name)."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST 7: playlist copy action — Unified Source Parameter")
-    print("="*80)
+    print("=" * 80)
 
     # v0.6.0 consolidated tools: copy_playlist → playlist(action="copy", source=..., new_name=...)
     import inspect
@@ -326,9 +315,9 @@ def test_copy_playlist_with_name():
 
 def review_tool_outputs():
     """Review actual tool outputs for clarity and efficiency."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("OUTPUT REVIEW: Checking tool response clarity")
-    print("="*80)
+    print("=" * 80)
 
     # Test 1: Get playlist tracks output
     print("\n--- get_playlist_tracks output ---")
@@ -338,15 +327,12 @@ def review_tool_outputs():
         if tracks:
             print(f"Sample track data: {json.dumps(tracks[0], indent=2)}")
             # Check for explicit marker if present
-            if any('[Explicit]' in str(t.get('name', '')) for t in tracks):
+            if any("[Explicit]" in str(t.get("name", "")) for t in tracks):
                 print("✓ Explicit markers present in output")
 
     # Test 2: remove_from_playlist output clarity
     print("\n--- remove_from_playlist output (empty playlist) ---")
-    success, result = asc.remove_track_from_playlist(
-        TEST_PLAYLIST,
-        track_name="Nonexistent Track"
-    )
+    success, result = asc.remove_track_from_playlist(TEST_PLAYLIST, track_name="Nonexistent Track")
     print(f"Success: {success}")
     print(f"Result: {result}")
     if "not found" in result.lower():
@@ -356,7 +342,8 @@ def review_tool_outputs():
     print("\n--- Checking if config tool exists (renamed from system) ---")
     try:
         from applemusic_mcp import server
-        if hasattr(server, 'config'):
+
+        if hasattr(server, "config"):
             print("✓ config tool exists")
         else:
             print("✗ config tool not found")
@@ -366,10 +353,10 @@ def review_tool_outputs():
 
 def main():
     """Run all integration tests."""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("APPLE MUSIC MCP - INTEGRATION TEST SUITE")
     print("Testing v0.2.5 asymmetry fixes on real library")
-    print("="*80)
+    print("=" * 80)
 
     results = {}
 
@@ -378,13 +365,13 @@ def main():
         setup_test_playlist()
 
         # Run tests
-        results['partial_playlist'] = test_partial_matching_playlist()
-        results['partial_track'] = test_partial_matching_track_removal()
-        results['array_removal'] = test_array_removal()
-        results['id_removal'] = test_id_based_removal()
-        results['preferences'] = test_preferences_loading()
-        results['search_param'] = test_search_library_parameter()
-        results['copy_name'] = test_copy_playlist_with_name()
+        results["partial_playlist"] = test_partial_matching_playlist()
+        results["partial_track"] = test_partial_matching_track_removal()
+        results["array_removal"] = test_array_removal()
+        results["id_removal"] = test_id_based_removal()
+        results["preferences"] = test_preferences_loading()
+        results["search_param"] = test_search_library_parameter()
+        results["copy_name"] = test_copy_playlist_with_name()
 
         # Review outputs
         review_tool_outputs()
@@ -394,9 +381,9 @@ def main():
         cleanup_test_playlist()
 
     # Summary
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST SUMMARY")
-    print("="*80)
+    print("=" * 80)
 
     passed = sum(1 for v in results.values() if v)
     total = len(results)

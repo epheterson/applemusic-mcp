@@ -20,10 +20,7 @@ class TestLogAction:
 
     def test_logs_basic_action(self, mock_audit_log_for_all_tests):
         """Should log a basic action with timestamp and details."""
-        audit_log.log_action(
-            "add_to_library",
-            {"tracks": ["Song - Artist"], "mode": "catalog_ids"}
-        )
+        audit_log.log_action("add_to_library", {"tracks": ["Song - Artist"], "mode": "catalog_ids"})
 
         assert mock_audit_log_for_all_tests.exists()
         with open(mock_audit_log_for_all_tests) as f:
@@ -40,7 +37,7 @@ class TestLogAction:
         audit_log.log_action(
             "delete_playlist",
             {"name": "My Playlist", "track_count": 10},
-            undo_info={"playlist_name": "My Playlist", "tracks": ["Song1", "Song2"]}
+            undo_info={"playlist_name": "My Playlist", "tracks": ["Song1", "Song2"]},
         )
 
         with open(mock_audit_log_for_all_tests) as f:
@@ -108,7 +105,7 @@ class TestGetRecentEntries:
         """Should skip lines that are not valid JSON."""
         with open(mock_audit_log_for_all_tests, "w") as f:
             f.write('{"action": "valid", "details": {}}\n')
-            f.write('not valid json\n')
+            f.write("not valid json\n")
             f.write('{"action": "also_valid", "details": {}}\n')
 
         result = audit_log.get_recent_entries()
@@ -128,11 +125,13 @@ class TestFormatEntriesForDisplay:
 
     def test_formats_add_to_library(self):
         """Should format add_to_library entries correctly."""
-        entries = [{
-            "timestamp": "2025-01-15T12:00:00+00:00",
-            "action": "add_to_library",
-            "details": {"tracks": ["Song A - Artist A", "Song B - Artist B"]}
-        }]
+        entries = [
+            {
+                "timestamp": "2025-01-15T12:00:00+00:00",
+                "action": "add_to_library",
+                "details": {"tracks": ["Song A - Artist A", "Song B - Artist B"]},
+            }
+        ]
 
         result = audit_log.format_entries_for_display(entries)
 
@@ -142,11 +141,13 @@ class TestFormatEntriesForDisplay:
 
     def test_formats_remove_from_playlist(self):
         """Should format remove_from_playlist entries correctly."""
-        entries = [{
-            "timestamp": "2025-01-15T12:00:00+00:00",
-            "action": "remove_from_playlist",
-            "details": {"playlist": "My Playlist", "tracks": ["Removed Song"]}
-        }]
+        entries = [
+            {
+                "timestamp": "2025-01-15T12:00:00+00:00",
+                "action": "remove_from_playlist",
+                "details": {"playlist": "My Playlist", "tracks": ["Removed Song"]},
+            }
+        ]
 
         result = audit_log.format_entries_for_display(entries)
 
@@ -155,11 +156,13 @@ class TestFormatEntriesForDisplay:
 
     def test_formats_create_playlist(self):
         """Should format create_playlist entries correctly."""
-        entries = [{
-            "timestamp": "2025-01-15T12:00:00+00:00",
-            "action": "create_playlist",
-            "details": {"name": "New Playlist", "playlist_id": "p.abc123"}
-        }]
+        entries = [
+            {
+                "timestamp": "2025-01-15T12:00:00+00:00",
+                "action": "create_playlist",
+                "details": {"name": "New Playlist", "playlist_id": "p.abc123"},
+            }
+        ]
 
         result = audit_log.format_entries_for_display(entries)
 
@@ -169,11 +172,13 @@ class TestFormatEntriesForDisplay:
 
     def test_formats_delete_playlist(self):
         """Should format delete_playlist entries correctly."""
-        entries = [{
-            "timestamp": "2025-01-15T12:00:00+00:00",
-            "action": "delete_playlist",
-            "details": {"name": "Deleted Playlist", "track_count": 15}
-        }]
+        entries = [
+            {
+                "timestamp": "2025-01-15T12:00:00+00:00",
+                "action": "delete_playlist",
+                "details": {"name": "Deleted Playlist", "track_count": 15},
+            }
+        ]
 
         result = audit_log.format_entries_for_display(entries)
 
@@ -183,11 +188,13 @@ class TestFormatEntriesForDisplay:
 
     def test_formats_rating(self):
         """Should format rating entries correctly."""
-        entries = [{
-            "timestamp": "2025-01-15T12:00:00+00:00",
-            "action": "rating",
-            "details": {"track": "Great Song", "type": "love", "value": ""}
-        }]
+        entries = [
+            {
+                "timestamp": "2025-01-15T12:00:00+00:00",
+                "action": "rating",
+                "details": {"track": "Great Song", "type": "love", "value": ""},
+            }
+        ]
 
         result = audit_log.format_entries_for_display(entries)
 
@@ -197,11 +204,13 @@ class TestFormatEntriesForDisplay:
 
     def test_truncates_long_track_lists(self):
         """Should truncate track lists with more than 5 entries."""
-        entries = [{
-            "timestamp": "2025-01-15T12:00:00+00:00",
-            "action": "add_to_library",
-            "details": {"tracks": [f"Song {i}" for i in range(10)]}
-        }]
+        entries = [
+            {
+                "timestamp": "2025-01-15T12:00:00+00:00",
+                "action": "add_to_library",
+                "details": {"tracks": [f"Song {i}" for i in range(10)]},
+            }
+        ]
 
         result = audit_log.format_entries_for_display(entries)
 
