@@ -119,12 +119,18 @@ class _BrowserEngine:
         launch = self._pw.chromium.launch_persistent_context
         user_data_dir = str(PROFILE_DIR)
         args = ["--no-first-run", "--no-default-browser-check"]
+        # Playwright disables Chrome's component updater by default, which stops
+        # the Widevine CDM from registering -> no DRM -> MusicKit silently plays
+        # only 90s previews (and playlists error "No DRM KeySystem available").
+        # Un-removing that default is what unlocks full protected playback.
+        keep_widevine = ["--disable-component-update"]
         try:
             ctx = launch(
                 user_data_dir,
                 channel="chrome",
                 headless=False,
                 args=args,
+                ignore_default_args=keep_widevine,
             )
             self._using_chrome = True
             return ctx
@@ -133,6 +139,7 @@ class _BrowserEngine:
                 user_data_dir,
                 headless=False,
                 args=args,
+                ignore_default_args=keep_widevine,
             )
             self._using_chrome = False
             return ctx
