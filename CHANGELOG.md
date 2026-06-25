@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2026-06-23
+## [1.0.0] - 2026-06-24
 
 The cross-platform milestone: **full Apple Music control on macOS, Windows, and
 Linux with no $99 Apple Developer account** — library, playlists, *and playback*.
@@ -39,6 +39,25 @@ Linux with no $99 Apple Developer account** — library, playlists, *and playbac
   out. Clear, escalating expiry messaging for the keyless case.
 - **MCP tool annotations** (read-only / destructive / open-world hints) on all
   tools, so clients can auto-approve reads and warn before destructive ops.
+
+### Fixed
+
+- **Browser playback was preview-only.** Playwright's default
+  `--disable-component-update` flag stopped Chrome from registering the Widevine
+  CDM, so MusicKit silently served ~30s previews and playlists errored "No DRM
+  KeySystem available." Restoring component updates unlocks full-track DRM
+  playback in the managed Chrome window — no CDP connection required.
+- **Native catalog playback didn't actually play.** AppleScript's AXPress
+  (`click button …`) returns success but never fires Music.app's custom Play
+  control or track rows, so "play this catalog song" opened the page and did
+  nothing. Now driven by real CoreGraphics mouse events: a click on the album /
+  playlist Play button, or a name-matched double-click on the specific `?i=`
+  track row. Needs Accessibility permission.
+- **No more catalog-play dead end.** In `auto`/`browser` playback, a failed
+  native UI play falls back to the Chrome web player; pinned `native` keeps it
+  Music-app-only and returns an actionable message (grant Accessibility, set
+  `playback="browser"`, or `signin`).
+- **Playback `repeat` accepts `none`/`off`** on both engines.
 
 ### Security
 

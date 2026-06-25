@@ -52,6 +52,8 @@ Pick how it runs with the `mode` preference — just ask ("use API mode") or set
 
 **Browser playback and the queue need Google Chrome** (for DRM audio) and a real desktop session — they open a local Chrome window and won't run on a headless server. Everything in the **API** rows runs anywhere with no browser and no Music app.
 
+<sub>Full per-capability breakdown of what runs on each engine and why: **[docs/CAPABILITIES.md](docs/CAPABILITIES.md)**.</sub>
+
 ---
 
 ## Quick Start
@@ -248,7 +250,7 @@ playback(action="play", url="https://music.apple.com/us/album/ok-computer/109786
 playback(action="play", url="https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb")
 ```
 
-Browser playback opens a local Chrome window (needs a desktop session). Native macOS URL playback uses UI scripting (display + Accessibility); the cursor may briefly move for `?i=` selection.
+Browser playback opens a local Chrome window (needs a desktop session). Native macOS catalog playback uses UI scripting — it brings Music.app to the front and **moves the cursor** to click Play, so it needs **Accessibility permission** (System Settings → Privacy & Security → Accessibility) for your terminal / MCP host. In `auto` mode, if the native click can't start playback, it falls back to the Chrome web player; pin `playback="native"` to keep it Music-app-only.
 
 **Up Next queue** — `queue(action=...)` drives the web player's play queue through Chrome, on any OS.
 
@@ -306,7 +308,7 @@ Library, catalog, add/rate, and the full playlist + folder surface all work over
 ### Both Platforms
 - **Brand-new playlists take a moment to be addable** over the API (cloud propagation); existing ones are immediate.
 - **Sign-in persists but can expire** — if catalog actions start failing, re-run `applemusic-mcp signin`.
-- **macOS playback/play-from-URL needs an unlocked screen** (it drives Music.app via System Events); the MCP returns a clear error if locked.
+- **macOS playback/play-from-URL needs an unlocked screen and Accessibility permission** (it drives Music.app via System Events and moves the cursor to click); grant it under System Settings → Privacy & Security → Accessibility. The MCP returns a clear error if locked or if the click can't start playback.
 - **A few playlists silently revert AppleScript edits** ([known Music.app bug](https://www.macscripter.net/t/add-current-track-from-apple-music-to-playlist/72058)); the MCP detects the rollback and surfaces it.
 
 ---
@@ -316,6 +318,7 @@ Library, catalog, add/rate, and the full playlist + folder surface all work over
 | Problem | Solution |
 |---------|----------|
 | 401 Unauthorized | `applemusic-mcp signin` (web path) or `applemusic-mcp authorize` (dev-token path) |
+| macOS "couldn't auto-play it" | Grant Accessibility (System Settings → Privacy & Security → Accessibility), or set `playback="browser"` to play in Chrome |
 | "Cannot edit playlist" | Use `copy_playlist` for editable copy |
 | Token expiring | `applemusic-mcp generate-token` |
 | Check everything | `applemusic-mcp status` |
