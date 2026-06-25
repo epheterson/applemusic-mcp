@@ -43,6 +43,11 @@ dependencies = [
     # Linux Secret Service). Falls back to a 0600 file when no backend is available
     # (e.g. headless servers), so this never blocks the API path.
     "keyring>=24.0.0",
+    # macOS only: Quartz powers the canonical screen-locked / no-active-console
+    # detection (CGSessionCopyCurrentDictionary). Without it that check silently
+    # degrades to an AppleScript heuristic. macOS-gated so it never touches
+    # Windows/Linux installs.
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]
@@ -77,8 +82,9 @@ select = ["E", "F", "I", "W"]
 [tool.pytest.ini_options]
 markers = [
     "slow: marks tests as slow (live AppleScript / Music.app I/O); deselect with '-m \"not slow\"'",
-    "ui: marks tests that drive Music.app UI automation; require TEST_UI=1 + visible Music.app",
+    "ui: marks the live API pre-release gate (real account mutations); require TEST_API=1",
+    "ui_live: marks live Music.app UI-automation tests (native playback / catalog deep-link / UI search); require TEST_UI=1 + a signed-in, unlocked Mac with Accessibility granted",
 ]
-# Default: skip slow + ui tests unless explicitly opted in. Local pre-commit
+# Default: skip slow + live gates unless explicitly opted in. Local pre-commit
 # runs the fast subset; CI and `make test-all` run everything.
-addopts = "-m 'not slow and not ui'"
+addopts = "-m 'not slow and not ui and not ui_live'"

@@ -41,10 +41,26 @@ It refuses to pass if the core live tests **skipped** rather than passed (a
 half-ready environment that skips everything is a false green).
 
 This gate is cross-platform — it no longer needs macOS or the local Music.app.
-The native (AppleScript) paths still only run on macOS; validate those with
-`make test-all` on a signed-in Mac when you change them.
 
-## Only when `make preflight` is green:
+## Native UI gate — `make preflight-ui` (UI-touching releases)
+
+`make preflight` validates the API engine. It does **not** exercise the native
+Music.app UI-automation paths (catalog deep-link playback via CoreGraphics, UI
+catalog search, transport controls) — those are version-fragile and have no CI
+coverage. Any release that changes `applescript.py` UI logic or the native
+playback flow must **also** pass `make preflight-ui` on **both** support
+machines:
+
+- the **iMac** (macOS 15 / Music 1.5)
+- the **mini** (macOS 26 / Music 26)
+
+Run it from an **unlocked, active console session** (Screen Sharing's GUI login,
+**not** SSH — synthetic mouse clicks need a real WindowServer session), signed
+into Apple Music, with Accessibility granted. It plays **muted** and pauses after
+each test. Like the API gate, it refuses to read as green if the core playback
+tests **skipped** (a locked screen skips everything — that is not validation).
+
+## Only when `make preflight` is green (plus `make preflight-ui` on both Macs for UI changes):
 
 1. Bump the version in **all three** places (they must match or the lock/release
    drifts): `pyproject.toml`, `src/applemusic_mcp/__init__.py`, and the
