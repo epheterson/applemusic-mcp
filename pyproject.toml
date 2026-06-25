@@ -56,6 +56,7 @@ dev = [
     "pytest-mock>=3.0.0",
     "pytest-xdist>=3.0.0",  # parallel test execution: pytest -n auto
     "responses>=0.23.0",
+    "pytest-cov>=4.1.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
 ]
@@ -88,3 +89,21 @@ markers = [
 # Default: skip slow + live gates unless explicitly opted in. Local pre-commit
 # runs the fast subset; CI and `make test-all` run everything.
 addopts = "-m 'not slow and not ui and not ui_live'"
+
+[tool.coverage.run]
+source = ["applemusic_mcp"]
+branch = false
+
+[tool.coverage.report]
+# Lines that are genuinely impossible to exercise in a unit test (live Chrome
+# owner thread, raw network I/O, process entry points) carry an inline
+# `# pragma: no cover` and are validated by the live gates instead. With those
+# excluded, the deterministic surface must stay fully covered.
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "@(abc\\.)?abstractmethod",
+]
+fail_under = 100
+show_missing = true
