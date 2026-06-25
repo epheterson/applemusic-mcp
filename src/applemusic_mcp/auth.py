@@ -730,6 +730,8 @@ def run_auth_server(port: int = 8765) -> Optional[str]:
     if captured_token["value"]:
         print("✓ Token saved successfully!")
         return captured_token["value"]
-    else:
+    else:  # pragma: no cover - unreachable: the serve loop only exits via
+        # server_should_stop, which is set ONLY alongside capturing the token
+        # (do_POST), so reaching here would require a captured-but-falsy token.
         print("No token received.")
         return None

@@ -890,7 +890,9 @@ def _cli_add(song_id: str) -> int:
     return 0 if ok else 1
 
 
-if __name__ == "__main__":
+if (
+    __name__ == "__main__"
+):  # pragma: no cover - CLI entry: runs only as a script and launches a real Chrome
     import sys
 
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""

@@ -2,9 +2,39 @@
 
 import json
 import os
+import socket
 from unittest.mock import patch
 
 import pytest
+
+_real_socket_connect = socket.socket.connect
+_LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "0.0.0.0"}
+
+
+@pytest.fixture(autouse=True)
+def _block_external_network(request):
+    """Hard guarantee: no test outside the explicit live gates (`ui` / `ui_live`)
+    may open a real external socket. Apple's API is external, so this proves the
+    mocked suite never touches the real account — a stray un-mocked amp-api call
+    raises instead of silently hammering the library. Localhost is allowed (the
+    auth server tests bind a real loopback socket)."""
+    if request.node.get_closest_marker("ui") or request.node.get_closest_marker("ui_live"):
+        yield
+        return
+
+    def _guard(self, address, *args, **kwargs):
+        host = address[0] if isinstance(address, tuple) else address
+        if host not in _LOCAL_HOSTS:
+            raise RuntimeError(
+                f"Blocked a real network connection to {host!r} in a non-live test "
+                "— mock the boundary (responses / monkeypatch). Real API calls only "
+                "belong in the TEST_API / TEST_UI live gates."
+            )
+        return _real_socket_connect(self, address, *args, **kwargs)
+
+    with patch.object(socket.socket, "connect", _guard):
+        yield
+
 
 # Tests use file-based token storage (not the OS keychain) for determinism and so
 # the fixtures that write token JSON files keep working. The keychain path is
@@ -69,7 +99,8 @@ def _sweep_test_debris():
 
     # Prefix-match sweep over folders then user playlists, in one shell-out.
     conds = " or ".join(f'(pn starts with "{p}")' for p in _TEST_NAME_PREFIXES)
-    asc.run_applescript(f"""
+    asc.run_applescript(
+        f"""
 tell application "Music"
     repeat with p in (every folder playlist)
         try
@@ -91,7 +122,8 @@ tell application "Music"
             end if
         end try
     end repeat
-end tell""")
+end tell"""
+    )
 
 
 # Clean up test playlists/folders before AND after the test session.
