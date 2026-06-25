@@ -367,23 +367,40 @@ tell application "System Events" to tell process "Music"
 end tell
 ```
 
-**CoreGraphics mouse events** (via JXA) trigger hover effects that reveal hidden UI controls:
+**CoreGraphics mouse events** (via JXA) generate real mouse input — hover, click, and double-click:
 ```javascript
 // osascript -l JavaScript
 ObjC.import("CoreGraphics");
 var point = $.CGPointMake(x, y);
-var event = $.CGEventCreateMouseEvent($(), $.kCGEventMouseMoved, point, 0);
-$.CGEventPost($.kCGHIDEventTap, event);
+// hover (reveals hidden controls):
+$.CGEventPost($.kCGHIDEventTap, $.CGEventCreateMouseEvent($(), $.kCGEventMouseMoved, point, 0));
+// click: post LeftMouseDown then LeftMouseUp at the point.
+// double-click: post two down/up pairs with the click-state field (1) set to 1 then 2.
 ```
 
-## The Hover Trick
+> **Critical:** System Events `click` (AXPress) **does not fire** Music.app's
+> custom Play/Shuffle buttons or track rows — it returns success but nothing
+> plays. Read element rects with System Events, then click with **CoreGraphics**
+> mouse events at the element's screen coordinates. A single click only *selects*
+> a track row; **double-click** it to play.
 
-Music.app hides per-track Play and "Add to Library" buttons until the mouse hovers over a track row. To interact with them programmatically:
+## Playing a catalog (non-library) track natively
+
+AppleScript has no verb to play a non-library catalog track. Deep-link the page,
+then drive the UI with CoreGraphics:
+
+1. `open "music://…/album/<id>"` (album/playlist) or `…?i=<songId>` (one track)
+2. **Album/playlist:** locate the `Play` button, read its position+size, CoreGraphics-click its center.
+3. **Single track:** match the track row by name in the track list, CoreGraphics **double-click** it (so only that track plays, not the whole album).
+
+## The Hover Trick (per-row controls)
+
+Music.app hides per-track Play / "Add to Library" controls until the mouse hovers over a row:
 
 1. Find the track's UI element position via System Events
 2. Move the mouse there via CoreGraphics (generates real hover events)
 3. The hidden `checkbox` (play) and `button` (Add to Library) appear in the accessibility tree
-4. Click them via System Events
+4. Click them via **CoreGraphics** at their coordinates (not System Events AXPress)
 
 ## Search via UI
 
