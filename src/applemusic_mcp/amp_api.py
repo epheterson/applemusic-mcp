@@ -15,6 +15,7 @@ once the user has signed in. The server routes here in ``api`` mode (and in
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 import requests
@@ -25,6 +26,23 @@ AMP = "https://amp-api.music.apple.com/v1"
 ORIGIN = "https://music.apple.com"
 TIMEOUT = 30
 _OK = (200, 201, 202, 204)
+
+logger = logging.getLogger(__name__)
+
+
+def _err(r: requests.Response, action: str) -> str:
+    """Format a failed amp-api response into a user-facing reason — and log the
+    full status + response body so failures are debuggable from the MCP logs
+    (enolgor asked for the 500 error bodies in #37; they were being discarded).
+    Apple returns a JSON ``errors`` array with the real cause, which is exactly
+    what you need to tell a transient 500 from a bad request."""
+    body = (r.text or "").strip()
+    logger.warning("amp-api %s: HTTP %s — %s", action, r.status_code, body[:2000] or "(empty body)")
+    reason = f"status {r.status_code}"
+    if r.status_code in (401, 403):
+        reason += " — not authorized, re-run signin"
+    snippet = body[:200].replace("\n", " ").strip()
+    return f"{reason}: {snippet}" if snippet else reason
 
 
 def _headers() -> dict:
@@ -212,7 +230,7 @@ def create_playlist(name: str, description: str = "") -> tuple[bool, str]:
         )
         if r.status_code in _OK:
             return True, r.json()["data"][0]["id"]
-        return False, f"create failed (status {r.status_code})"
+        return False, _err(r, "create_playlist")
     except Exception as e:
         return False, str(e)
 
@@ -227,7 +245,7 @@ def rename_playlist(playlist_id: str, name: str) -> tuple[bool, str]:
             timeout=TIMEOUT,
         )
         return (r.status_code in _OK), (
-            f"Renamed to {name}" if r.status_code in _OK else f"status {r.status_code}"
+            f"Renamed to {name}" if r.status_code in _OK else _err(r, "rename_playlist")
         )
     except Exception as e:
         return False, str(e)
@@ -251,7 +269,7 @@ def add_tracks(playlist_id: str, items: list) -> tuple[bool, str]:
             timeout=TIMEOUT,
         )
         return (r.status_code in _OK), (
-            f"Added {len(items)} track(s)" if r.status_code in _OK else f"status {r.status_code}"
+            f"Added {len(items)} track(s)" if r.status_code in _OK else _err(r, "add_tracks")
         )
     except Exception as e:
         return False, str(e)
@@ -269,7 +287,7 @@ def remove_track(playlist_id: str, relationship_id: str) -> tuple[bool, str]:
             timeout=TIMEOUT,
         )
         return (r.status_code in _OK), (
-            "Removed" if r.status_code in _OK else f"status {r.status_code}"
+            "Removed" if r.status_code in _OK else _err(r, "remove_track")
         )
     except Exception as e:
         return False, str(e)
@@ -285,9 +303,7 @@ def remove_from_library(library_song_id: str) -> tuple[bool, str]:
         )
         if r.status_code in _OK:
             return True, "Removed from library"
-        if r.status_code in (401, 403):
-            return False, f"not authorized (status {r.status_code}) — re-run signin"
-        return False, f"status {r.status_code}"
+        return False, _err(r, "remove_from_library")
     except Exception as e:
         return False, str(e)
 
@@ -300,9 +316,7 @@ def delete_playlist(playlist_id: str) -> tuple[bool, str]:
         )
         if r.status_code in _OK:
             return True, "Deleted"
-        if r.status_code in (401, 403):
-            return False, f"not authorized (status {r.status_code}) — re-run signin"
-        return False, f"status {r.status_code}"
+        return False, _err(r, "delete_playlist")
     except Exception as e:
         return False, str(e)
 
@@ -328,7 +342,7 @@ def create_folder(name: str, parent_id: str = ROOT_FOLDER) -> tuple[bool, str]:
         )
         if r.status_code in _OK:
             return True, r.json()["data"][0]["id"]
-        return False, f"status {r.status_code}"
+        return False, _err(r, "create_folder")
     except Exception as e:
         return False, str(e)
 
@@ -339,7 +353,7 @@ def delete_folder(folder_id: str) -> tuple[bool, str]:
             f"{AMP}/me/library/playlist-folders/{folder_id}", headers=_headers(), timeout=TIMEOUT
         )
         return (r.status_code in _OK), (
-            "Deleted" if r.status_code in _OK else f"status {r.status_code}"
+            "Deleted" if r.status_code in _OK else _err(r, "delete_folder")
         )
     except Exception as e:
         return False, str(e)
@@ -382,7 +396,7 @@ def move_playlist_to_folder(playlist_id: str, folder_id: str = ROOT_FOLDER) -> t
             timeout=TIMEOUT,
         )
         return (r.status_code in _OK), (
-            "Moved" if r.status_code in _OK else f"status {r.status_code}"
+            "Moved" if r.status_code in _OK else _err(r, "move_playlist_to_folder")
         )
     except Exception as e:
         return False, str(e)
@@ -407,8 +421,6 @@ def rate(catalog_id: str, value: int, content_type: str = "songs") -> tuple[bool
             )
         rv = 1 if value > 0 else (-1 if value < 0 else 0)
         label = {1: "Loved", -1: "Disliked", 0: "Cleared rating"}[rv]
-        return (r.status_code in _OK), (
-            label if r.status_code in _OK else f"status {r.status_code}"
-        )
+        return (r.status_code in _OK), (label if r.status_code in _OK else _err(r, "rate"))
     except Exception as e:
         return False, str(e)

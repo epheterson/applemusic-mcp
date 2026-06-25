@@ -188,3 +188,39 @@ def test_resolve_playlist_id_prefers_exact():
         status=200,
     )
     assert amp_api.resolve_playlist_id("Workout") == "p.exact"
+
+
+@responses.activate
+def test_error_body_is_surfaced_and_logged(caplog):
+    """A failed mutation must carry the response body into the message AND log
+    the full body (enolgor's #37 ask — 500 bodies were being discarded)."""
+    body = '{"errors":[{"status":"500","detail":"upstream boom"}]}'
+    responses.add(
+        responses.POST,
+        f"{amp_api.AMP}/me/library/playlists/p.x/tracks",
+        body=body,
+        status=500,
+    )
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="applemusic_mcp.amp_api"):
+        ok, msg = amp_api.add_tracks("p.x", ["123"])
+    assert ok is False
+    assert "status 500" in msg
+    assert "upstream boom" in msg  # body snippet in the user-facing reason
+    assert any(
+        "upstream boom" in r.message or "upstream boom" in r.getMessage() for r in caplog.records
+    )
+
+
+@responses.activate
+def test_401_reason_hints_signin():
+    responses.add(
+        responses.DELETE,
+        f"{amp_api.AMP}/me/library/playlists/p.x",
+        body='{"errors":[{"status":"401"}]}',
+        status=401,
+    )
+    ok, msg = amp_api.delete_playlist("p.x")
+    assert ok is False
+    assert "signin" in msg.lower()
