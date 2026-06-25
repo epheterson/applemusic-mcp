@@ -6071,7 +6071,7 @@ def config(
 
         # === SET PREFERENCE ===
         if action == "set-pref":
-            bool_prefs = ["fetch_explicit", "reveal_on_library_miss", "clean_only", "auto_search"]
+            bool_prefs = ["fetch_explicit", "clean_only", "auto_search"]
             string_prefs = ["storefront", "mode", "playback", "secure_storage"]
             # Enum string prefs: only these values are accepted.
             enum_prefs = {
@@ -6235,7 +6235,6 @@ def config(
                 f"  storefront: {prefs['storefront']} (list: config(action='list-storefronts'))"
             )
             output.append(f"  fetch_explicit: {prefs['fetch_explicit']}")
-            output.append(f"  reveal_on_library_miss: {prefs['reveal_on_library_miss']}")
             output.append(f"  clean_only: {prefs['clean_only']}")
             output.append(f"  auto_search: {prefs['auto_search']}")
             output.append("")
@@ -7127,6 +7126,28 @@ if APPLESCRIPT_AVAILABLE:
             return True, f"{prefix} {msg}"
         return False, msg
 
+    def _catalog_miss_play(name: str, artist: str, url: str, reveal: bool) -> str:
+        """A catalog item isn't in the library and Music.app UI play didn't handle
+        it. Music.app can't auto-play a non-library catalog track, so actually
+        PLAY it via the browser web player (resolve→URL→play) when the user has
+        signed in. Falls back to opening it in Music (explicit reveal=True) or a
+        clear message — and only touches the browser when a session already
+        exists, so it never surprise-launches Chrome."""
+        if url and has_user_token():
+            ok, msg = _browser_play(url=url)
+            if ok:
+                return f"[Catalog→Browser] {msg}"
+        if reveal and url:
+            success, _ = asc.open_catalog_song(url)
+            if success:
+                return f"[Catalog] Opened: {name} by {artist} (click play)"
+        tail = (
+            " (add_to_library=True to save & play"
+            + ("" if has_user_token() else ", or `signin` for instant browser playback")
+            + ")"
+        )
+        return f"[Catalog] Found {name} by {artist}{tail}."
+
     def _playback_play(
         track: str = "",
         playlist: str = "",
@@ -7173,10 +7194,7 @@ if APPLESCRIPT_AVAILABLE:
 
         # === ALBUM ===
         if album:
-            # Apply user preferences for reveal when library miss
-            if reveal is None:
-                prefs = get_user_preferences()
-                reveal = prefs["reveal_on_library_miss"]
+            reveal = bool(reveal)  # explicit "just show it"; default is to play
 
             # Search library for tracks from this album
             search_ok, lib_results = asc.search_library(album, "albums")
@@ -7262,20 +7280,8 @@ if APPLESCRIPT_AVAILABLE:
                                 return f"[Catalog→Library] Added but sync pending: {album_name} by {album_artist}"
                             return f"[Catalog] Failed to add: {add_msg}"
 
-                        # Option 2: Open in Music app (user must click play)
-                        if reveal and album_url:
-                            success, msg = asc.open_catalog_song(album_url)
-                            if success:
-                                return (
-                                    f"[Catalog] Opened: {album_name} by {album_artist} (click play)"
-                                )
-                            return f"[Catalog] {msg}"
-
-                        # Neither flag set - explain options
-                        return (
-                            f"[Catalog] Found: {album_name} by {album_artist}. "
-                            f"Use reveal=True to open in Music, or add_to_library=True to save & play."
-                        )
+                        # Not in library — play it via the browser web player.
+                        return _catalog_miss_play(album_name, album_artist, album_url, reveal)
             except requests.exceptions.RequestException as e:
                 return f"API Error searching catalog: {str(e)}"
             except (FileNotFoundError, ValueError) as e:
@@ -7283,10 +7289,7 @@ if APPLESCRIPT_AVAILABLE:
             return f"Album not found: {album}"
 
         # === TRACK ===
-        # Apply user preferences for reveal when library miss
-        if reveal is None:
-            prefs = get_user_preferences()
-            reveal = prefs["reveal_on_library_miss"]
+        reveal = bool(reveal)  # explicit "just show it"; default is to play
 
         # Resolve track input
         resolved = _resolve_track(track, artist)
@@ -7338,24 +7341,11 @@ if APPLESCRIPT_AVAILABLE:
                                 return f"[Catalog→Library] Added but sync pending: {track_name} by {track_artist}"
                             return f"[Catalog] Failed to add: {add_msg}"
 
-                        # UI play first — before reveal so reveal_on_library_miss
-                        # preference doesn't shadow direct playback.
+                        # UI play first; else play via the browser web player.
                         ui_ok, ui_msg = _try_ui_catalog_play(track_name, track_artist)
                         if ui_ok:
                             return ui_msg
-
-                        if reveal:
-                            if song_url:
-                                success, msg = asc.open_catalog_song(song_url)
-                                if success:
-                                    return f"[Catalog] Opened: {track_name} by {track_artist} (click play)"
-                                return f"[Catalog] {msg}"
-                            return f"[Catalog] No URL available for: {track_name}"
-
-                        return (
-                            f"[Catalog] Found: {track_name} by {track_artist}. "
-                            f"Use reveal=True to open in Music, or add_to_library=True to save & play."
-                        )
+                        return _catalog_miss_play(track_name, track_artist, song_url, reveal)
             except Exception:
                 pass
             return f"Track not found for catalog ID: {catalog_id}"
@@ -7428,9 +7418,8 @@ if APPLESCRIPT_AVAILABLE:
                     return f"[Catalog→Library] Added but sync pending: {song_name} by {song_artist}"
                 return f"[Catalog] Failed to add: {add_msg}"
 
-            # Option 2: UI play — works without adding to library.
-            # Runs before reveal so reveal_on_library_miss preference doesn't
-            # shadow direct playback when Music.app automation is available.
+            # UI play — works without adding to library; tried before the
+            # browser fallback when Music.app automation is available.
             ui_ok, ui_msg = _try_ui_catalog_play(song_name, song_artist)
             if ui_ok:
                 return ui_msg
@@ -7440,19 +7429,8 @@ if APPLESCRIPT_AVAILABLE:
                 # returns (False, None), in which case we do fall through.
                 return f"[UI Catalog failed: {ui_msg}] Falling back — {song_name} by {song_artist}"
 
-            # Option 3: Open in Music app (user must click play)
-            if reveal:
-                if song_url:
-                    success, msg = asc.open_catalog_song(song_url)
-                    if success:
-                        return f"[Catalog] Opened: {song_name} by {song_artist} (click play)"
-                    return f"[Catalog] {msg}"
-                return f"[Catalog] No URL available for: {song_name}"
-
-            return (
-                f"[Catalog] Found: {song_name} by {song_artist}. "
-                f"Use reveal=True to open in Music, or add_to_library=True to save & play."
-            )
+            # Not in library and UI play didn't take — play via the browser.
+            return _catalog_miss_play(song_name, song_artist, song_url, reveal)
 
         # API catalog search found nothing — try UI search as last resort.
         # Different prefix ([UI Search] vs [UI Catalog]) signals to the user

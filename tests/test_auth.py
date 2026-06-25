@@ -472,7 +472,6 @@ class TestGetUserPreferences:
         prefs = auth.get_user_preferences()
 
         assert prefs["fetch_explicit"] is False
-        assert prefs["reveal_on_library_miss"] is False
         assert prefs["clean_only"] is False
 
     def test_returns_defaults_when_no_preferences_section(self, mock_config_dir, sample_config):
@@ -484,7 +483,6 @@ class TestGetUserPreferences:
         prefs = auth.get_user_preferences()
 
         assert prefs["fetch_explicit"] is False
-        assert prefs["reveal_on_library_miss"] is False
         assert prefs["clean_only"] is False
 
     def test_returns_configured_preferences(self, mock_config_dir, sample_config):
@@ -492,7 +490,6 @@ class TestGetUserPreferences:
         config = sample_config.copy()
         config["preferences"] = {
             "fetch_explicit": True,
-            "reveal_on_library_miss": True,
             "clean_only": False,
         }
         config_file = mock_config_dir / "config.json"
@@ -502,7 +499,6 @@ class TestGetUserPreferences:
         prefs = auth.get_user_preferences()
 
         assert prefs["fetch_explicit"] is True
-        assert prefs["reveal_on_library_miss"] is True
         assert prefs["clean_only"] is False
 
     def test_handles_partial_preferences(self, mock_config_dir, sample_config):
@@ -510,7 +506,6 @@ class TestGetUserPreferences:
         config = sample_config.copy()
         config["preferences"] = {
             "fetch_explicit": True,
-            # reveal_on_library_miss not set
             # clean_only not set
         }
         config_file = mock_config_dir / "config.json"
@@ -520,5 +515,4 @@ class TestGetUserPreferences:
         prefs = auth.get_user_preferences()
 
         assert prefs["fetch_explicit"] is True
-        assert prefs["reveal_on_library_miss"] is False  # default
         assert prefs["clean_only"] is False  # default

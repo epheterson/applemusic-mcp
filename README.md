@@ -121,8 +121,7 @@ Add to config.json:
     "playback": "auto",
     "auto_search": true,
     "clean_only": false,
-    "fetch_explicit": false,
-    "reveal_on_library_miss": false
+    "fetch_explicit": false
   }
 }
 ```
@@ -134,7 +133,6 @@ Or set any of these conversationally — `config(action="set-pref", preference="
 - `secure_storage`: Where tokens live — `file` (default, `0600` files; reliable everywhere) or `keychain` (OS keychain; opt-in, may prompt once for access).
 - `auto_search`: let `playlist(action="add")` pull catalog songs you don't own yet into your library (default false, to avoid unintended writes — set true for "fill this playlist").
 - `clean_only` / `fetch_explicit`: filter or fetch explicit status on searches/browse (default false).
-- `reveal_on_library_miss`: open catalog tracks in the Music app on `play` (default false).
 
 ---
 

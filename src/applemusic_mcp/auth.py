@@ -300,7 +300,6 @@ def get_user_preferences() -> dict:
     Returns:
         dict with keys:
         - fetch_explicit: bool (default False)
-        - reveal_on_library_miss: bool (default False)
         - clean_only: bool (default False)
         - auto_search: bool (default False)
         - storefront: str (default "us")
@@ -314,7 +313,6 @@ def get_user_preferences() -> dict:
     # Return with defaults
     return {
         "fetch_explicit": prefs.get("fetch_explicit", False),
-        "reveal_on_library_miss": prefs.get("reveal_on_library_miss", False),
         "clean_only": prefs.get("clean_only", False),
         "auto_search": prefs.get(
             "auto_search", False

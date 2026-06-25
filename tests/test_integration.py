@@ -252,11 +252,10 @@ def test_preferences_loading():
 
     print(f"Current preferences:")
     print(f"  fetch_explicit: {prefs['fetch_explicit']}")
-    print(f"  reveal_on_library_miss: {prefs['reveal_on_library_miss']}")
     print(f"  clean_only: {prefs['clean_only']}")
 
     # Check that it returns a dict with the right keys
-    required_keys = ['fetch_explicit', 'reveal_on_library_miss', 'clean_only']
+    required_keys = ['fetch_explicit', 'clean_only']
     has_all_keys = all(k in prefs for k in required_keys)
 
     if has_all_keys:
