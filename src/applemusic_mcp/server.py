@@ -7077,6 +7077,24 @@ def playback(
 
 if APPLESCRIPT_AVAILABLE:
 
+    def _catalog_song_name(song_id: str) -> str:
+        """Look up a catalog song's display name by id (for deep-link row
+        matching). Returns "" if the lookup fails — callers treat that as
+        'no name hint' and fall back to the highlighted-row strategy."""
+        try:
+            response = requests.get(
+                f"{BASE_URL}/catalog/{get_storefront()}/songs/{song_id}",
+                headers=get_headers(),
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code == 200:
+                data = response.json().get("data", [])
+                if data:
+                    return data[0].get("attributes", {}).get("name", "") or ""
+        except Exception:
+            pass
+        return ""
+
     def _convert_song_url_to_album(url: str) -> Optional[str]:
         """Convert a /song/ URL to /album/?i= format via Apple Music API.
 
@@ -7149,26 +7167,25 @@ if APPLESCRIPT_AVAILABLE:
         return False, msg
 
     def _catalog_miss_play(name: str, artist: str, url: str, reveal: bool) -> str:
-        """A catalog item isn't in the library and Music.app UI play didn't handle
-        it. Music.app can't auto-play a non-library catalog track, so actually
-        PLAY it via the browser web player (resolve→URL→play) when the user has
-        signed in. Falls back to opening it in Music (explicit reveal=True) or a
-        clear message — and only touches the browser when a session already
-        exists, so it never surprise-launches Chrome."""
-        if url and has_user_token():
-            ok, msg = _browser_play(url=url)
-            if ok:
-                return f"[Catalog→Browser] {msg}"
+        """A catalog item isn't in the library and the UI-search play didn't take.
+        Play it natively in Music.app by deep-linking the URL and driving the UI
+        (the fixed CoreGraphics click for the album/playlist Play button, or a
+        name-matched double-click for a specific ?i= track). No browser, no
+        library changes. reveal=True just opens the page for a manual click."""
         if reveal and url:
             success, _ = asc.open_catalog_song(url)
             if success:
                 return f"[Catalog] Opened: {name} by {artist} (click play)"
-        tail = (
-            " (add_to_library=True to save & play"
-            + ("" if has_user_token() else ", or `signin` for instant browser playback")
-            + ")"
-        )
-        return f"[Catalog] Found {name} by {artist}{tail}."
+        if url:
+            ok, msg = asc.open_catalog_and_play(url, track_name=name)
+            if ok:
+                audit_log.log_action(
+                    "play_track",
+                    {"track": name, "artist": artist, "source": "deep_link"},
+                )
+                return f"[Catalog] {msg}"
+            return f"[Catalog] Found {name} by {artist} — couldn't auto-play it ({msg})."
+        return f"[Catalog] Found {name} by {artist}."
 
     def _playback_play(
         track: str = "",
@@ -7193,7 +7210,17 @@ if APPLESCRIPT_AVAILABLE:
                 if converted:
                     url = converted
 
-            success, result = asc.open_catalog_and_play(url, shuffle=shuffle)
+            # For a specific ?i= track, look up its name so the deep-link path can
+            # match the exact row and double-click it (rather than the album Play
+            # button, which would start the whole album from track 1).
+            track_name_hint = ""
+            i_match = re.search(r"[?&]i=(\d+)", url)
+            if i_match:
+                track_name_hint = _catalog_song_name(i_match.group(1))
+
+            success, result = asc.open_catalog_and_play(
+                url, shuffle=shuffle, track_name=track_name_hint
+            )
             if success:
                 audit_log.log_action("play_url", {"url": url, "result": result})
                 return result

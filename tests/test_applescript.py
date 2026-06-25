@@ -917,6 +917,27 @@ class TestOpenCatalogAndPlay:
         assert success is True
         assert "could not confirm" in result.lower()
 
+    def test_specific_track_matches_by_name(self, monkeypatch):
+        """A ?i= URL with a track_name should play that exact row by name
+        (double-click), not the album Play button."""
+        self._mock_subprocess(monkeypatch)
+        self._mock_time(monkeypatch)
+        # not already playing, so it proceeds to the specific-track path
+        monkeypatch.setattr(asc, "run_applescript", lambda script: (True, "stopped"))
+        seen = {}
+        monkeypatch.setattr(
+            asc,
+            "_play_by_track_name",
+            lambda name: seen.update(name=name) or (True, f"Playing: {name}"),
+        )
+        success, result = asc.open_catalog_and_play(
+            "https://music.apple.com/us/album/x/1234567890?i=999",
+            track_name="Bohemian Rhapsody",
+        )
+        assert success is True
+        assert seen["name"] == "Bohemian Rhapsody"
+        assert "Bohemian Rhapsody" in result
+
     def test_song_with_i_param(self, monkeypatch):
         """Should attempt track-specific playback for ?i= URLs."""
         self._mock_subprocess(monkeypatch)
