@@ -907,15 +907,17 @@ class TestOpenCatalogAndPlay:
         assert any("Shuffle" in s for s in scripts_called)
 
     def test_retry_exhaustion(self, monkeypatch):
-        """Should return graceful message after timeout."""
+        """Timeout should report failure (not a phantom success) with an
+        actionable message, so callers can fall back to the browser."""
         self._mock_subprocess(monkeypatch)
         self._mock_time(monkeypatch)
         monkeypatch.setattr(asc, "run_applescript", lambda script: (True, "stopped"))
         success, result = asc.open_catalog_and_play(
             "https://music.apple.com/us/album/1234567890", timeout=0.1
         )
-        assert success is True
-        assert "could not confirm" in result.lower()
+        assert success is False
+        assert "could not start playback" in result.lower()
+        assert "accessibility" in result.lower()
 
     def test_specific_track_matches_by_name(self, monkeypatch):
         """A ?i= URL with a track_name should play that exact row by name

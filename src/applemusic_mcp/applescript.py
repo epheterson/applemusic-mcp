@@ -2305,15 +2305,16 @@ def open_catalog_and_play(
         wait = 2.0 if attempt <= 2 else 1.0
         time.sleep(wait)
 
-    if has_track_param:
-        return (
-            True,
-            "Opened URL in Music. Could not auto-play the specific track — try clicking it manually.",
-        )
-    return (
-        True,
-        "Opened URL in Music. Auto-play attempted but could not confirm playback started — may need Accessibility permissions for System Events.",
+    # Opened the page but couldn't start playback within the window. Report
+    # failure (not success) so callers can fall back instead of claiming a play
+    # that never happened. Accessibility permission is the usual culprit.
+    hint = (
+        "could not start playback — grant Accessibility (System Settings → "
+        "Privacy & Security → Accessibility) for your terminal/MCP host, or play it manually"
     )
+    if has_track_param:
+        return False, f"Opened the track in Music but {hint}."
+    return False, f"Opened it in Music but {hint}."
 
 
 # =============================================================================

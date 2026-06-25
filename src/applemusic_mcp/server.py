@@ -7170,22 +7170,46 @@ if APPLESCRIPT_AVAILABLE:
         """A catalog item isn't in the library and the UI-search play didn't take.
         Play it natively in Music.app by deep-linking the URL and driving the UI
         (the fixed CoreGraphics click for the album/playlist Play button, or a
-        name-matched double-click for a specific ?i= track). No browser, no
-        library changes. reveal=True just opens the page for a manual click."""
+        name-matched double-click for a specific ?i= track). No library changes;
+        reveal=True just opens the page for a manual click.
+
+        If native UI play fails and playback isn't pinned to ``native``, fall
+        back to the browser web player (now full-DRM) rather than dead-ending —
+        a pinned-``native`` user explicitly opted out of the browser, so they
+        get the actionable message instead."""
         if reveal and url:
             success, _ = asc.open_catalog_song(url)
             if success:
                 return f"[Catalog] Opened: {name} by {artist} (click play)"
-        if url:
-            ok, msg = asc.open_catalog_and_play(url, track_name=name)
-            if ok:
-                audit_log.log_action(
-                    "play_track",
-                    {"track": name, "artist": artist, "source": "deep_link"},
-                )
-                return f"[Catalog] {msg}"
-            return f"[Catalog] Found {name} by {artist} — couldn't auto-play it ({msg})."
-        return f"[Catalog] Found {name} by {artist}."
+        if not url:
+            return f"[Catalog] Found {name} by {artist}."
+
+        ok, msg = asc.open_catalog_and_play(url, track_name=name)
+        if ok:
+            audit_log.log_action(
+                "play_track", {"track": name, "artist": artist, "source": "deep_link"}
+            )
+            return f"[Catalog] {msg}"
+
+        # Native UI play failed (commonly: Accessibility not granted, or a Music
+        # layout this build doesn't match). In auto/browser playback, the browser
+        # web player is a working fallback; pinned-native opted out of it.
+        pinned_native = (get_user_preferences().get("playback") or "auto").lower() == "native"
+        if not pinned_native and has_user_token():
+            bmsg = _browser_play(url=url)
+            if not bmsg.startswith("Error"):
+                return f"[Catalog→Browser] {bmsg}"
+
+        return (
+            f"[Catalog] Found {name} by {artist} — couldn't auto-play it in Music. "
+            "Grant Accessibility (System Settings → Privacy & Security → Accessibility) "
+            "for your terminal/MCP host, "
+            + (
+                "or set playback to browser."
+                if has_user_token()
+                else "or run `signin` to play in the browser (needs an Apple Music subscription)."
+            )
+        )
 
     def _playback_play(
         track: str = "",
@@ -7224,6 +7248,14 @@ if APPLESCRIPT_AVAILABLE:
             if success:
                 audit_log.log_action("play_url", {"url": url, "result": result})
                 return result
+            # Native UI play failed — fall back to the browser web player unless
+            # playback is pinned to native (same policy as _catalog_miss_play).
+            pinned_native = (get_user_preferences().get("playback") or "auto").lower() == "native"
+            if not pinned_native and has_user_token():
+                bmsg = _browser_play(url=url, shuffle=shuffle)
+                if not bmsg.startswith("Error"):
+                    audit_log.log_action("play_url", {"url": url, "via": "browser"})
+                    return f"[Browser] {bmsg}"
             return f"Error: {result}"
 
         # Count how many targets provided
