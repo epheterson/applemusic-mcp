@@ -417,7 +417,9 @@ def play_catalog_track(catalog_id: str) -> tuple[bool, str]:
 _PLAY_QUEUE_JS = """
 async (q) => {
   const mk = window.MusicKit.getInstance();
-  await mk.setQueue(Object.assign({ startPlaying: true }, q));
+  const shuffle = !!q.__shuffle; delete q.__shuffle;
+  await mk.setQueue(Object.assign({ startPlaying: false }, q));
+  mk.shuffleMode = shuffle ? 1 : 0;
   await mk.play();
   return mk.nowPlayingItem ? mk.nowPlayingItem.attributes.name : 'playing';
 }
@@ -445,7 +447,26 @@ def _parse_music_url(url: str) -> Optional[dict]:
     return {"album" if kind == "album" else "playlist" if kind == "playlist" else "song": ident}
 
 
-def play_url(music_url: str) -> tuple[bool, str]:
+def play_descriptor(descriptor: dict, shuffle: bool = False) -> tuple[bool, str]:
+    """Play a MusicKit queue descriptor directly — ``{"song": id}``, ``{"album":
+    id}``, ``{"playlist": id}``, or ``{"songs": [ids]}``. Used for play-by-name
+    (album/playlist) after resolving to an id, and by ``play_url``."""
+    payload = dict(descriptor)
+    payload["__shuffle"] = bool(shuffle)
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_PLAY_QUEUE_JS, payload)
+
+    try:
+        return True, _play_message(_engine.submit(run))
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Browser play failed: {exc}"
+
+
+def play_url(music_url: str, shuffle: bool = False) -> tuple[bool, str]:
     """Play an Apple Music URL (song / album / playlist) in the browser web player
     — cross-platform parity for the native macOS play-from-URL."""
     if not music_url.strip():
@@ -455,17 +476,7 @@ def play_url(music_url: str) -> tuple[bool, str]:
     descriptor = _parse_music_url(music_url)
     if descriptor is None:
         return False, f"Unrecognized Apple Music URL shape: {music_url}"
-
-    def run(page):
-        _ensure_player_ready(page)
-        return page.evaluate(_PLAY_QUEUE_JS, descriptor)
-
-    try:
-        return True, _play_message(_engine.submit(run))
-    except BrowserUnavailable as exc:
-        return False, str(exc)
-    except Exception as exc:  # noqa: BLE001
-        return False, f"Browser play-by-URL failed: {exc}"
+    return play_descriptor(descriptor, shuffle)
 
 
 def reveal_url(music_url: str) -> tuple[bool, str]:

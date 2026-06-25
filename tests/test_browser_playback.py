@@ -37,7 +37,9 @@ def test_browser_play_with_url(monkeypatch):
     import applemusic_mcp.browser as browser
 
     calls = {}
-    monkeypatch.setattr(browser, "play_url", lambda u: calls.update(url=u) or (True, "Playing: X"))
+    monkeypatch.setattr(
+        browser, "play_url", lambda u, s=False: calls.update(url=u) or (True, "Playing: X")
+    )
     out = server._browser_play(track="", artist="", url="https://music.apple.com/us/song/x/1")
     assert calls["url"].endswith("/1")
     assert "Playing" in out
@@ -52,9 +54,42 @@ def test_browser_play_resolves_track(monkeypatch):
         lambda t, a="": {"name": t, "artist": a, "url": "https://music.apple.com/us/album/x/9?i=5"},
     )
     seen = {}
-    monkeypatch.setattr(browser, "play_url", lambda u: seen.update(url=u) or (True, "Playing: T"))
+    monkeypatch.setattr(
+        browser, "play_url", lambda u, s=False: seen.update(url=u) or (True, "Playing: T")
+    )
     out = server._browser_play(track="Strobe", artist="deadmau5")
     assert "i=5" in seen["url"]
+    assert "Playing" in out
+
+
+def test_browser_play_playlist_by_name(monkeypatch):
+    """Browser playback must handle a playlist by name (parity with native)."""
+    import applemusic_mcp.browser as browser
+
+    monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda n: ("p.rock", None))
+    seen = {}
+    monkeypatch.setattr(
+        browser, "play_descriptor", lambda d, s=False: seen.update(d=d, s=s) or (True, "Playing")
+    )
+    out = server._browser_play(playlist="Rock Classics")
+    assert seen["d"] == {"playlist": "p.rock"}
+    assert "Playing" in out
+
+
+def test_browser_play_album_by_name(monkeypatch):
+    import applemusic_mcp.browser as browser
+
+    monkeypatch.setattr(
+        server, "_find_matching_catalog_album", lambda a, ar="": ({"id": "alb1"}, None, None)
+    )
+    seen = {}
+    monkeypatch.setattr(
+        browser,
+        "play_descriptor",
+        lambda d, s=False: seen.update(d=d, s=s) or (True, "Playing"),
+    )
+    out = server._browser_play(album="Abbey Road", shuffle=True)
+    assert seen["d"] == {"album": "alb1"} and seen["s"] is True
     assert "Playing" in out
 
 
@@ -106,7 +141,7 @@ def test_playback_play_routes_to_browser_on_non_mac(monkeypatch):
     (absent) AppleScript helper."""
     monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
     monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
-    monkeypatch.setattr(server, "_browser_play", lambda t, a="", u="": "Playing: X")
+    monkeypatch.setattr(server, "_browser_play", lambda *a, **k: "Playing: X")
     assert server.playback(action="play", track="X") == "Playing: X"
 
 

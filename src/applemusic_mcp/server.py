@@ -1179,20 +1179,42 @@ def _library_remove_api(track: str, artist: str = "") -> str:
     return out
 
 
-def _browser_play(track: str, artist: str = "", url: str = "") -> str:
-    """Play a track or Apple Music URL in the browser web player (cross-platform)."""
+def _browser_play(
+    track: str = "",
+    artist: str = "",
+    url: str = "",
+    playlist: str = "",
+    album: str = "",
+    shuffle: bool = False,
+) -> str:
+    """Play a track, playlist, album, or Apple Music URL in the browser web player
+    (cross-platform parity with native macOS playback)."""
     from . import browser
 
-    play_url = url
-    if not play_url:
-        if not track:
-            return "Error: provide track or url"
+    if url:
+        ok, msg = browser.play_url(url, shuffle)
+        return msg if ok else f"Error: {msg}"
+    if playlist:
+        pid, _ = _find_api_playlist_by_name(playlist)
+        if not pid:
+            pid = amp_api.resolve_playlist_id(playlist)
+        if not pid:
+            return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
+        ok, msg = browser.play_descriptor({"playlist": pid}, shuffle)
+        return msg if ok else f"Error: {msg}"
+    if album:
+        alb, err, _ = _find_matching_catalog_album(album, artist)
+        if not alb:
+            return f"Error: {err or f'album {album!r} not found in catalog'}"
+        ok, msg = browser.play_descriptor({"album": alb["id"]}, shuffle)
+        return msg if ok else f"Error: {msg}"
+    if track:
         resolved = _resolve_catalog_track_itunes(track, artist)
         if not resolved:
             return f"Error: '{track}' not found in catalog"
-        play_url = resolved["url"]
-    ok, msg = browser.play_url(play_url)
-    return msg if ok else f"Error: {msg}"
+        ok, msg = browser.play_url(resolved["url"], shuffle)
+        return msg if ok else f"Error: {msg}"
+    return "Error: provide track, playlist, album, or url"
 
 
 def _format_applescript_error(raw: str, operation: str = "") -> str:
@@ -6976,7 +6998,7 @@ def playback(
 
     if action == "play":
         if _use_browser_playback():
-            return _browser_play(track, artist, url)
+            return _browser_play(track, artist, url, playlist, album, shuffle)
         if not APPLESCRIPT_AVAILABLE:
             return _PLAYBACK_NEEDS_BROWSER
         return _playback_play(track, playlist, album, artist, shuffle, reveal, add_to_library, url)
