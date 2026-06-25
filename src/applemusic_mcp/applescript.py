@@ -508,9 +508,13 @@ def get_repeat() -> tuple[bool, str]:
 
 
 def set_repeat(mode: str) -> tuple[bool, str]:
-    """Set repeat mode (off, one, all)."""
+    """Set repeat mode (off, one, all). Accepts ``none`` as a synonym for ``off``
+    so the cross-platform ``playback`` contract matches the browser engine, which
+    uses ``none``/``one``/``all`` (MusicKit's vocabulary)."""
+    if mode == "none":
+        mode = "off"
     if mode not in ("off", "one", "all"):
-        return False, f"Invalid repeat mode: {mode}. Use 'off', 'one', or 'all'"
+        return False, f"Invalid repeat mode: {mode}. Use 'off'/'none', 'one', or 'all'"
     return run_applescript(f'tell application "Music" to set song repeat to {mode}')
 
 

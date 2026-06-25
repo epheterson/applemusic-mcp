@@ -351,7 +351,8 @@ async (s) => {
   if (s.volume >= 0) mk.volume = Math.max(0, Math.min(1, s.volume / 100));
   if (s.shuffle !== null) mk.shuffleMode = s.shuffle ? 1 : 0;
   if (s.repeat !== null) {
-    const map = { none: 0, one: 1, all: 2 };
+    // 'off' is the native engine's word for 'none' — accept both for parity.
+    const map = { none: 0, off: 0, one: 1, all: 2 };
     mk.repeatMode = map[s.repeat] ?? 0;
   }
   return { volume: Math.round(mk.volume * 100), shuffle: mk.shuffleMode, repeat: mk.repeatMode };
@@ -526,8 +527,8 @@ def playback_control(action: str, seconds: float = 0) -> tuple[bool, str]:
 def browser_settings(
     volume: int = -1, shuffle: Optional[bool] = None, repeat: Optional[str] = None
 ) -> tuple[bool, str]:
-    """Set volume (0-100, -1 = leave), shuffle (on/off), repeat (none/one/all) on
-    the browser web player. Returns the resulting state."""
+    """Set volume (0-100, -1 = leave), shuffle (on/off), repeat
+    (none/off/one/all) on the browser web player. Returns the resulting state."""
 
     def run(page):
         _ensure_player_ready(page)
