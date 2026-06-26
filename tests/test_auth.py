@@ -229,25 +229,19 @@ class TestSecretStoreKeychain:
     """The keychain path of the secret store (file path is covered everywhere else)."""
 
     def _enable(self, monkeypatch):
+        # Keychain is auto-selected on Windows only (0600 file bits are a no-op
+        # there). Simulate Windows + a working backend.
         monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
-        # Keychain is opt-in: the user picked secure_storage=keychain.
-        monkeypatch.setattr(auth, "get_user_preferences", lambda: {"secure_storage": "keychain"})
+        monkeypatch.setattr(auth.sys, "platform", "win32")
         fake = _FakeKeyring()
         monkeypatch.setattr(auth, "_keyring", fake)
         return fake
 
-    def test_default_storage_is_platform_aware(self, mock_config_dir, monkeypatch):
-        """Windows defaults to keychain (0600 is a no-op there); macOS/Linux to file."""
-        monkeypatch.setattr(auth.sys, "platform", "win32")
-        assert auth.get_user_preferences()["secure_storage"] == "keychain"
-        monkeypatch.setattr(auth.sys, "platform", "darwin")
-        assert auth.get_user_preferences()["secure_storage"] == "file"
-
-    def test_keychain_off_by_default_even_with_backend(self, mock_config_dir, monkeypatch):
-        """Opt-in: with a working backend but the default secure_storage=file, the
-        token must be written to a FILE, not the keychain."""
+    def test_keychain_off_on_posix_even_with_backend(self, mock_config_dir, monkeypatch):
+        """On macOS/Linux a working backend is still NOT used (per-process ACL is
+        unreliable): the token must be written to a FILE, not the keychain."""
         monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
-        monkeypatch.setattr(auth, "get_user_preferences", lambda: {"secure_storage": "file"})
+        monkeypatch.setattr(auth.sys, "platform", "darwin")
         fake = _FakeKeyring()
         monkeypatch.setattr(auth, "_keyring", fake)
         auth.secret_set("music_user_token", '{"music_user_token": "x"}')
@@ -302,7 +296,7 @@ class TestSecretStoreKeychain:
                 return self.d.get((service, key))
 
         monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
-        monkeypatch.setattr(auth, "get_user_preferences", lambda: {"secure_storage": "keychain"})
+        monkeypatch.setattr(auth.sys, "platform", "win32")  # keychain path (Windows)
         stuck = _StuckKeyring()
         stuck.d[("applemusic-mcp", "k")] = "stuck"
         monkeypatch.setattr(auth, "_keyring", stuck)

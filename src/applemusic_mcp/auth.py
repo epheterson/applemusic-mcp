@@ -45,16 +45,17 @@ _KEYRING_SERVICE = "applemusic-mcp"
 
 
 def _keyring_ok() -> bool:
-    """True when the OS keychain should be used. Keychain is OPT-IN — tokens
-    default to 0600 files because the keychain's per-process ACL is unreliable
-    across this tool's separate CLI and server processes. Returns True only when
-    the user set ``secure_storage: keychain`` AND a real backend is available AND
-    the test guard (APPLEMUSIC_NO_KEYRING=1) isn't set."""
+    """True when the OS keychain should be used. Auto-decided by platform, no
+    user knob: Windows uses the Credential Locker (POSIX 0600 file bits are a
+    no-op there, so a token file would be readable by other local accounts);
+    macOS and Linux use 0600 files, because the keychain's per-process ACL is
+    unreliable across this tool's separate CLI and server processes. The
+    APPLEMUSIC_NO_KEYRING=1 test guard forces files everywhere."""
     if os.environ.get("APPLEMUSIC_NO_KEYRING") == "1" or _keyring is None:
         return False
+    if sys.platform != "win32":
+        return False
     try:
-        if (get_user_preferences().get("secure_storage") or "file").lower() != "keychain":
-            return False
         kr = _keyring.get_keyring()
         name = f"{type(kr).__module__}.{type(kr).__name__}".lower()
         return "fail" not in name and "null" not in name
@@ -326,16 +327,9 @@ def get_user_preferences() -> dict:
         # "api" is accepted as a back-compat alias for "web". Playback always
         # follows the engine, so there is no separate playback preference.
         "mode": prefs.get("mode", "auto"),
-        # Token storage: "file" (0600 files) or "keychain" (OS keychain). Default
-        # is platform-aware: Windows defaults to the keychain because POSIX file
-        # mode bits don't restrict access there (0600 is a no-op on Windows, so a
-        # file would be readable by other local accounts) and the Credential
-        # Locker is per-user and reliable across processes. macOS/Linux default to
-        # files — reliable across the separate CLI and server processes, where the
-        # macOS keychain's per-process ACL is not.
-        "secure_storage": prefs.get(
-            "secure_storage", "keychain" if sys.platform == "win32" else "file"
-        ),
+        # Token storage location is auto-decided by platform (see _keyring_ok),
+        # not a user preference: Windows uses the Credential Locker, macOS/Linux
+        # use 0600 files.
     }
 
 

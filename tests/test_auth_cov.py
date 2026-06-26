@@ -72,9 +72,10 @@ class _FakeKeyring:
 
 
 def _enable_keychain(monkeypatch, fake=None):
-    """Flip the secret store onto an in-memory keychain backend."""
+    """Flip the secret store onto an in-memory keychain backend. Keychain is
+    auto-selected on Windows only, so simulate win32."""
     monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
-    monkeypatch.setattr(auth, "get_user_preferences", lambda: {"secure_storage": "keychain"})
+    monkeypatch.setattr(auth.sys, "platform", "win32")
     fake = fake or _FakeKeyring()
     monkeypatch.setattr(auth, "_keyring", fake)
     return fake
@@ -113,15 +114,17 @@ class TestKeyringOk:
         monkeypatch.setattr(auth, "_keyring", None)
         assert auth._keyring_ok() is False
 
-    def test_false_when_storage_pref_is_file(self, mock_config_dir, monkeypatch):
+    def test_false_on_posix_even_with_backend(self, mock_config_dir, monkeypatch):
+        # macOS/Linux always use files (per-process ACL is unreliable), even with
+        # a working backend present.
         monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
-        monkeypatch.setattr(auth, "get_user_preferences", lambda: {"secure_storage": "file"})
+        monkeypatch.setattr(auth.sys, "platform", "darwin")
         monkeypatch.setattr(auth, "_keyring", _FakeKeyring())
         assert auth._keyring_ok() is False
 
     def test_false_when_backend_is_fail_or_null(self, mock_config_dir, monkeypatch):
         monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
-        monkeypatch.setattr(auth, "get_user_preferences", lambda: {"secure_storage": "keychain"})
+        monkeypatch.setattr(auth.sys, "platform", "win32")
 
         class _NullKeyring(_FakeKeyring):
             def get_keyring(self):
@@ -134,9 +137,9 @@ class TestKeyringOk:
         assert auth._keyring_ok() is False
 
     def test_false_when_get_keyring_raises(self, mock_config_dir, monkeypatch):
-        """The except branch (lines 61-62): a backend probe that blows up → file."""
+        """The except branch: a backend probe that blows up → file."""
         monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
-        monkeypatch.setattr(auth, "get_user_preferences", lambda: {"secure_storage": "keychain"})
+        monkeypatch.setattr(auth.sys, "platform", "win32")
 
         class _BoomKeyring:
             def get_keyring(self):
@@ -178,10 +181,10 @@ class TestSecretStore:
         assert auth.secret_get("k") is None
 
     def test_set_drops_stale_keychain_copy_on_file_write(self, mock_config_dir, monkeypatch):
-        """Keychain unavailable for write (pref=file) but a keyring exists: the
-        now-stale keychain copy is best-effort deleted (lines 84-86)."""
+        """Keychain not used for write (POSIX) but a keyring exists: the
+        now-stale keychain copy is best-effort deleted."""
         monkeypatch.delenv("APPLEMUSIC_NO_KEYRING", raising=False)
-        monkeypatch.setattr(auth, "get_user_preferences", lambda: {"secure_storage": "file"})
+        monkeypatch.setattr(auth.sys, "platform", "darwin")
         fake = _FakeKeyring()
         fake.d[("applemusic-mcp", "k")] = "stale"
         monkeypatch.setattr(auth, "_keyring", fake)
@@ -417,14 +420,6 @@ class TestLoadConfigCaching:
 # get_user_preferences — defaults, platform, error branch                      #
 # --------------------------------------------------------------------------- #
 class TestGetUserPreferences:
-    def test_platform_default_windows_is_keychain(self, mock_config_dir, monkeypatch):
-        monkeypatch.setattr(auth.sys, "platform", "win32")
-        assert auth.get_user_preferences()["secure_storage"] == "keychain"
-
-    def test_platform_default_posix_is_file(self, mock_config_dir, monkeypatch):
-        monkeypatch.setattr(auth.sys, "platform", "darwin")
-        assert auth.get_user_preferences()["secure_storage"] == "file"
-
     def test_all_defaults(self, mock_config_dir):
         prefs = auth.get_user_preferences()
         assert prefs["fetch_explicit"] is False
@@ -432,7 +427,9 @@ class TestGetUserPreferences:
         assert prefs["auto_search"] is False
         assert prefs["storefront"] == "us"
         assert prefs["mode"] == "auto"
-        assert "playback" not in prefs  # single mode now; playback follows it
+        # Single mode now; playback follows it and token storage is auto by platform.
+        assert "playback" not in prefs
+        assert "secure_storage" not in prefs
 
     def test_error_in_load_config_yields_defaults(self, mock_config_dir, monkeypatch):
         """load_config raising JSONDecodeError → defaults (lines 310-311)."""

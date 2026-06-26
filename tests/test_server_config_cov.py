@@ -87,22 +87,14 @@ class TestSetPrefGaps:
         # lowercased on save
         assert "storefront = gb" in out
 
-    def test_secure_storage_missing_value(self, mock_config_dir):
-        """secure_storage (enum) without string_value → lists choices."""
-        out = server.config(action="set-pref", preference="secure_storage")
-        assert "requires 'string_value' parameter" in out
-        assert "file" in out and "keychain" in out
-
-    def test_secure_storage_valid(self, mock_config_dir):
-        """secure_storage = keychain."""
+    def test_secure_storage_pref_removed(self, mock_config_dir):
+        """secure_storage is no longer a user pref (auto by platform) → rejected."""
         out = server.config(action="set-pref", preference="secure_storage", string_value="keychain")
-        assert "secure_storage = keychain" in out
+        assert "preference must be one of" in out and "secure_storage" not in out.split(":")[-1]
 
-    def test_secure_storage_invalid(self, mock_config_dir):
-        """secure_storage = bad → must be one of."""
-        out = server.config(action="set-pref", preference="secure_storage", string_value="vault")
-        assert "must be one of" in out
-        assert "file" in out and "keychain" in out
+    def test_set_mode_web(self, mock_config_dir):
+        out = server.config(action="set-pref", preference="mode", string_value="web")
+        assert "mode = web" in out
 
 
 # ---------------------------------------------------------------------------

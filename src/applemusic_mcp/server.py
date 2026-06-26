@@ -6104,13 +6104,13 @@ def config(
         # === SET PREFERENCE ===
         if action == "set-pref":
             bool_prefs = ["fetch_explicit", "clean_only", "auto_search"]
-            string_prefs = ["storefront", "mode", "secure_storage"]
+            string_prefs = ["storefront", "mode"]
             # Enum string prefs: only these values are accepted. `mode` is the
             # single engine knob (playback follows it). `api` stays accepted as a
-            # back-compat alias for `web` so older configs keep working.
+            # back-compat alias for `web` so older configs keep working. (Token
+            # storage is auto-decided by platform, not a user pref.)
             enum_prefs = {
                 "mode": ("auto", "native", "web", "api"),
-                "secure_storage": ("file", "keychain"),
             }
             all_prefs = bool_prefs + string_prefs
 

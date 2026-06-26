@@ -64,11 +64,11 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Security
 
-- **Token storage**: `0600` files by default (reliable across the CLI and server
-  processes), with an opt-in `secure_storage: keychain` preference for the OS
-  keychain (macOS Keychain / Windows Credential Locker / Linux Secret Service).
-  Token files and `auth.html` are created `0600` atomically; the config dir and
-  Chrome profile are `0700`.
+- **Token storage**: auto-decided by platform, no user knob. macOS and Linux use
+  `0600` files (reliable across the separate CLI and server processes, where the
+  keychain's per-process ACL is not); Windows uses the Credential Locker (POSIX
+  file bits are a no-op there). Token files and `auth.html` are created `0600`
+  atomically; the config dir and Chrome profile are `0700`.
 
 ### Changed
 
