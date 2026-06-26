@@ -36,6 +36,25 @@ def _block_external_network(request):
         yield
 
 
+@pytest.fixture(autouse=True)
+def _isolate_browser_profile(request, tmp_path, monkeypatch):
+    """Never let a non-live test touch the real Chrome profile. `clear_session`
+    (hit by logout/reset on both the CLI and the `config` tool) rmtree's
+    PROFILE_DIR — point it at a throwaway dir so a test can't wipe the user's
+    signed-in browser session. The live gates need the real profile, so they're
+    exempt."""
+    if request.node.get_closest_marker("ui") or request.node.get_closest_marker("ui_live"):
+        yield
+        return
+    try:
+        from applemusic_mcp import browser
+
+        monkeypatch.setattr(browser, "PROFILE_DIR", tmp_path / "chrome-profile")
+    except Exception:
+        pass
+    yield
+
+
 # Tests use file-based token storage (not the OS keychain) for determinism and so
 # the fixtures that write token JSON files keep working. The keychain path is
 # exercised explicitly in test_auth.py.
