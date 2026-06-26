@@ -318,15 +318,14 @@ def get_user_preferences() -> dict:
             "auto_search", False
         ),  # Default FALSE (don't modify library without permission)
         "storefront": prefs.get("storefront", "us"),  # Apple Music region (default: US)
-        # Global engine mode: "auto" (native Music.app on macOS / API+browser
-        # elsewhere), "native" (all-in on the local Music.app — macOS, no token),
-        # or "api" (all-in on the cross-platform Apple Music API + web player, so a
-        # Mac user who isn't signed into Music.app — or whose Music.app is a
-        # different account — can stay fully API). Governs playlist/library ops and
-        # playback engine selection.
+        # Single engine mode, governs BOTH data ops and playback: "auto"
+        # (native Music.app on macOS, web API + Chrome web player elsewhere),
+        # "native" (all-in on the local Music.app, macOS, no token), or "web"
+        # (all-in on the cross-platform Apple Music web API + web player, so a Mac
+        # not signed into Music.app, or on a different account, stays fully web).
+        # "api" is accepted as a back-compat alias for "web". Playback always
+        # follows the engine, so there is no separate playback preference.
         "mode": prefs.get("mode", "auto"),
-        # Back-compat playback-only override (falls back to `mode` when "auto").
-        "playback": prefs.get("playback", "auto"),
         # Token storage: "file" (0600 files) or "keychain" (OS keychain). Default
         # is platform-aware: Windows defaults to the keychain because POSIX file
         # mode bits don't restrict access there (0600 is a no-op on Windows, so a

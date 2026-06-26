@@ -432,7 +432,7 @@ class TestGetUserPreferences:
         assert prefs["auto_search"] is False
         assert prefs["storefront"] == "us"
         assert prefs["mode"] == "auto"
-        assert prefs["playback"] == "auto"
+        assert "playback" not in prefs  # single mode now; playback follows it
 
     def test_error_in_load_config_yields_defaults(self, mock_config_dir, monkeypatch):
         """load_config raising JSONDecodeError → defaults (lines 310-311)."""

@@ -932,33 +932,39 @@ def _can_use_library_api() -> bool:
 
 
 def _engine() -> str:
-    """Resolve the active engine: ``native`` (AppleScript / local Music.app) or
-    ``api`` (amp-api + browser, cross-platform). From the ``mode`` preference —
-    native | api | auto (auto = native on macOS, api elsewhere). Honors
-    APPLEMUSIC_FORCE_API_MODE for testing."""
+    """Resolve the active engine from the single ``mode`` preference:
+    ``native`` (AppleScript / local Music.app) or ``api`` (the web API +
+    Chrome web player, cross-platform).
+
+    mode values: ``auto`` (default — native on macOS, web elsewhere), ``native``,
+    or ``web``. ``api`` is accepted as a back-compat alias for ``web``.
+
+    Playback follows the engine (see ``_use_browser_playback``); there is no
+    separate playback knob. Honors APPLEMUSIC_FORCE_API_MODE for testing."""
     if os.environ.get("APPLEMUSIC_FORCE_API_MODE") == "1":
         return "api"
     mode = (get_user_preferences().get("mode") or "auto").lower()
-    if mode == "api":
+    if mode in ("web", "api"):
         return "api"
-    # native only when AppleScript is actually available; otherwise fall back to
-    # api so a non-macOS user who pinned `native` doesn't hit AppleScript crashes.
-    if mode == "native":
-        return "native" if APPLESCRIPT_AVAILABLE else "api"
+    # native or auto: native only when AppleScript is available; otherwise fall
+    # back to the web engine so a non-macOS host never hits AppleScript.
     return "native" if APPLESCRIPT_AVAILABLE else "api"
 
 
+def _mode_pinned_native() -> bool:
+    """True when the user explicitly pinned ``mode=native`` (so playback must
+    stay in Music.app and never fall back to the browser). ``auto`` is NOT
+    pinned, so it may use the browser as a playback safety net."""
+    return (get_user_preferences().get("mode") or "auto").lower() == "native"
+
+
 def _use_browser_playback() -> bool:
-    """Decide the playback engine. The ``playback`` preference overrides
-    (``native``/``browser``); otherwise follows the global ``mode`` (``api`` →
-    browser web player, ``native`` → AppleScript). Browser playback needs a
-    signed-in session (a media-user-token)."""
-    pref = (get_user_preferences().get("playback") or "auto").lower()
-    if os.environ.get("APPLEMUSIC_FORCE_BROWSER_PLAYBACK") == "1" or pref == "browser":
+    """Playback follows the engine: the web engine plays through the local Chrome
+    web player, native plays through Music.app. There is no separate playback
+    preference. Browser playback needs a signed-in session (a media-user-token)."""
+    if os.environ.get("APPLEMUSIC_FORCE_BROWSER_PLAYBACK") == "1":
         return True
-    if pref == "native":
-        return False
-    return _engine() == "api"  # auto: follow the global mode
+    return _engine() == "api"
 
 
 # --- playlist mutations over the API engine (cross-platform, no AppleScript) ---
@@ -6098,11 +6104,12 @@ def config(
         # === SET PREFERENCE ===
         if action == "set-pref":
             bool_prefs = ["fetch_explicit", "clean_only", "auto_search"]
-            string_prefs = ["storefront", "mode", "playback", "secure_storage"]
-            # Enum string prefs: only these values are accepted.
+            string_prefs = ["storefront", "mode", "secure_storage"]
+            # Enum string prefs: only these values are accepted. `mode` is the
+            # single engine knob (playback follows it). `api` stays accepted as a
+            # back-compat alias for `web` so older configs keep working.
             enum_prefs = {
-                "mode": ("native", "api", "auto"),
-                "playback": ("native", "browser", "auto"),
+                "mode": ("auto", "native", "web", "api"),
                 "secure_storage": ("file", "keychain"),
             }
             all_prefs = bool_prefs + string_prefs
@@ -7198,7 +7205,7 @@ if APPLESCRIPT_AVAILABLE:
         # Native UI play failed (commonly: Accessibility not granted, or a Music
         # layout this build doesn't match). In auto/browser playback, the browser
         # web player is a working fallback; pinned-native opted out of it.
-        pinned_native = (get_user_preferences().get("playback") or "auto").lower() == "native"
+        pinned_native = _mode_pinned_native()
         if not pinned_native and has_user_token():
             bmsg = _browser_play(url=url)
             if not bmsg.startswith("Error"):
@@ -7254,7 +7261,7 @@ if APPLESCRIPT_AVAILABLE:
                 return result
             # Native UI play failed — fall back to the browser web player unless
             # playback is pinned to native (same policy as _catalog_miss_play).
-            pinned_native = (get_user_preferences().get("playback") or "auto").lower() == "native"
+            pinned_native = _mode_pinned_native()
             if not pinned_native and has_user_token():
                 bmsg = _browser_play(url=url, shuffle=shuffle)
                 if not bmsg.startswith("Error"):

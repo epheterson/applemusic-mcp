@@ -12,15 +12,18 @@ Linux with no $99 Apple Developer account** — library, playlists, *and playbac
 
 ### Added
 
-- **Three-mode engine** (`mode` preference): `auto` (native Music.app on macOS,
-  API everywhere else), `native` (local Music.app), or `api` (Apple Music API +
-  web player on any OS — even a Mac not signed into the Music app). Set it from
-  the tool: `config(action="set-pref", preference="mode", string_value="api")`.
+- **Single engine `mode`** that governs both data and playback: `auto` (native
+  Music.app on macOS, web everywhere else), `native` (local Music.app), or `web`
+  (Apple Music web API + Chrome web player on any OS, even a Mac not signed into
+  the Music app). Set it from the tool: `config(action="set-pref",
+  preference="mode", string_value="web")`. Playback always follows the engine,
+  so there is no separate playback preference. (`api` is accepted as a
+  back-compat alias for `web`.)
 - **Cross-platform playback** via the music.apple.com web player (MusicKit in a
   local Chrome window): play, play-by-URL (song/album/playlist), pause, skip,
   seek, volume, shuffle, repeat, now-playing. DRM through Google Chrome.
-  Registered on every platform (was macOS-only). **`playback` preference**:
-  `auto`/`native`/`browser`. `reveal` now opens a track in Chrome too.
+  Registered on every platform (was macOS-only). `reveal` now opens a track in
+  Chrome too. `auto` falls back native→browser when a native play can't start.
 - **Up Next queue** — a new `queue` tool driving the web player's MusicKit:
   list, play-next, play-last, remove, jump, clear, autoplay. Cross-platform
   (browser); the queue has no REST endpoint and AppleScript can't reach it.

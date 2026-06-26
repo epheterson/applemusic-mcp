@@ -736,28 +736,31 @@ class TestEngine:
 
 
 class TestUseBrowserPlayback:
+    """Playback follows the engine: web -> browser, native -> Music.app. No
+    separate playback preference."""
+
     def test_force_env(self, monkeypatch):
         monkeypatch.setenv("APPLEMUSIC_FORCE_BROWSER_PLAYBACK", "1")
-        monkeypatch.setattr(server, "get_user_preferences", lambda: {"playback": "auto"})
+        monkeypatch.setattr(server, "_engine", lambda: "native")
         assert server._use_browser_playback() is True
 
-    def test_pref_browser(self, monkeypatch):
-        monkeypatch.setattr(server, "get_user_preferences", lambda: {"playback": "browser"})
-        assert server._use_browser_playback() is True
-
-    def test_pref_native(self, monkeypatch):
-        monkeypatch.setattr(server, "get_user_preferences", lambda: {"playback": "native"})
-        assert server._use_browser_playback() is False
-
-    def test_auto_follows_engine_api(self, monkeypatch):
-        monkeypatch.setattr(server, "get_user_preferences", lambda: {"playback": "auto"})
+    def test_follows_engine_api(self, monkeypatch):
+        monkeypatch.delenv("APPLEMUSIC_FORCE_BROWSER_PLAYBACK", raising=False)
         monkeypatch.setattr(server, "_engine", lambda: "api")
         assert server._use_browser_playback() is True
 
-    def test_auto_follows_engine_native(self, monkeypatch):
-        monkeypatch.setattr(server, "get_user_preferences", lambda: {"playback": "auto"})
+    def test_follows_engine_native(self, monkeypatch):
+        monkeypatch.delenv("APPLEMUSIC_FORCE_BROWSER_PLAYBACK", raising=False)
         monkeypatch.setattr(server, "_engine", lambda: "native")
         assert server._use_browser_playback() is False
+
+    def test_mode_pinned_native_helper(self, monkeypatch):
+        monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": "native"})
+        assert server._mode_pinned_native() is True
+        monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": "auto"})
+        assert server._mode_pinned_native() is False
+        monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": "web"})
+        assert server._mode_pinned_native() is False
 
 
 # ---------------------------------------------------------------------------

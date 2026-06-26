@@ -643,24 +643,30 @@ class TestAuthTool:
 
 
 class TestModePreference:
-    """The marquee three-mode engine must be switchable via the tool, not just
-    by hand-editing config.json."""
+    """The single engine mode (playback follows it) must be switchable via the
+    tool, not just by hand-editing config.json."""
 
-    def test_set_mode_api(self, mock_config_dir):
-        out = server.config(action="set-pref", preference="mode", string_value="api")
-        assert "mode = api" in out
+    def test_set_mode_web(self, mock_config_dir):
+        out = server.config(action="set-pref", preference="mode", string_value="web")
+        assert "mode = web" in out
         from applemusic_mcp.auth import get_user_preferences
 
-        assert get_user_preferences()["mode"] == "api"
+        assert get_user_preferences()["mode"] == "web"
 
-    def test_set_playback_browser(self, mock_config_dir):
+    def test_set_mode_api_alias_accepted(self, mock_config_dir):
+        # `api` stays accepted as a back-compat alias for `web`.
+        out = server.config(action="set-pref", preference="mode", string_value="api")
+        assert "mode = api" in out
+
+    def test_playback_pref_removed(self, mock_config_dir):
+        # The separate playback knob is gone; setting it is rejected.
         out = server.config(action="set-pref", preference="playback", string_value="browser")
-        assert "playback = browser" in out
+        assert "must be one of" in out.lower() or "preference must be" in out.lower()
 
     def test_invalid_mode_rejected(self, mock_config_dir):
         out = server.config(action="set-pref", preference="mode", string_value="bogus")
         assert "must be one of" in out
-        assert "native" in out and "api" in out
+        assert "native" in out and "web" in out
 
     def test_mode_missing_value_lists_choices(self, mock_config_dir):
         out = server.config(action="set-pref", preference="mode")

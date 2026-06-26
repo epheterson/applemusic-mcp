@@ -21,7 +21,7 @@ It is an [MCP](https://modelcontextprotocol.io/) server: drop it into Claude, Cu
 
 ## What runs where
 
-Three engines back the server, picked automatically by the `mode` preference (`auto` is the default; `native` pins the macOS Music.app, `api` pins the cross-platform API + web player). `✓` supported, `✗` not possible on that engine, `—` not applicable there.
+One `mode` preference picks the engine for both data and playback (`auto` is the default; `native` pins the macOS Music.app, `web` pins the cross-platform web API + web player). Playback always follows the engine. `✓` supported, `✗` not possible on that engine, `—` not applicable there.
 
 |Capability|Native (Music.app) macOS|API (amp-api) any OS|Browser (Chrome) any OS|
 |---|:---:|:---:|:---:|
@@ -143,8 +143,7 @@ Seven action-based tools keep the MCP context small. Each takes an `action` and 
 
 Set any of these in config.json under `preferences`, or conversationally with `config(action="set-pref", ...)`:
 
-- `mode`: engine, `auto` (default) / `native` (local Music.app) / `api` (Apple Music API + web player, any OS).
-- `playback`: playback-engine override, `auto` (default, follows `mode`) / `native` / `browser`.
+- `mode`: engine for data and playback, `auto` (default) / `native` (local Music.app) / `web` (Apple Music web API + Chrome web player, any OS). Playback follows the engine; `api` is accepted as an alias for `web`.
 - `secure_storage`: where tokens live, `file` (default, `0600` files) or `keychain` (OS keychain, opt-in).
 - `auto_search`: let `playlist(action="add")` pull catalog songs into your library (default `false`).
 - `clean_only` / `fetch_explicit`: filter or fetch explicit status on searches and browse (default `false`).

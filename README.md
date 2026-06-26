@@ -33,13 +33,13 @@
 
 ### Modes & what runs where
 
-Pick how it runs with the `mode` preference — just ask ("use API mode") or set it directly: `config(action="set-pref", preference="mode", string_value="api")`.
+One `mode` preference picks the engine for both data and playback. Just ask ("use web mode") or set it: `config(action="set-pref", preference="mode", string_value="web")`.
 
-- **`auto`** *(default)* — native Music.app on macOS, the cross-platform API everywhere else
-- **`native`** — all-in on the local Music.app (macOS; works with no account)
-- **`api`** — all-in on the Apple Music API + web player; runs on any OS, even on a Mac that isn't signed into the Music app
+- **`auto`** *(default)*: native Music.app on macOS, the cross-platform web API + Chrome web player everywhere else
+- **`native`**: all-in on the local Music.app (macOS, works with no account)
+- **`web`**: all-in on the Apple Music web API + web player, any OS, even on a Mac that isn't signed into the Music app
 
-(A separate `playback` preference — `auto`/`native`/`browser` — overrides just the playback engine if you want, say, API everything but native audio on macOS.)
+Playback always follows the engine, so there is no separate playback knob. (`api` is still accepted as an alias for `web`.)
 
 | What you can do | Where it runs |
 |---|---|
@@ -128,10 +128,9 @@ Add to config.json:
 }
 ```
 
-Or set any of these conversationally — `config(action="set-pref", preference="mode", string_value="api")` (booleans use `value=true/false`).
+Or set any of these conversationally with `config(action="set-pref", preference="mode", string_value="web")` (booleans use `value=true/false`).
 
-- `mode`: Engine — `auto` (default) / `native` (local Music.app) / `api` (Apple Music API + web player, any OS).
-- `playback`: Playback engine override — `auto` (default, follows `mode`) / `native` (macOS Music.app) / `browser` (Chrome web player).
+- `mode`: Engine for data and playback, `auto` (default) / `native` (local Music.app) / `web` (Apple Music web API + Chrome web player, any OS). Playback follows the engine; `api` is accepted as an alias for `web`.
 - `secure_storage`: Where tokens live — `file` (default, `0600` files; reliable everywhere) or `keychain` (OS keychain; opt-in, may prompt once for access).
 - `auto_search`: let `playlist(action="add")` pull catalog songs you don't own yet into your library (default false, to avoid unintended writes — set true for "fill this playlist").
 - `clean_only` / `fetch_explicit`: filter or fetch explicit status on searches/browse (default false).
@@ -232,7 +231,7 @@ Catalog-based actions (`charts`, `top_songs`, `similar_artists`, `song_station`)
 
 ### Playback & Queue
 
-**Playback** is cross-platform: on macOS through the Music app, on any OS through the signed-in Chrome web player (the `playback` preference picks `auto`/`native`/`browser`).
+**Playback** is cross-platform: on macOS through the Music app, on any OS through the signed-in Chrome web player. It follows the `mode` engine (`auto`/`native`/`web`), so playback goes wherever your data requests go.
 
 | Action | Description | Where |
 |--------|-------------|-------|

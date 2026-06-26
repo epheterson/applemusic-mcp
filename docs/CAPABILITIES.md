@@ -42,6 +42,6 @@ with the reason each cell is what it is. For the short version, see the
 
 ## Notes
 
-- **`auto` mode** (the default) picks native Music.app on macOS and the API everywhere else, and now falls back native→browser for playback when the native UI click can't start (e.g. Accessibility not granted). Pin `playback="native"` to keep playback Music-app-only.
+- **One `mode` knob** drives both data and playback: `auto` (default; native Music.app on macOS, web API + Chrome web player elsewhere), `native` (local Music.app), or `web` (web API + web player, any OS). Playback always follows the engine, so there is no separate playback preference. `auto` falls back native→browser when a native play can't start (e.g. Accessibility not granted); `native` stays Music-app-only.
 - **Native catalog playback** drives Music.app via UI scripting: it foregrounds the app and moves the cursor to click Play, so it needs **Accessibility permission** and an unlocked screen.
 - **Browser playback / queue** open a real Chrome window (not for headless servers) and need an Apple Music **subscription** for full-track DRM audio — without one, MusicKit serves ~30-second previews.
