@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.0.0] - 2026-06-24
 
 The cross-platform milestone: **full Apple Music control on macOS, Windows, and
-Linux with no $99 Apple Developer account** — library, playlists, *and playback*.
+Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Added
 
@@ -89,7 +89,7 @@ Linux with no $99 Apple Developer account** — library, playlists, *and playbac
 
 ### Added
 
-- **Tokenless API path — no $99 Apple Developer account required.** Catalog
+- **Tokenless API path — no Apple Developer account required.** Catalog
   add-to-library and auto_search→playlist run over the unified Apple Music API
   even without a generated developer token:
   - A **developer-token fallback** that sources the public `AMPWebPlay`

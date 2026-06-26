@@ -347,7 +347,7 @@ osascript stderr messages map to a small set of environmental states. When Apple
 > (developer token generated **or** sourced from Apple's public web player, plus a
 > `media-user-token`). The old UI add path was version-fragile (it broke across
 > macOS/Music.app releases, #37). To enable the API path without an Apple Developer
-> account: `applemusic-mcp signin` (one-time browser login captures the
+> account: `applemusic-mcp login` (one-time browser login captures the
 > media-user-token). The UI primitives below remain only for **playback /
 > play-from-URL** and catalog *search*, not for adding.
 
