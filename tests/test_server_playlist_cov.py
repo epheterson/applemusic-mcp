@@ -2948,6 +2948,51 @@ class TestPlaylistAddApiMode:
         result = server._playlist_add("p.dest", "1234567890")
         assert isinstance(result, str)
 
+    @responses_lib.activate
+    def test_api_mode_catalog_track_found_in_library(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """API mode: an added catalog track that DOES appear in library search
+        exercises the found_id success branch (server.py:3713-3725), then gets
+        added to the playlist. Fully mocked — never touches a real account.
+        (allow_duplicates=True / verify=False skip the extra dup/verify calls.)"""
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        responses_lib.add(
+            responses_lib.POST, "https://api.music.apple.com/v1/me/library", status=202
+        )
+        responses_lib.add(
+            responses_lib.GET,
+            "https://api.music.apple.com/v1/catalog/us/songs/1234567890",
+            json={"data": [{"attributes": {"name": "Song A", "artistName": "Artist A"}}]},
+            status=200,
+        )
+        # Library search now RETURNS the freshly-added song -> found_id branch.
+        responses_lib.add(
+            responses_lib.GET,
+            "https://api.music.apple.com/v1/me/library/search",
+            json={
+                "results": {
+                    "library-songs": {
+                        "data": [
+                            {
+                                "id": "i.libA",
+                                "attributes": {"name": "Song A", "artistName": "Artist A"},
+                            }
+                        ]
+                    }
+                }
+            },
+            status=200,
+        )
+        responses_lib.add(
+            responses_lib.POST,
+            "https://api.music.apple.com/v1/me/library/playlists/p.dest/tracks",
+            status=204,
+        )
+        result = server._playlist_add("p.dest", "1234567890", allow_duplicates=True, verify=False)
+        assert "Found in library" in result and "Song A" in result
+
 
 # ---------------------------------------------------------------------------
 # _playlist_copy: edge cases (lines 3862, 3911, 3915, 3953-3956)

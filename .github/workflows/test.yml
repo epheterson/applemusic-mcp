@@ -34,9 +34,10 @@ jobs:
       - name: Install project
         run: uv sync --all-extras --dev
 
-      - name: Run tests
+      - name: Run tests + coverage
         # AppleScript-dependent tests (test_applescript.py) auto-skip on
         # non-darwin via pytestmark in the file. Cross-platform mock-based
-        # tests in test_server.py / test_auth.py / test_integration.py run
-        # on every Python version.
-        run: uv run pytest tests/ -q --tb=short
+        # tests run on every Python version. Coverage is gated by a regression
+        # floor (fail_under in pyproject); the live TEST_API/TEST_UI gates and
+        # macOS-only branches aren't exercised here, so this is a floor, not 100%.
+        run: uv run pytest tests/ -q --tb=short --cov=applemusic_mcp --cov-report=term-missing
