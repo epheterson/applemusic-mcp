@@ -69,10 +69,10 @@ class TestSetPrefGaps:
         out = server.config(action="set-pref", preference="clean_only", value=False)
         assert "clean_only = False" in out
 
-    def test_bool_pref_auto_search(self, mock_config_dir):
-        """auto_search bool pref."""
-        out = server.config(action="set-pref", preference="auto_search", value=True)
-        assert "auto_search = True" in out
+    def test_bool_pref_auto_add(self, mock_config_dir):
+        """auto_add bool pref."""
+        out = server.config(action="set-pref", preference="auto_add", value=True)
+        assert "auto_add = True" in out
 
     def test_string_pref_storefront_missing_value(self, mock_config_dir):
         """storefront (non-enum string pref) without string_value → error with hint."""

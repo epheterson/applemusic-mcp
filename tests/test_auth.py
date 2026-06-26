@@ -427,11 +427,11 @@ class TestConfigExample:
     """The shipped config.example.json must not enable surprising behavior when
     copied verbatim (security issue #32)."""
 
-    def test_auto_search_defaults_off(self):
+    def test_auto_add_defaults_off(self):
         example = Path(__file__).resolve().parent.parent / "config.example.json"
         data = json.loads(example.read_text())
-        assert data.get("preferences", {}).get("auto_search") is False, (
-            "config.example.json must ship auto_search=false to match the safe " "code default"
+        assert data.get("preferences", {}).get("auto_add") is False, (
+            "config.example.json must ship auto_add=false to match the safe " "code default"
         )
 
 

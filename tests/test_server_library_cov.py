@@ -42,7 +42,7 @@ def _default_prefs(**overrides):
         "playback": "native",
         "fetch_explicit": False,
         "clean_only": False,
-        "auto_search": True,
+        "auto_add": True,
         "storefront": "us",
         "output_format": "text",
     }

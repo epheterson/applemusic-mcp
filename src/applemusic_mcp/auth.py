@@ -302,7 +302,7 @@ def get_user_preferences() -> dict:
         dict with keys:
         - fetch_explicit: bool (default False)
         - clean_only: bool (default False)
-        - auto_search: bool (default False)
+        - auto_add: bool (default False)
         - storefront: str (default "us")
     """
     try:
@@ -315,9 +315,9 @@ def get_user_preferences() -> dict:
     return {
         "fetch_explicit": prefs.get("fetch_explicit", False),
         "clean_only": prefs.get("clean_only", False),
-        "auto_search": prefs.get(
-            "auto_search", False
-        ),  # Default FALSE (don't modify library without permission)
+        # Default FALSE (don't modify the library without permission). `auto_search`
+        # is the old name for this key and is still honored from existing configs.
+        "auto_add": prefs.get("auto_add", prefs.get("auto_search", False)),
         "storefront": prefs.get("storefront", "us"),  # Apple Music region (default: US)
         # Single engine mode, governs BOTH data ops and playback: "auto"
         # (native Music.app on macOS, web API + Chrome web player elsewhere),

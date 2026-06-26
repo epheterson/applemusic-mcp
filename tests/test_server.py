@@ -4372,7 +4372,7 @@ class TestPlaylistAddIdsRequireToken:
             artist="",
             allow_duplicates=False,
             verify=False,
-            auto_search=False,
+            auto_add=False,
         )
 
         assert "Track IDs require an API token" in result
@@ -4411,7 +4411,7 @@ class TestPlaylistAddIdsRequireToken:
             artist="",
             allow_duplicates=False,
             verify=False,
-            auto_search=False,
+            auto_add=False,
         )
 
         assert "Adding by album requires an API token" in result

@@ -3230,7 +3230,7 @@ def _playlist_add(
     artist: str = "",
     allow_duplicates: bool = False,
     verify: bool = True,
-    auto_search: Optional[bool] = None,
+    auto_add: Optional[bool] = None,
 ) -> str:
     """Internal: Add to playlist."""
     steps = []  # Track what we did for verbose output
@@ -3392,10 +3392,10 @@ def _playlist_add(
         if not APPLESCRIPT_AVAILABLE:
             return "Error: Playlist name requires macOS (use playlist ID like 'p.XXX' for cross-platform)"
 
-        # Apply auto_search preference once
-        if auto_search is None:
+        # Apply auto_add preference once
+        if auto_add is None:
             prefs = get_user_preferences()
-            auto_search = prefs["auto_search"]
+            auto_add = prefs["auto_add"]
 
         added = []
         errors = []
@@ -3454,7 +3454,7 @@ def _playlist_add(
                     added.append(f"{s_name} - {s_artist}")
                 else:
                     added.append(f"{name} - {track_artist}" if track_artist else name)
-            elif "Track not found" in result and auto_search:
+            elif "Track not found" in result and auto_add:
                 # Out-of-library auto-search: prefer API, fall back to UI automation
                 search_success, search_result, search_steps = _unified_auto_search_to_playlist(
                     name, track_artist or "", resolved.applescript_name
@@ -3466,11 +3466,11 @@ def _playlist_add(
                 else:
                     errors.append(f"{name}: {search_result}")
             elif "Track not found" in result:
-                # Library miss without auto_search — common new-user surprise.
+                # Library miss without auto_add — common new-user surprise.
                 # Hint at the right next step rather than just stopping at
                 # "not found" with no path forward.
                 errors.append(
-                    f"{name}: not in your library. Set auto_search=True to "
+                    f"{name}: not in your library. Set auto_add=True to "
                     "find it via the Apple Music catalog (uses API if a "
                     "token is configured, UI automation on macOS otherwise)."
                 )
@@ -3626,10 +3626,12 @@ def _playlist_add(
             return msg + fuzzy_info
         elif errors:
             msg = "Errors:\n" + "\n".join(f"  - {e}" for e in errors)
-            if auto_search is False or (
-                auto_search is None and not get_user_preferences().get("auto_search")
+            if auto_add is False or (
+                auto_add is None and not get_user_preferences().get("auto_add")
             ):
-                msg += "\n\n💡 Tip: Enable auto_search to automatically find and add tracks from catalog"
+                msg += (
+                    "\n\n💡 Tip: Enable auto_add to automatically find and add tracks from catalog"
+                )
             return msg + fuzzy_info
         else:
             if steps:
@@ -3660,7 +3662,7 @@ def _playlist_add(
             if ui_successes:
                 return "\n".join(
                     steps
-                )  # pragma: no cover  # unreachable: [UI] steps only come from AppleScript auto_search; never present in this API-mode branch
+                )  # pragma: no cover  # unreachable: [UI] steps only come from AppleScript auto_add; never present in this API-mode branch
             return "Error: No tracks to add\n" + "\n".join(steps)
 
         library_ids = []
@@ -3992,9 +3994,9 @@ def playlist(
     fetch_explicit: Optional[bool] = None,
     allow_duplicates: bool = False,
     verify: bool = True,
-    auto_search: Optional[bool] = None,
+    auto_add: Optional[bool] = None,
 ) -> str:
-    """Playlist and folder operations. Actions: list, tracks, search, create, add, copy, move (macOS), path (macOS), remove (macOS), delete (macOS), rename (macOS). Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', set auto_search=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own."""
+    """Playlist and folder operations. Actions: list, tracks, search, create, add, copy, move (macOS), path (macOS), remove (macOS), delete (macOS), rename (macOS). Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own."""
     action = action.lower().strip().replace("-", "_")
 
     if action == "list":
@@ -4023,7 +4025,7 @@ def playlist(
     elif action == "add":
         if _engine() == "api" and track and not album:
             return _playlist_add_api(playlist, track, artist)
-        return _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_search)
+        return _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_add)
     elif action == "copy":
         return _playlist_copy(source, new_name)
     elif action == "remove":
@@ -6103,7 +6105,7 @@ def config(
 
         # === SET PREFERENCE ===
         if action == "set-pref":
-            bool_prefs = ["fetch_explicit", "clean_only", "auto_search"]
+            bool_prefs = ["fetch_explicit", "clean_only", "auto_add"]
             string_prefs = ["storefront", "mode"]
             # Enum string prefs: only these values are accepted. `mode` is the
             # single engine knob (playback follows it). `api` stays accepted as a
@@ -6269,7 +6271,7 @@ def config(
             )
             output.append(f"  fetch_explicit: {prefs['fetch_explicit']}")
             output.append(f"  clean_only: {prefs['clean_only']}")
-            output.append(f"  auto_search: {prefs['auto_search']}")
+            output.append(f"  auto_add: {prefs['auto_add']}")
             output.append("")
 
             # Track Metadata Cache

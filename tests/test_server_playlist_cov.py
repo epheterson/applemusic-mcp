@@ -1224,7 +1224,7 @@ class TestPlaylistTracks:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -1260,7 +1260,7 @@ class TestPlaylistTracks:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -1282,7 +1282,7 @@ class TestPlaylistTracks:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -1299,7 +1299,7 @@ class TestPlaylistTracks:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -1319,7 +1319,7 @@ class TestPlaylistTracks:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -1642,7 +1642,7 @@ class TestPlaylistAdd:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -1663,7 +1663,7 @@ class TestPlaylistAdd:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -1681,7 +1681,7 @@ class TestPlaylistAdd:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -1700,7 +1700,7 @@ class TestPlaylistAdd:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -1727,7 +1727,7 @@ class TestPlaylistAdd:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -1735,7 +1735,7 @@ class TestPlaylistAdd:
             },
         )
         result = server._playlist_add("My Playlist", "UnknownSong", verify=False)
-        assert "not in your library" in result or "auto_search" in result
+        assert "not in your library" in result or "auto_add" in result
 
     def test_applescript_add_split_match(self, monkeypatch):
         """When _smart_as_add_track_to_playlist returns split_match, name is formatted."""
@@ -1754,7 +1754,7 @@ class TestPlaylistAdd:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -1787,7 +1787,7 @@ class TestPlaylistAdd:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -1818,7 +1818,7 @@ class TestPlaylistAdd:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -1877,7 +1877,7 @@ class TestPlaylistDispatcher:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -1970,7 +1970,7 @@ class TestPlaylistDispatcher:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "api",
                 "storefront": "us",
@@ -1999,7 +1999,7 @@ class TestPlaylistDispatcher:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "native",
                 "storefront": "us",
@@ -2376,7 +2376,7 @@ class TestPlaylistAddIdsWithNoToken:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -2399,7 +2399,7 @@ class TestPlaylistAddIdsWithNoToken:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -2688,7 +2688,7 @@ class TestPlaylistAddTrackInputError:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -2723,12 +2723,12 @@ class TestPlaylistAddResultBuilding:
 
         monkeypatch.setattr(server, "_smart_as_add_track_to_playlist", mock_smart_add)
         monkeypatch.setattr(server, "_verify_track_in_playlist", lambda pl, n, a: True)
-        # Inject a step by having the second track be "Track not found" type (not auto_search)
+        # Inject a step by having the second track be "Track not found" type (not auto_add)
         monkeypatch.setattr(
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -2748,7 +2748,7 @@ class TestPlaylistAddResultBuilding:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -2761,7 +2761,7 @@ class TestPlaylistAddResultBuilding:
         assert isinstance(result, str)
 
     def test_errors_only_no_autosearch_shows_tip(self, monkeypatch):
-        """Line 3619-3625: only errors, auto_search=False -> shows tip."""
+        """Line 3619-3625: only errors, auto_add=False -> shows tip."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "My PL"}]))
@@ -2775,16 +2775,16 @@ class TestPlaylistAddResultBuilding:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
                 "output_format": "text",
             },
         )
-        result = server._playlist_add("My PL", "Song A", auto_search=False)
+        result = server._playlist_add("My PL", "Song A", auto_add=False)
         assert "Errors" in result
-        assert "auto_search" in result or "Tip" in result
+        assert "auto_add" in result or "Tip" in result
 
 
 # ---------------------------------------------------------------------------
@@ -3104,13 +3104,13 @@ class TestPlaylistCopyEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# _playlist_add: auto_search path (lines 3451-3459)
+# _playlist_add: auto_add path (lines 3451-3459)
 # ---------------------------------------------------------------------------
 
 
 class TestPlaylistAddAutoSearch:
     def test_auto_search_succeeds(self, monkeypatch):
-        """Lines 3451-3458: auto_search=True, track not found locally but catalog found."""
+        """Lines 3451-3458: auto_add=True, track not found locally but catalog found."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "My PL"}]))
@@ -3129,18 +3129,18 @@ class TestPlaylistAddAutoSearch:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": True,
+                "auto_add": True,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
                 "output_format": "text",
             },
         )
-        result = server._playlist_add("My PL", "New Release", auto_search=True)
+        result = server._playlist_add("My PL", "New Release", auto_add=True)
         assert "Added" in result or "New Release" in result
 
     def test_auto_search_fails(self, monkeypatch):
-        """Lines 3458-3459: auto_search=True but search also fails."""
+        """Lines 3458-3459: auto_add=True but search also fails."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "My PL"}]))
@@ -3159,14 +3159,14 @@ class TestPlaylistAddAutoSearch:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": True,
+                "auto_add": True,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
                 "output_format": "text",
             },
         )
-        result = server._playlist_add("My PL", "Ghost Song", auto_search=True)
+        result = server._playlist_add("My PL", "Ghost Song", auto_add=True)
         assert "Errors" in result or "not found" in result.lower()
 
 
@@ -3317,7 +3317,7 @@ class TestPlaylistTracksFetchExplicit:
                 "fetch_explicit": True,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3357,7 +3357,7 @@ class TestPlaylistAddAppleScriptIds:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -3386,7 +3386,7 @@ class TestPlaylistAddAppleScriptIds:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -3416,7 +3416,7 @@ class TestPlaylistTracksApiPaths:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3454,7 +3454,7 @@ class TestPlaylistTracksApiPaths:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3479,7 +3479,7 @@ class TestPlaylistTracksApiPaths:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3505,7 +3505,7 @@ class TestPlaylistTracksApiPaths:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3561,7 +3561,7 @@ class TestPlaylistTracksApiPaths:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3609,7 +3609,7 @@ class TestPlaylistTracksApiPaths:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3650,7 +3650,7 @@ class TestPlaylistTracksApiPaths:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3671,7 +3671,7 @@ class TestPlaylistTracksApiPaths:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3691,7 +3691,7 @@ class TestPlaylistTracksApiPaths:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3731,7 +3731,7 @@ class TestPlaylistTracksApiPaths:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3756,7 +3756,7 @@ class TestPlaylistTracksApiPaths:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3829,7 +3829,7 @@ class TestPlaylistTracksAppleScriptFilter:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3867,7 +3867,7 @@ class TestPlaylistTracksAppleScriptFilter:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -3960,7 +3960,7 @@ class TestPlaylistAddAlbum:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4027,7 +4027,7 @@ class TestPlaylistAddAlbum:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4057,7 +4057,7 @@ class TestPlaylistAddAlbum:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4088,7 +4088,7 @@ class TestPlaylistAddAlbum:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4108,7 +4108,7 @@ class TestPlaylistAddAlbum:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4193,7 +4193,7 @@ class TestPlaylistAddAlbum:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4237,7 +4237,7 @@ class TestPlaylistAddIdsAppleScriptMode:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4275,7 +4275,7 @@ class TestPlaylistAddIdsAppleScriptMode:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4315,7 +4315,7 @@ class TestPlaylistAddIdsAppleScriptMode:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4355,7 +4355,7 @@ class TestPlaylistAddIdsAppleScriptMode:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4399,7 +4399,7 @@ class TestPlaylistAddIdsAppleScriptMode:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4709,7 +4709,7 @@ class TestFetchExplicitDetailBranches:
                 "fetch_explicit": True,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -4863,7 +4863,7 @@ class TestPlaylistAddResultBuildingEdge:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4884,7 +4884,7 @@ class TestPlaylistAddResultBuildingEdge:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -4916,7 +4916,7 @@ class TestPlaylistTracksOptimizedBreaks:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -4943,7 +4943,7 @@ class TestPlaylistTracksOptimizedBreaks:
                 "fetch_explicit": False,
                 "output_format": "text",
                 "mode": "auto",
-                "auto_search": False,
+                "auto_add": False,
                 "storefront": "us",
             },
         )
@@ -5268,7 +5268,7 @@ class TestPlaylistAddRemainingCoverage:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -5540,7 +5540,7 @@ class TestPlaylistAddRemainingCoverage:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -5592,7 +5592,7 @@ class TestPlaylistAddRemainingCoverage:
             server,
             "get_user_preferences",
             lambda: {
-                "auto_search": False,
+                "auto_add": False,
                 "fetch_explicit": False,
                 "mode": "auto",
                 "storefront": "us",
@@ -5611,6 +5611,6 @@ class TestPlaylistAddRemainingCoverage:
 #   _resolve_playlist always receives a non-empty string here, so error is always None.
 # - server.py:3653 — `return "\n".join(steps)` in API mode:
 #   The [UI] step prefix only comes from _unified_auto_search_to_playlist,
-#   which is only called in AppleScript mode (auto_search=True with a name playlist).
+#   which is only called in AppleScript mode (auto_add=True with a name playlist).
 #   In API mode (playlist ID like p.xxx), that function is never called, so
 #   ui_successes is always empty and line 3653 is never reached.

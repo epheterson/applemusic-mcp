@@ -424,7 +424,7 @@ class TestGetUserPreferences:
         prefs = auth.get_user_preferences()
         assert prefs["fetch_explicit"] is False
         assert prefs["clean_only"] is False
-        assert prefs["auto_search"] is False
+        assert prefs["auto_add"] is False
         assert prefs["storefront"] == "us"
         assert prefs["mode"] == "auto"
         # Single mode now; playback follows it and token storage is auto by platform.

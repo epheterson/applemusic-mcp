@@ -3,9 +3,9 @@
   "key_id": "YOUR_KEY_ID",
   "private_key_path": "~/path/to/AuthKey_KEYID.p8",
   "preferences": {
-    "fetch_explicit": true,
-    "reveal_on_library_miss": true,
+    "mode": "auto",
+    "fetch_explicit": false,
     "clean_only": false,
-    "auto_search": false
+    "auto_add": false
   }
 }

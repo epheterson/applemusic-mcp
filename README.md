@@ -136,7 +136,7 @@ Seven action-based tools keep the MCP context small. Each takes an `action` and 
 <summary>Common patterns</summary>
 
 - **`track` is one parameter that batches.** Pass a single name or ID, a comma- or newline-separated list, or a JSON array (`["A","B"]` or `[{"name":"A","artist":"X"}]`). Whole albums via `album`.
-- **Adding to a playlist** auto-searches the catalog and skips duplicates. Set the `auto_search` preference to `true` for "fill this playlist" workflows (default `false`).
+- **Adding to a playlist** auto-searches the catalog and skips duplicates. Set the `auto_add` preference to `true` for "fill this playlist" workflows (default `false`).
 - **Output format** on list tools: `format` (`text` / `json` / `csv` / `none`), `export` (writes a file readable as an MCP resource via `exports://`), `full` (all metadata).
 - **URL playback** handles albums, playlists, and songs: `playback(action="play", url="https://music.apple.com/...")`.
 - **Storefronts:** catalog actions take an optional `storefront` (for example `storefront="it"`) to query other regions without changing your default.
