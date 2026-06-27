@@ -12,6 +12,10 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Added
 
+- **Find a playlist by name** with `playlist(action="list", filter="jack")`, a
+  loose name match that returns just the matching playlists with their IDs
+  (instead of dumping the whole library). `action="search"` stays what it was:
+  searching the tracks inside a given playlist.
 - **Single engine `mode`** that governs both data and playback: `auto` (native
   Music.app on macOS, web everywhere else), `native` (local Music.app), or `web`
   (Apple Music web API + Chrome web player on any OS, even a Mac not signed into
@@ -45,6 +49,11 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Fixed
 
+- **`playlist(action="list")` flaked intermittently on macOS.** A single cloud
+  playlist that couldn't return its `persistent ID` mid-sync (AppleScript -1728)
+  aborted the whole listing, so the call sometimes returned zero playlists and
+  sometimes the full set. Each property is now read defensively per playlist, so
+  one bad entry can't take down the listing.
 - **Browser playback was preview-only.** Playwright's default
   `--disable-component-update` flag stopped Chrome from registering the Widevine
   CDM, so MusicKit silently served ~30s previews and playlists errored "No DRM

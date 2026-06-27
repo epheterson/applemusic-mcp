@@ -1139,6 +1139,35 @@ class TestPlaylistList:
         result = server._playlist_list()
         assert "No playlists" in result
 
+    def test_filter_narrows_by_name(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(
+            server.asc,
+            "get_playlists",
+            lambda: (
+                True,
+                [
+                    {"id": "A", "name": "Jack & Norah", "track_count": 5, "smart": False},
+                    {"id": "B", "name": "Jack Heard", "track_count": 3, "smart": False},
+                    {"id": "C", "name": "Reggae Tunes", "track_count": 9, "smart": False},
+                ],
+            ),
+        )
+        result = server._playlist_list(filter="jack")
+        assert "Jack & Norah" in result
+        assert "Jack Heard" in result
+        assert "Reggae Tunes" not in result
+
+    def test_filter_no_match(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(
+            server.asc,
+            "get_playlists",
+            lambda: (True, [{"id": "C", "name": "Reggae Tunes", "track_count": 9, "smart": False}]),
+        )
+        result = server._playlist_list(filter="zzz")
+        assert "No playlists matching 'zzz'" in result
+
     def test_applescript_failure(self, monkeypatch):
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (False, "Music.app not running"))

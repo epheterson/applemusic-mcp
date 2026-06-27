@@ -437,6 +437,7 @@ When a user asks for something, the right MCP tool depends on whether they're se
 | Goal | Use | Notes |
 |---|---|---|
 | Find a song the user already has | `library(action='search', query='...')` | Local library only. AppleScript on macOS, API otherwise. |
+| Find a playlist by name | `playlist(action='list', filter='jack')` | Loose name match, returns matching playlists with IDs. Do **not** use `action='search'` for this — that searches the *tracks inside* a given playlist and needs a `playlist` param. |
 | List the user's tracks in a genre | `library(action='search', query='Rock', types='genre')` | Filters on the track's genre field — **macOS-only**. Do NOT route a genre name through plain full-text search: it never looks at the genre field, so "Rock" would false-match a song titled *"Rock Your Body."* Zero matches returns "No tracks found"; off macOS it reports genre filtering isn't available via the API. |
 | Find a song in Apple Music's full catalog | `catalog(action='search', query='...')` | Tries API first, falls back to Music.app UI search on tokenless macOS. |
 | Add a catalog song to the user's library | `library(action='add', track='...')` | API only — needs a developer token (generated or harvested) + a media-user-token (`signin`). The UI-automation fallback was removed in 0.15.0 (see note above). |

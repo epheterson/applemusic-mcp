@@ -2419,8 +2419,9 @@ def _playlist_list(
     format: str = "text",
     export: str = "none",
     full: bool = False,
+    filter: str = "",
 ) -> str:
-    """Internal: Get all playlists."""
+    """Internal: Get all playlists, optionally narrowed by name (loose match)."""
     playlist_data = []
 
     # Try AppleScript first (local, instant, no auth required)
@@ -2439,6 +2440,10 @@ def _playlist_list(
                         "can_edit": True,  # AS can edit any playlist
                     }
                 )
+            if filter:
+                playlist_data = [p for p in playlist_data if _loose_contains(filter, p["name"])]
+                if not playlist_data:
+                    return f"No playlists matching '{filter}'"
             return format_output(playlist_data, format, export, full, "playlists")
         # AppleScript failed on macOS — surface the actionable error
         # instead of cascading to API and leaking "Developer token not
@@ -2491,6 +2496,11 @@ def _playlist_list(
                     "has_catalog": attrs.get("hasCatalog", False),
                 }
             )
+
+        if filter:
+            playlist_data = [p for p in playlist_data if _loose_contains(filter, p["name"])]
+            if not playlist_data:
+                return f"No playlists matching '{filter}'"
 
         # Add token warning if text format
         warning = get_token_expiration_warning()
@@ -3996,11 +4006,11 @@ def playlist(
     verify: bool = True,
     auto_add: Optional[bool] = None,
 ) -> str:
-    """Playlist and folder operations. Actions: list, tracks, search, create, add, copy, move (macOS), path (macOS), remove (macOS), delete (macOS), rename (macOS). Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own."""
+    """Playlist and folder operations. Actions: list, tracks, search, create, add, copy, move (macOS), path (macOS), remove (macOS), delete (macOS), rename (macOS). To find a playlist by name, use action='list' with filter='jack' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own."""
     action = action.lower().strip().replace("-", "_")
 
     if action == "list":
-        return _playlist_list(format, export, full)
+        return _playlist_list(format, export, full, filter)
     elif action == "tracks":
         return _playlist_tracks(
             playlist, filter, limit, offset, format, export, full, fetch_explicit

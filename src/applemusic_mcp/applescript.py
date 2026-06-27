@@ -534,20 +534,42 @@ def get_playlists() -> tuple[bool, list[dict]]:
     Returns:
         Tuple of (success, list of playlist dicts or error string)
     """
+    # Each property is read defensively: a single playlist that can't return,
+    # say, its persistent ID (cloud playlists mid-sync raise -1728) must not
+    # abort the whole listing. We still emit the row by name so it stays
+    # addressable, just with whatever fields it would give up.
     script = """
     tell application "Music"
         set output to ""
         repeat with p in user playlists
-            set pName to name of p
-            set pId to persistent ID of p
-            set pSmart to smart of p
-            set pCount to count of tracks of p
+            try
+                set pName to name of p
+            on error
+                set pName to ""
+            end try
+            try
+                set pId to persistent ID of p
+            on error
+                set pId to ""
+            end try
+            try
+                set pSmart to smart of p
+            on error
+                set pSmart to false
+            end try
+            try
+                set pCount to count of tracks of p
+            on error
+                set pCount to 0
+            end try
             try
                 set pTime to time of p
             on error
                 set pTime to "0:00"
             end try
-            set output to output & pName & "|||" & pId & "|||" & pSmart & "|||" & pCount & "|||" & pTime & "\\n"
+            if pName is not "" then
+                set output to output & pName & "|||" & pId & "|||" & pSmart & "|||" & pCount & "|||" & pTime & "\\n"
+            end if
         end repeat
         return output
     end tell
