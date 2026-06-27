@@ -28,13 +28,13 @@ Three engines back the server. **Native** drives the local Music.app on macOS vi
 |**Playlist** create / add / remove / rename|✓|✓|—|
 |Playlist copy|✓|✗|—|
 |Playlist delete|✓|✓ (web token)|—|
-|Folders — single level + move in/out|✓|✓|—|
-|Folders — nested paths / tree / `path`|✓|✗|✗|
-|**Playback** — play song / album / playlist / URL|✓|—|✓|
-|Controls — pause / stop / next / prev / seek|✓|—|✓|
-|Settings — volume / shuffle / repeat|✓|—|✓|
+|Folders: single level + move in/out|✓|✓|—|
+|Folders: nested paths / tree / `path`|✓|✗|✗|
+|**Playback**: play song / album / playlist / URL|✓|—|✓|
+|Controls: pause / stop / next / prev / seek|✓|—|✓|
+|Settings: volume / shuffle / repeat|✓|—|✓|
 |now_playing|✓|—|✓|
-|**Up Next queue** — view / next / last / remove / jump / clear / autoplay|✗|—|✓|
+|**Up Next queue**: view / next / last / remove / jump / clear / autoplay|✗|—|✓|
 |Reveal in app|✓|—|✓ (navigates page)|
 |AirPlay device select|✓|✗|✗|
 |Library snapshot / integrity|✓|✗|✗|
