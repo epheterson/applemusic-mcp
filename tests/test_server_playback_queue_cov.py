@@ -115,6 +115,26 @@ class TestPlaybackDispatcher:
         monkeypatch.setattr(server, "_playback_play", lambda *a, **k: "native result")
         assert server.playback(action="play", track="X") == "native result"
 
+    def test_engine_override_web_forces_browser(self, monkeypatch):
+        """engine='web' uses the browser path even when mode resolves to native."""
+        monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
+        monkeypatch.setattr(server, "_browser_play", lambda *a, **k: "browser played")
+        monkeypatch.setattr(server, "_playback_play", lambda *a, **k: "native played")
+        assert server.playback(action="play", track="X", engine="web") == "browser played"
+
+    def test_engine_override_native_forces_native(self, monkeypatch):
+        """engine='native' uses Music.app even when mode resolves to web."""
+        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(server, "_browser_play", lambda *a, **k: "browser played")
+        monkeypatch.setattr(server, "_playback_play", lambda *a, **k: "native played")
+        assert server.playback(action="play", track="X", engine="native") == "native played"
+
+    def test_engine_override_invalid_value_errors(self, monkeypatch):
+        _native(monkeypatch)
+        out = server.playback(action="play", track="X", engine="bogus")
+        assert "Error" in out and "engine" in out.lower()
+
     def test_control_no_control_param_error(self, monkeypatch):
         """Lines 7006-7007: control without control param."""
         _native(monkeypatch)
@@ -144,7 +164,7 @@ class TestPlaybackDispatcher:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
         out = server.playback(action="control", control="play")
-        assert "browser" in out.lower() or "signin" in out.lower()
+        assert "web" in out.lower() or "login" in out.lower()
 
     def test_control_native_routes(self, monkeypatch):
         """Line 7015: control in native mode -> _playback_control."""
@@ -180,7 +200,7 @@ class TestPlaybackDispatcher:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
         out = server.playback(action="now_playing")
-        assert "browser" in out.lower()
+        assert "web" in out.lower()
 
     def test_now_playing_native(self, monkeypatch):
         """Line 7026: now_playing in native mode."""
@@ -236,7 +256,7 @@ class TestPlaybackDispatcher:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
         out = server.playback(action="settings", volume=50)
-        assert "browser" in out.lower()
+        assert "web" in out.lower()
 
     def test_settings_native(self, monkeypatch):
         """Line 7039: settings in native mode."""
@@ -564,7 +584,7 @@ class TestCatalogMissPlay:
         out = server._catalog_miss_play(
             "Strobe", "deadmau5", "https://music.apple.com/...", reveal=False
         )
-        assert "Accessibility" in out and "browser" in out.lower()
+        assert "Accessibility" in out and ("web" in out.lower() or "engine=" in out.lower())
 
     def test_no_user_token_signin_message(self, monkeypatch):
         """Line 7210: no user token -> 'signin' in message."""
@@ -576,7 +596,7 @@ class TestCatalogMissPlay:
         out = server._catalog_miss_play(
             "Strobe", "deadmau5", "https://music.apple.com/...", reveal=False
         )
-        assert "signin" in out.lower()
+        assert "login" in out.lower()
 
 
 # ===========================================================================

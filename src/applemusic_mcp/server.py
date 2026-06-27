@@ -7017,14 +7017,14 @@ def queue(
 # Playback transport (cross-platform — browser web player or native Music.app)
 # =============================================================================
 # Registered unconditionally so non-macOS clients get it too. play/control/
-# now_playing/settings run through the browser web player or, on macOS, the
-# local Music.app (the `playback` preference: auto/native/browser). reveal/
-# airplay are macOS-only and gated at runtime.
+# now_playing/settings run through the web player or, on macOS, the local
+# Music.app — chosen by the `mode` preference (auto/native/web) or a per-call
+# engine= override. reveal/airplay are macOS-only and gated at runtime.
 
 _PLAYBACK_NEEDS_BROWSER = (
-    "Playback isn't available: you've pinned native (macOS) playback, but this "
-    "isn't macOS. Set the `playback` preference to `browser` (config set-pref) "
-    "and run `applemusic-mcp signin`, or use `auto`."
+    "Native (Music.app) playback needs macOS, and this host isn't macOS. "
+    "Set mode to web (config set-pref preference=mode string_value=web) and run "
+    "`applemusic-mcp login`, or call playback with engine='web' for this one request."
 )
 
 
@@ -7055,17 +7055,33 @@ def playback(
     track_name: str = "",
     # airplay params
     device_name: str = "",
+    # engine override (one call only)
+    engine: str = "",
 ) -> str:
     """Playback transport. play/control/now_playing/settings work cross-platform
-    via the browser web player, or natively through Music.app on macOS (the
-    `playback` preference: auto/native/browser). Browser playback needs a
-    signed-in Chrome (`applemusic-mcp signin`) + a desktop session. reveal and
-    airplay are macOS-only. For the Up Next queue, use the separate `queue` tool.
+    via the browser web player, or natively through Music.app on macOS. The engine
+    follows the `mode` preference by default; pass engine='web' or engine='native'
+    to override it for ONE call (e.g. queue in the web player, then
+    playback(action='play', engine='web') so transport reaches that queue — no
+    global pref flip). Browser playback needs a signed-in Chrome
+    (`applemusic-mcp login`) + a desktop session. reveal and airplay are
+    macOS-only. For the Up Next queue, use the separate `queue` tool.
     Actions: play, control, now_playing, settings, reveal, airplay."""
     action = action.lower().strip().replace("-", "_")
 
+    # Per-call engine override. Empty = follow the mode preference.
+    eng = engine.lower().strip()
+    if eng in ("web", "api", "browser"):
+        use_browser = True
+    elif eng == "native":
+        use_browser = False
+    elif eng:
+        return f"Error: engine must be 'web' or 'native' (got {engine!r})"
+    else:
+        use_browser = _use_browser_playback()
+
     if action == "play":
-        if _use_browser_playback():
+        if use_browser:
             return _browser_play(track, artist, url, playlist, album, shuffle)
         if not APPLESCRIPT_AVAILABLE:
             return _PLAYBACK_NEEDS_BROWSER
@@ -7073,7 +7089,7 @@ def playback(
     elif action == "control":
         if not control:
             return "Error: control param required. Use: play, pause, stop, next, previous, seek"
-        if _use_browser_playback():
+        if use_browser:
             from . import browser
 
             ok, msg = browser.playback_control(control, seconds)
@@ -7082,7 +7098,7 @@ def playback(
             return _PLAYBACK_NEEDS_BROWSER
         return _playback_control(control, seconds)
     elif action == "now_playing":
-        if _use_browser_playback():
+        if use_browser:
             from . import browser
 
             np = browser.now_playing()
@@ -7093,7 +7109,7 @@ def playback(
             return _PLAYBACK_NEEDS_BROWSER
         return _playback_now_playing()
     elif action == "settings":
-        if _use_browser_playback():
+        if use_browser:
             from . import browser
 
             shuffle_b = (
@@ -7109,7 +7125,7 @@ def playback(
         name = track_name or track
         if not name and not url:
             return "Error: track_name, track, or url required for reveal action"
-        if _use_browser_playback():
+        if use_browser:
             from . import browser
 
             target = url
@@ -7273,9 +7289,9 @@ if APPLESCRIPT_AVAILABLE:
             "Grant Accessibility (System Settings → Privacy & Security → Accessibility) "
             "for your terminal/MCP host, "
             + (
-                "or set playback to browser."
+                "or play in the web player: set mode=web, or pass engine='web' for this call."
                 if has_user_token()
-                else "or run `signin` to play in the browser (needs an Apple Music subscription)."
+                else "or run `login` to play in the web player (needs an Apple Music subscription)."
             )
         )
 

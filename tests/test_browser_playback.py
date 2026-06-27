@@ -155,7 +155,7 @@ def test_playback_native_pin_on_non_mac_gives_clear_message(monkeypatch):
     monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
     monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
     out = server.playback(action="play", track="X")
-    assert "browser" in out.lower() and "signin" in out.lower()
+    assert "web" in out.lower() and "login" in out.lower()
 
 
 def test_playback_reveal_in_browser(monkeypatch):
