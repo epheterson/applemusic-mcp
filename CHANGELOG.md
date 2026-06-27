@@ -49,6 +49,13 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Fixed
 
+- **`auth-status` could claim "add works" while adds failed.** Its API probe
+  tested the generated developer token against `api.music.apple.com`, but catalog
+  adds, playlist edits, and ratings run through `amp-api.music.apple.com` with the
+  harvested web token, a different credential against a different host. The two
+  could disagree (reads fine, writes 401). Status now probes the actual mutation
+  path and reports it on its own line, and the "Ready" verdict reflects whether
+  add/playlist/rate truly work, not just whether tokens are present.
 - **`playlist(action="list")` flaked intermittently on macOS.** A single cloud
   playlist that couldn't return its `persistent ID` mid-sync (AppleScript -1728)
   aborted the whole listing, so the call sometimes returned zero playlists and

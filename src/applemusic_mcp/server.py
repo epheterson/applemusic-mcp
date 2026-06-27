@@ -6398,8 +6398,15 @@ def config(
         return f"Error: {str(e)}"
 
 
-def _config_auth_status() -> str:
-    """Check if authentication tokens are valid and API is accessible."""
+def _config_auth_status(mutation_status: "Optional[str]" = None) -> str:
+    """Check if authentication tokens are valid and API is accessible.
+
+    ``mutation_status`` (from ``amp_api.session_status()``) is rendered as a
+    separate line when supplied. It matters because catalog adds, playlist edits,
+    and ratings go through ``amp-api.music.apple.com`` with the harvested web
+    token, NOT the ``api.music.apple.com`` read path tested below — so the two can
+    disagree (reads fine, writes 401). The caller probes it once and passes it in.
+    """
     dev_info = developer_token_info()
     user_present = has_user_token()
 
@@ -6475,6 +6482,28 @@ def _config_auth_status() -> str:
                 status.append(f"API Connection: FAILED ({response.status_code})")
         except Exception as e:
             status.append(f"API Connection: ERROR - {str(e)}")
+
+    # Mutation path (catalog add, playlist edit, rate): amp-api + the harvested
+    # web token. Reported separately because it can fail while the read path above
+    # is fine — that mismatch is what makes "add works" claims untrustworthy.
+    if mutation_status is not None:
+        status.append(
+            {
+                "ok": "Mutations (add / playlist / rate): OK (amp-api)",
+                "expired": (
+                    "Mutations (add / playlist / rate): UNAUTHORIZED — the web-player "
+                    "session expired. Re-run `applemusic-mcp signin`."
+                ),
+                "throttled": (
+                    "Mutations (add / playlist / rate): RATE-LIMITED (429) — wait a "
+                    "moment and retry."
+                ),
+                "error": (
+                    "Mutations (add / playlist / rate): ERROR reaching amp-api "
+                    "(check your connection)."
+                ),
+            }.get(mutation_status, f"Mutations (add / playlist / rate): {mutation_status}")
+        )
 
     return "\n".join(status)
 
@@ -6781,13 +6810,29 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
 
     if action in ("status", "info"):
         mode = (get_user_preferences().get("mode") or "auto").lower()
-        body = _config_auth_status()
-        ready = has_any_developer_token() and has_user_token()
-        nxt = (
-            "✅ Ready — catalog, playlists, add, and rate all work."
-            if ready
-            else "⚠️ Not signed in yet — run config(action='signin') to finish setup."
-        )
+        # The "add/playlist/rate work" claim must be backed by the SAME path those
+        # operations use (amp-api + web token), not just token presence — otherwise
+        # status can promise writes that 401. Probe it once; pass it to the body
+        # renderer and use it for the verdict.
+        tokens_present = has_any_developer_token() and has_user_token()
+        mut = amp_api.session_status() if tokens_present else None
+        body = _config_auth_status(mut)
+        if not tokens_present:
+            nxt = "⚠️ Not signed in yet — run config(action='signin') to finish setup."
+        elif mut == "ok":
+            nxt = "✅ Ready — catalog, playlists, add, and rate all work."
+        elif mut == "throttled":
+            nxt = "⚠️ Rate-limited (429) right now — auth looks fine; wait and retry."
+        elif mut == "expired":
+            nxt = (
+                "⚠️ Reads may work, but add/playlist/rate are unauthorized — the "
+                "web-player session expired. Re-run config(action='signin')."
+            )
+        else:
+            nxt = (
+                "⚠️ Couldn't confirm the add/playlist/rate path (amp-api unreachable). "
+                "Check your connection, then retry."
+            )
         return f"{body}\nMode: {mode}\n\n{nxt}"
 
     if action in ("signin", "login"):

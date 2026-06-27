@@ -564,13 +564,32 @@ class TestAuthTool:
         )
         (d / "music_user_token.json").write_text(json.dumps({"music_user_token": user}))
 
-    def test_status_ready(self, mock_config_dir, mock_developer_token, mock_user_token):
+    def test_status_ready(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
         self._tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        # The verdict now hinges on the real mutation path (amp-api), so control it.
+        monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         with patch.object(server, "get_headers", return_value={}):
             with patch("requests.get") as mg:
                 mg.return_value.status_code = 200
                 out = server.config(action="status")
         assert "Mode:" in out and "Ready" in out
+        assert "Mutations" in out and "OK" in out
+
+    def test_status_tokens_present_but_mutations_unauthorized(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        # The exact trap: tokens look fine, reads work, but the write path 401s.
+        # Status must NOT claim add works.
+        self._tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server.amp_api, "session_status", lambda: "expired")
+        with patch.object(server, "get_headers", return_value={}):
+            with patch("requests.get") as mg:
+                mg.return_value.status_code = 200
+                out = server.config(action="status")
+        assert "Ready" not in out
+        assert "unauthorized" in out.lower() and "signin" in out.lower()
 
     def test_status_not_signed_in(self, mock_config_dir):
         out = server.config(action="status")
