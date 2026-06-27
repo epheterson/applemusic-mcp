@@ -176,6 +176,7 @@ class TestPlaybackDispatcher:
     def test_now_playing_browser_track_found(self, monkeypatch):
         """Lines 7017-7023: now_playing via browser, something playing."""
         monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: None)
         from applemusic_mcp import browser
 
         monkeypatch.setattr(
@@ -189,11 +190,48 @@ class TestPlaybackDispatcher:
     def test_now_playing_browser_nothing(self, monkeypatch):
         """Line 7021: browser now_playing returns None."""
         monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: None)
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "now_playing", lambda: None)
         out = server.playback(action="now_playing")
         assert "Nothing" in out
+
+    def test_now_playing_split_web_selected_native_alive(self, monkeypatch):
+        """Web is the active engine but the native app is also playing a different
+        track — the split must be surfaced (the exact audition-trace confusion)."""
+        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        from applemusic_mcp import browser
+
+        monkeypatch.setattr(
+            browser,
+            "now_playing",
+            lambda: {"name": "Now's The Time", "artist": "Charlie Parker", "album": "X"},
+        )
+        monkeypatch.setattr(
+            server.asc,
+            "now_playing_if_running",
+            lambda: {"name": "Jeanie With The Light Brown Hair", "state": "paused"},
+        )
+        out = server.playback(action="now_playing")
+        assert "Now's The Time" in out
+        assert "Engine split" in out and "Jeanie" in out and "native" in out.lower()
+
+    def test_now_playing_no_split_when_same_track(self, monkeypatch):
+        """Both engines on the same track → no spurious split warning."""
+        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        from applemusic_mcp import browser
+
+        monkeypatch.setattr(
+            browser, "now_playing", lambda: {"name": "Strobe", "artist": "deadmau5", "album": "X"}
+        )
+        monkeypatch.setattr(
+            server.asc, "now_playing_if_running", lambda: {"name": "Strobe", "state": "playing"}
+        )
+        out = server.playback(action="now_playing")
+        assert "Engine split" not in out
 
     def test_now_playing_no_applescript(self, monkeypatch):
         """Lines 7024-7025: now_playing, no AppleScript."""
@@ -206,6 +244,10 @@ class TestPlaybackDispatcher:
         """Line 7026: now_playing in native mode."""
         _native(monkeypatch)
         monkeypatch.setattr(server, "_playback_now_playing", lambda: "State: playing\nTrack: X")
+        monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: {"name": "X"})
+        from applemusic_mcp import browser
+
+        monkeypatch.setattr(browser, "now_playing_if_running", lambda: None)
         out = server.playback(action="now_playing")
         assert "State: playing" in out
 

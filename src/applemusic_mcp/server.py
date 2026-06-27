@@ -6962,12 +6962,16 @@ def queue(
     index: int = -1,
     enabled: Optional[bool] = None,
 ) -> str:
-    """The Up Next play queue, via the browser web player (cross-platform; needs
-    a signed-in browser session from `applemusic-mcp signin`). The queue is the
-    web player's own MusicKit state — the same Up Next you see in the player.
+    """The Up Next play queue, via the web player (cross-platform; needs a signed-in
+    browser session from `applemusic-mcp login`). The queue is the web player's own
+    MusicKit state — the same Up Next you see in the player. It is web-only: when the
+    active engine isn't web (mode≠web), transport controls (playback control) won't
+    reach this queue unless you play through the web engine (mode=web or
+    playback(action='play', engine='web')).
 
     Actions:
     - `list` — show Up Next (▶ marks the current item; indices are 0-based)
+    - `set` — replace the whole queue in order, one call (`track`=comma/newline-separated ids or names)
     - `play_next` — insert a track right after the current one (`track`=name or catalog id, optional `artist`)
     - `play_last` — append a track to the end of Up Next
     - `remove` — remove the item at `index`
@@ -6979,9 +6983,38 @@ def queue(
 
     action = action.lower().strip().replace("-", "_")
 
+    # The queue lives in the web player. If the active engine is native, building
+    # or jumping it produces an Up Next that transport controls won't touch — warn
+    # so the user doesn't build an unreachable queue (the audition-trace trap).
+    def _engine_note() -> str:
+        if _engine() != "api":
+            return (
+                "⚠️ This queue is the web player's Up Next, but the active engine is "
+                "native — playback controls won't reach it. Play via the web engine "
+                "(mode=web, or playback(action='play', engine='web')).\n"
+            )
+        return ""
+
     if action in ("list", "show", "up_next"):
         ok, data = browser.queue_list()
         return _format_queue(data) if ok else f"Error: {data}"
+    if action == "set":
+        raw = [t.strip() for t in re.split(r"[,\n]", track) if t.strip()]
+        if not raw:
+            return "Error: set needs track=comma/newline-separated ids or names"
+        ids: list[str] = []
+        misses: list[str] = []
+        for t in raw:
+            cid = _queue_resolve_catalog_id(t, artist)
+            (ids.append(cid) if cid else misses.append(t))
+        if not ids:
+            return f"Error: none of those resolved to catalog tracks: {', '.join(misses)}"
+        ok, msg = browser.queue_set(ids)
+        if not ok:
+            return f"Error: {msg}"
+        if misses:
+            msg += f" (skipped, not found: {', '.join(misses)})"
+        return _engine_note() + msg
     if action in ("play_next", "play_last"):
         cid = _queue_resolve_catalog_id(track, artist)
         if not cid:
@@ -6989,7 +7022,7 @@ def queue(
         ok, msg = (
             browser.queue_play_next(cid) if action == "play_next" else browser.queue_play_later(cid)
         )
-        return msg if ok else f"Error: {msg}"
+        return (_engine_note() + msg) if ok else f"Error: {msg}"
     if action == "remove":
         if index < 0:
             return "Error: index required (0-based) for remove"
@@ -7002,14 +7035,15 @@ def queue(
         if index < 0:
             return "Error: index required (0-based) for jump"
         ok, msg = browser.queue_jump(index)
-        return msg if ok else f"Error: {msg}"
+        return (_engine_note() + msg) if ok else f"Error: {msg}"
     if action == "autoplay":
         if enabled is None:
             return "Error: autoplay needs enabled=true or enabled=false"
         ok, msg = browser.queue_autoplay(enabled)
         return msg if ok else f"Error: {msg}"
     return (
-        f"Unknown action: {action}. Use: list, play_next, play_last, remove, clear, jump, autoplay"
+        f"Unknown action: {action}. Use: list, set, play_next, play_last, remove, clear, jump, "
+        "autoplay"
     )
 
 
@@ -7098,16 +7132,39 @@ def playback(
             return _PLAYBACK_NEEDS_BROWSER
         return _playback_control(control, seconds)
     elif action == "now_playing":
-        if use_browser:
-            from . import browser
+        from . import browser
 
+        # Report the selected engine, then surface a split: if the OTHER engine is
+        # already alive and playing a DIFFERENT track, say so. The web Up Next and
+        # the native app keep independent playback state, so this is the only way a
+        # mismatch (queue in web, transport in native) becomes visible. The other
+        # engine is only peeked when already running — never launched just to check.
+        if use_browser:
             np = browser.now_playing()
-            if not np:
-                return "Nothing playing"
-            return f"Now playing: {np.get('name')} — {np.get('artist')} ({np.get('album')})"
-        if not APPLESCRIPT_AVAILABLE:
-            return _PLAYBACK_NEEDS_BROWSER
-        return _playback_now_playing()
+            primary = (
+                f"Now playing: {np.get('name')} — {np.get('artist')} ({np.get('album')})"
+                if np
+                else "Nothing playing (web player)"
+            )
+            primary_track = (np or {}).get("name", "")
+            other = asc.now_playing_if_running() if APPLESCRIPT_AVAILABLE else None
+            other_label, other_track = "native (Music.app)", (other or {}).get("name", "")
+        else:
+            if not APPLESCRIPT_AVAILABLE:
+                return _PLAYBACK_NEEDS_BROWSER
+            primary = _playback_now_playing()
+            primary_track = (asc.now_playing_if_running() or {}).get("name", "")
+            other = browser.now_playing_if_running()
+            other_label, other_track = "web player", (other or {}).get("name", "")
+
+        if other_track and other_track != primary_track:
+            other_state = (other or {}).get("state") or "playing"
+            return (
+                f"{primary}\n\n⚠️ Engine split — {other_label} is also live "
+                f"({other_state}): {other_track}. Transport controls only reach the "
+                f"active engine; pass engine= to target the other."
+            )
+        return primary
     elif action == "settings":
         if use_browser:
             from . import browser

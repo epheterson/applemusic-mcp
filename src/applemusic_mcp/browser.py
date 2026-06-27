@@ -552,6 +552,22 @@ def now_playing() -> Optional[dict]:
         return None
 
 
+def is_running() -> bool:
+    """True if the web player's Chrome thread is already alive — i.e. a peek that
+    does NOT launch the browser. Used to report a web/native split only when the
+    web engine genuinely has live state, never to spin Chrome up just to check."""
+    t = _engine._thread
+    return bool(t and t.is_alive())
+
+
+def now_playing_if_running() -> Optional[dict]:
+    """now_playing(), but only if the browser is already running (never launches
+    it). Returns None when the web player isn't up."""
+    if not is_running():
+        return None
+    return now_playing()
+
+
 # --- Up Next / play queue --------------------------------------------------
 # The personal playback queue lives in the MusicKit instance (no REST endpoint),
 # so these drive the same in-page MusicKit the web player's "Up Next" menu does.
@@ -583,6 +599,14 @@ _QUEUE_PLAY_LATER_JS = """
 async (id) => {
   const mk = window.MusicKit.getInstance();
   await mk.playLater({ song: id });
+  return mk.queue.items.length;
+}
+"""
+
+_QUEUE_SET_JS = """
+async (ids) => {
+  const mk = window.MusicKit.getInstance();
+  await mk.setQueue({ songs: ids });
   return mk.queue.items.length;
 }
 """
@@ -663,6 +687,24 @@ def queue_play_next(catalog_id: str) -> tuple[bool, str]:
 def queue_play_later(catalog_id: str) -> tuple[bool, str]:
     """Append a catalog song to the end of Up Next (Play Last)."""
     return _queue_insert(catalog_id, later=True)
+
+
+def queue_set(catalog_ids: list) -> tuple[bool, str]:
+    """Replace the entire Up Next with ``catalog_ids`` in order, atomically (one
+    MusicKit setQueue call) — instead of clear + N sequential play_later calls."""
+    ids = [str(i) for i in catalog_ids]
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_QUEUE_SET_JS, ids)
+
+    try:
+        n = _engine.submit(run)
+        return True, f"Queue set ({n} track(s))"
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Queue set failed: {exc}"
 
 
 def queue_remove(index: int) -> tuple[bool, str]:

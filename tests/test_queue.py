@@ -130,6 +130,56 @@ def test_queue_unknown_action():
     assert "Unknown action" in server.queue(action="bogus")
 
 
+def test_queue_set_resolves_all_and_replaces(monkeypatch):
+    monkeypatch.setattr(server, "_engine", lambda: "api")
+    monkeypatch.setattr(
+        server, "_queue_resolve_catalog_id", lambda t, a="": {"a": "1", "b": "2", "c": "3"}.get(t)
+    )
+    spy = MagicMock(return_value=(True, "Queue set (3 track(s))"))
+    monkeypatch.setattr(browser, "queue_set", spy)
+    out = server.queue(action="set", track="a, b, c")
+    spy.assert_called_once_with(["1", "2", "3"])
+    assert "Queue set" in out
+
+
+def test_queue_set_reports_misses(monkeypatch):
+    monkeypatch.setattr(server, "_engine", lambda: "api")
+    monkeypatch.setattr(server, "_queue_resolve_catalog_id", lambda t, a="": {"a": "1"}.get(t))
+    monkeypatch.setattr(
+        browser, "queue_set", lambda ids: (True, f"Queue set ({len(ids)} track(s))")
+    )
+    out = server.queue(action="set", track="a\nzzz")
+    assert "skipped" in out.lower() and "zzz" in out
+
+
+def test_queue_set_empty_input():
+    assert "Error" in server.queue(action="set", track="   ")
+
+
+def test_queue_set_none_resolve(monkeypatch):
+    monkeypatch.setattr(server, "_queue_resolve_catalog_id", lambda t, a="": None)
+    out = server.queue(action="set", track="x,y")
+    assert "Error" in out and "none of those" in out.lower()
+
+
+def test_queue_warns_when_engine_native(monkeypatch):
+    """Building the web Up Next while the active engine is native must warn."""
+    monkeypatch.setattr(server, "_engine", lambda: "native")
+    monkeypatch.setattr(server, "_queue_resolve_catalog_id", lambda t, a="": "555")
+    monkeypatch.setattr(browser, "queue_play_last", lambda c: (True, "Queued"), raising=False)
+    monkeypatch.setattr(browser, "queue_play_later", lambda c: (True, "Queued"))
+    out = server.queue(action="play_last", track="X")
+    assert "won't reach it" in out and "web" in out.lower()
+
+
+def test_queue_no_warn_when_engine_web(monkeypatch):
+    monkeypatch.setattr(server, "_engine", lambda: "api")
+    monkeypatch.setattr(server, "_queue_resolve_catalog_id", lambda t, a="": "555")
+    monkeypatch.setattr(browser, "queue_play_later", lambda c: (True, "Queued"))
+    out = server.queue(action="play_last", track="X")
+    assert "won't reach it" not in out
+
+
 def test_resolve_failure_msg_expired(monkeypatch):
     """A resolve miss while the session is expired must say so, not 'not found'."""
     monkeypatch.setattr(server.amp_api, "session_status", lambda: "expired")

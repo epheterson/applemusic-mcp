@@ -463,6 +463,26 @@ def get_current_track() -> tuple[bool, dict]:
     return True, track_info
 
 
+def now_playing_if_running() -> Optional[dict]:
+    """Native now-playing, but ONLY if Music.app is already running — checked via
+    System Events so this never launches the app just to peek. Returns a dict
+    ({state, name, artist, album, ...}) when Music is up, or None when it isn't
+    running / nothing is playing / the read fails. Used to surface a web/native
+    engine split without side effects."""
+    # `running of application "Music"` would launch it; System Events does not.
+    ok, out = run_applescript(
+        'tell application "System Events" to (exists (processes whose name is "Music"))'
+    )
+    if not ok or out.strip().lower() != "true":
+        return None
+    ok, info = get_current_track()
+    if not ok or not isinstance(info, dict):
+        return None
+    if info.get("state") == "stopped":
+        return None
+    return info
+
+
 def get_volume() -> tuple[bool, int | str]:
     """Get current volume (0-100).
 

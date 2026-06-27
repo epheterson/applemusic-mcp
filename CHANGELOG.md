@@ -12,6 +12,17 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Added
 
+- **`now_playing` surfaces an engine split.** When the active engine is playing
+  one track and the OTHER engine is also live with a different track (the classic
+  "queued in the web player but transport drove the native app" confusion),
+  now_playing reports both instead of silently showing only one. The other engine
+  is only peeked when already running, never launched just to check.
+- **`queue` warns when it can't be reached.** The Up Next lives in the web player;
+  if the active engine is native, queue build/jump operations now prepend a notice
+  that transport controls won't reach this queue unless you play via the web
+  engine. Stops you building an unreachable queue.
+- **`queue(action="set", track="id1,id2,...")`** replaces the whole Up Next in
+  order in one atomic call, instead of N sequential `play_last` calls.
 - **Per-call playback engine override.** `playback(action=..., engine="web")` or
   `engine="native"` picks the engine for one call without touching the `mode`
   preference. Lets you queue tracks in the web player and then
