@@ -112,7 +112,7 @@ class TestPlaylistCreateApi:
 
 class TestPlaylistDeleteApi:
     def test_success(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.del123")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.del123")
         monkeypatch.setattr(server.amp_api, "delete_playlist", lambda pid: (True, "ok"))
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         result = server._playlist_delete_api("My Playlist")
@@ -120,14 +120,14 @@ class TestPlaylistDeleteApi:
         assert "My Playlist" in result
 
     def test_not_found(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: None)
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: None)
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         result = server._playlist_delete_api("Ghost Playlist")
         assert "Error" in result
         assert "Ghost Playlist" in result
 
     def test_delete_fails(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.del123")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.del123")
         monkeypatch.setattr(server.amp_api, "delete_playlist", lambda pid: (False, "403 Forbidden"))
         result = server._playlist_delete_api("My Playlist")
         assert "Error" in result
@@ -136,7 +136,7 @@ class TestPlaylistDeleteApi:
 
 class TestPlaylistRenameApi:
     def test_success(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.r123")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.r123")
         monkeypatch.setattr(server.amp_api, "rename_playlist", lambda pid, new: (True, "ok"))
         result = server._playlist_rename_api("Old", "New")
         assert "Renamed" in result
@@ -144,13 +144,13 @@ class TestPlaylistRenameApi:
         assert "New" in result
 
     def test_not_found(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: None)
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: None)
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         result = server._playlist_rename_api("Ghost", "New")
         assert "Error" in result
 
     def test_rename_fails(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.r123")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.r123")
         monkeypatch.setattr(
             server.amp_api, "rename_playlist", lambda pid, new: (False, "read-only")
         )
@@ -166,7 +166,7 @@ class TestPlaylistRenameApi:
 
 class TestPlaylistRemoveApi:
     def test_success_single_match(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(
             server.amp_api,
             "get_tracks",
@@ -178,7 +178,7 @@ class TestPlaylistRemoveApi:
         assert "Hey Jude" in result
 
     def test_success_multiple_matches_warns(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(
             server.amp_api,
             "get_tracks",
@@ -193,14 +193,14 @@ class TestPlaylistRemoveApi:
         assert "other track" in result.lower() or "also matched" in result
 
     def test_playlist_not_found(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: None)
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: None)
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         result = server._playlist_remove_api("Ghost PL", "Hey Jude")
         assert "Error" in result
         assert "Ghost PL" in result
 
     def test_track_not_found(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(
             server.amp_api,
             "get_tracks",
@@ -211,7 +211,7 @@ class TestPlaylistRemoveApi:
         assert "not found" in result.lower()
 
     def test_remove_fails(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(
             server.amp_api,
             "get_tracks",
@@ -223,7 +223,7 @@ class TestPlaylistRemoveApi:
         assert "remove failed" in result.lower()
 
     def test_artist_filter(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(
             server.amp_api,
             "get_tracks",
@@ -292,7 +292,7 @@ class TestFolderDeleteApi:
 
 class TestPlaylistMoveApi:
     def test_move_to_root(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(
             server.amp_api, "move_playlist_to_folder", lambda pid, fid: (True, "ok")
         )
@@ -300,7 +300,7 @@ class TestPlaylistMoveApi:
         assert "top level" in result.lower() or "Moved" in result
 
     def test_move_to_root_explicit(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(
             server.amp_api, "move_playlist_to_folder", lambda pid, fid: (True, "ok")
         )
@@ -308,7 +308,7 @@ class TestPlaylistMoveApi:
         assert "Moved" in result
 
     def test_move_to_folder_exists(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(server.amp_api, "resolve_folder_id", lambda name: "f.folder1")
         monkeypatch.setattr(
             server.amp_api, "move_playlist_to_folder", lambda pid, fid: (True, "ok")
@@ -318,7 +318,7 @@ class TestPlaylistMoveApi:
         assert "Summer" in result
 
     def test_move_to_folder_creates_folder(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(server.amp_api, "resolve_folder_id", lambda name: None)
         monkeypatch.setattr(
             server.amp_api, "create_folder", lambda name, parent_id=None: (True, "f.new1")
@@ -331,7 +331,7 @@ class TestPlaylistMoveApi:
         assert "New Folder" in result
 
     def test_move_folder_create_fails(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(server.amp_api, "resolve_folder_id", lambda name: None)
         monkeypatch.setattr(
             server.amp_api, "create_folder", lambda name, parent_id=None: (False, "quota")
@@ -341,13 +341,13 @@ class TestPlaylistMoveApi:
         assert "quota" in result
 
     def test_playlist_not_found(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: None)
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: None)
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         result = server._playlist_move_api("Ghost", "Folder")
         assert "Error" in result
 
     def test_move_fails(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(server.amp_api, "resolve_folder_id", lambda name: "f.folder1")
         monkeypatch.setattr(
             server.amp_api, "move_playlist_to_folder", lambda pid, fid: (False, "403")
@@ -356,7 +356,7 @@ class TestPlaylistMoveApi:
         assert "Error" in result
 
     def test_move_to_root_fails(self, monkeypatch):
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(
             server.amp_api, "move_playlist_to_folder", lambda pid, fid: (False, "server error")
         )
@@ -403,14 +403,14 @@ class TestPlaylistAddApi:
     def test_playlist_name_fallback_to_resolve(self, monkeypatch):
         """_find_api_playlist_by_name fails, fallback to amp_api.resolve_playlist_id."""
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.resolved")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.resolved")
         monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
         result = server._playlist_add_api("My Playlist", "i.libsong1")
         assert "Added" in result
 
     def test_playlist_not_found_at_all(self, monkeypatch):
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: None)
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: None)
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         result = server._playlist_add_api("Ghost Playlist", "i.libsong1")
         assert "Error" in result
@@ -1985,12 +1985,26 @@ class TestPlaylistDispatcher:
 
     # --- add ---
     def test_action_add_api_engine(self, monkeypatch):
-        # No dev token + a web session → catalog/playlist add takes the web rail.
+        # Off macOS → the add takes the web rail (amp-api).
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         monkeypatch.setattr(server, "_has_developer_token", lambda: False)
         monkeypatch.setattr(server, "_has_user_token", lambda: True)
         monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
         result = server.playlist(action="add", playlist="p.abc123", track="i.song1")
         assert "Added" in result
+
+    def test_web_add_to_app_made_playlist_explains_origin(self, monkeypatch):
+        """Off macOS, a 401 adding to a Music.app-made playlist must explain it's
+        a playlist-origin limitation, not blame auth."""
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(server, "_has_developer_token", lambda: False)
+        monkeypatch.setattr(server, "_has_user_token", lambda: True)
+        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: ("p.app", None))
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda pid, items: (False, "status 403: forbidden")
+        )
+        out = server.playlist(action="add", playlist="Jack & Norah", track="i.song1")
+        assert "created in Music.app" in out and "403" in out
 
     def test_action_add_api_engine_with_album_falls_back(self, monkeypatch):
         """API engine with album param falls through to _playlist_add."""
@@ -2067,7 +2081,7 @@ class TestPlaylistDispatcher:
     # --- remove ---
     def test_action_remove_api_engine(self, monkeypatch):
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(
             server.amp_api,
             "get_tracks",
@@ -2080,7 +2094,7 @@ class TestPlaylistDispatcher:
     def test_action_remove_native_macos_only_error(self, monkeypatch):
         """Off macOS, remove now routes to the web rail (not a 'requires macOS' error)."""
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(
             server.amp_api,
             "get_tracks",
@@ -2096,7 +2110,7 @@ class TestPlaylistDispatcher:
 
     def test_action_delete_api_engine(self, monkeypatch):
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.del1")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.del1")
         monkeypatch.setattr(server.amp_api, "delete_playlist", lambda pid: (True, "ok"))
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         result = server.playlist(action="delete", name="Old Playlist")
@@ -2134,7 +2148,7 @@ class TestPlaylistDispatcher:
     def test_action_delete_native_macos_only_error(self, monkeypatch):
         """Off macOS, delete routes to the web rail."""
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.del1")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.del1")
         monkeypatch.setattr(server.amp_api, "delete_playlist", lambda pid: (True, "ok"))
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         result = server.playlist(action="delete", name="Old PL")
@@ -2151,7 +2165,7 @@ class TestPlaylistDispatcher:
 
     def test_action_rename_api_engine(self, monkeypatch):
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.r1")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.r1")
         monkeypatch.setattr(server.amp_api, "rename_playlist", lambda pid, new: (True, "ok"))
         result = server.playlist(action="rename", playlist="Old PL", new_name="New PL")
         assert "Renamed" in result
@@ -2184,7 +2198,7 @@ class TestPlaylistDispatcher:
     def test_action_rename_native_macos_only_error(self, monkeypatch):
         """Off macOS, rename routes to the web rail."""
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.r1")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.r1")
         monkeypatch.setattr(server.amp_api, "rename_playlist", lambda pid, new: (True, "ok"))
         result = server.playlist(action="rename", playlist="Old PL", new_name="New PL")
         assert "Renamed" in result and "macOS" not in result
@@ -2225,7 +2239,7 @@ class TestPlaylistDispatcher:
 
     def test_action_move_api_engine(self, monkeypatch):
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(server.amp_api, "resolve_folder_id", lambda name: "f.fld1")
         monkeypatch.setattr(
             server.amp_api, "move_playlist_to_folder", lambda pid, fid: (True, "ok")
@@ -2256,7 +2270,7 @@ class TestPlaylistDispatcher:
     def test_action_move_native_macos_only_error(self, monkeypatch):
         """Off macOS, move routes to the web rail."""
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(server.amp_api, "resolve_folder_id", lambda name: "f.fld1")
         monkeypatch.setattr(
             server.amp_api, "move_playlist_to_folder", lambda pid, fid: (True, "ok")
@@ -2295,7 +2309,7 @@ class TestPlaylistDispatcher:
     # --- delete with playlist param (not name) ---
     def test_action_delete_using_playlist_param(self, monkeypatch):
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.del1")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.del1")
         monkeypatch.setattr(server.amp_api, "delete_playlist", lambda pid: (True, "ok"))
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         result = server.playlist(action="delete", playlist="Old Playlist")
@@ -2304,7 +2318,7 @@ class TestPlaylistDispatcher:
     # --- move using folder param explicitly ---
     def test_action_move_using_folder_param(self, monkeypatch):
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(server.amp_api, "resolve_folder_id", lambda name: "f.fld1")
         monkeypatch.setattr(
             server.amp_api, "move_playlist_to_folder", lambda pid, fid: (True, "ok")
@@ -2315,7 +2329,7 @@ class TestPlaylistDispatcher:
     # --- move API engine to root (empty folder) ---
     def test_action_move_api_engine_no_folder(self, monkeypatch):
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(
             server.amp_api, "move_playlist_to_folder", lambda pid, fid: (True, "ok")
         )
@@ -2325,7 +2339,7 @@ class TestPlaylistDispatcher:
     # --- rename via name param (not playlist) ---
     def test_action_rename_using_name_param(self, monkeypatch):
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.r1")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.r1")
         monkeypatch.setattr(server.amp_api, "rename_playlist", lambda pid, new: (True, "ok"))
         result = server.playlist(action="rename", name="Old PL", new_name="New PL")
         assert "Renamed" in result

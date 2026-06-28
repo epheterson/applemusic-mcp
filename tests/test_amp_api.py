@@ -366,6 +366,32 @@ def test_resolve_playlist_id_none_when_no_match():
     assert amp_api.resolve_playlist_id("Techno") is None
 
 
+@responses.activate
+def test_resolve_playlist_id_includes_app_made_when_asked():
+    # A Music.app-made playlist (canEdit=False) is skipped by default but found
+    # when api_created_only=False (the web/native rails can write it).
+    responses.add(
+        responses.GET,
+        f"{amp_api.AMP}/me/library/playlists",
+        json={"data": [{"id": "p.app", "attributes": {"name": "Jack & Norah", "canEdit": False}}]},
+        status=200,
+    )
+    assert amp_api.resolve_playlist_id("Jack & Norah") is None
+    responses.add(
+        responses.GET,
+        f"{amp_api.AMP}/me/library/playlists",
+        json={"data": [{"id": "p.app", "attributes": {"name": "Jack & Norah", "canEdit": False}}]},
+        status=200,
+    )
+    assert amp_api.resolve_playlist_id("Jack & Norah", api_created_only=False) == "p.app"
+
+
+def test_is_api_created():
+    assert amp_api.is_api_created({"canEdit": True}) is True
+    assert amp_api.is_api_created({"canEdit": False}) is False
+    assert amp_api.is_api_created({}) is True  # default: assume writable
+
+
 # --- get_tracks (pagination, non-200, exception) ---------------------------
 
 

@@ -116,11 +116,25 @@ def list_playlists() -> list[dict]:
     return out
 
 
-def resolve_playlist_id(name: str) -> Optional[str]:
-    """Library playlist id (p.xxxx) by name — exact match first, then loose."""
+def is_api_created(pl: dict) -> bool:
+    """Whether a playlist was created via the API (and so is writable by the
+    generated developer token). We read amp-api's ``canEdit`` flag as the signal:
+    it's true for API-created playlists and false for Music.app-made ones. NB this
+    is about ORIGIN, not editability — Music.app-made playlists are still perfectly
+    editable via the web session or AppleScript, just not via the dev-token API."""
+    return bool(pl.get("canEdit", True))
+
+
+def resolve_playlist_id(name: str, api_created_only: bool = True) -> Optional[str]:
+    """Library playlist id (p.xxxx) by name — exact match first, then loose.
+
+    ``api_created_only`` (default) returns only API-created playlists, because the
+    generated-dev-token rail can only write those. Pass ``api_created_only=False``
+    to also match Music.app-made playlists — the web session and AppleScript can
+    write those, and any rail can read/play them."""
     loose = None
     for pl in list_playlists():
-        if not pl.get("canEdit", True):
+        if api_created_only and not is_api_created(pl):
             continue
         if _loose_eq(pl["name"], name):
             return pl["id"]

@@ -2194,7 +2194,7 @@ class TestBrowserPlay:
 
     def test_playlist_not_found(self, monkeypatch):
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda n: (None, None))
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n: None)
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: None)
         out = server._browser_play(playlist="Nonexistent Playlist")
         assert "Error" in out
 

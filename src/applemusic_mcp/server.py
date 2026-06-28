@@ -1055,7 +1055,7 @@ def _playlist_create_api(name: str, description: str = "") -> str:
 
 
 def _playlist_delete_api(name: str) -> str:
-    pid = amp_api.resolve_playlist_id(name)
+    pid = amp_api.resolve_playlist_id(name, api_created_only=False)
     if not pid:
         return _resolve_failure_msg(f"playlist {name!r} not found in your library")
     ok, msg = amp_api.delete_playlist(pid)
@@ -1066,7 +1066,7 @@ def _playlist_delete_api(name: str) -> str:
 
 
 def _playlist_rename_api(name: str, new_name: str) -> str:
-    pid = amp_api.resolve_playlist_id(name)
+    pid = amp_api.resolve_playlist_id(name, api_created_only=False)
     if not pid:
         return _resolve_failure_msg(f"playlist {name!r} not found in your library")
     ok, msg = amp_api.rename_playlist(pid, new_name)
@@ -1108,7 +1108,7 @@ def _safe_single_match(matches: list[dict], term: str) -> tuple[dict, int]:
 
 
 def _playlist_remove_api(playlist: str, track: str, artist: str = "") -> str:
-    pid = amp_api.resolve_playlist_id(playlist)
+    pid = amp_api.resolve_playlist_id(playlist, api_created_only=False)
     if not pid:
         return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
     tracks = amp_api.get_tracks(pid)
@@ -1153,7 +1153,7 @@ def _folder_delete_api(name: str) -> str:
 
 
 def _playlist_move_api(playlist: str, folder: str) -> str:
-    pid = amp_api.resolve_playlist_id(playlist)
+    pid = amp_api.resolve_playlist_id(playlist, api_created_only=False)
     if not pid:
         return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
     # Move to root when folder is empty/"root"; else into the folder (create it
@@ -1188,7 +1188,7 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
     else:
         pid, fuzzy = _find_api_playlist_by_name(playlist)
         if not pid:
-            pid = amp_api.resolve_playlist_id(playlist)
+            pid = amp_api.resolve_playlist_id(playlist, api_created_only=False)
     if not pid:
         return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
     items: list = []  # str catalog id, or (id, "library-songs") for a library song
@@ -1218,6 +1218,16 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
         return "Error: nothing to add\n" + "\n".join(errors)
     ok, msg = amp_api.add_tracks(pid, items)
     if not ok:
+        # A 401/403 here usually means the playlist was created in Music.app (the
+        # web API can't modify those), not that the session is bad. Say so, and
+        # point at the path that does work, rather than blame auth.
+        if any(code in msg for code in ("401", "403")):
+            return (
+                f"Error: couldn't add to '{playlist}' over the web API ({msg}). This "
+                "playlist was likely created in Music.app, which the web API can't "
+                "modify. On macOS it's edited locally instead; off macOS, add to an "
+                "API-created playlist."
+            )
         return f"Error: {msg}"
     # Surface the playlist fuzzy match (parity with the native path) so the user
     # knows if "Rock" landed in "Rock & Roll Classics".
@@ -1279,7 +1289,7 @@ def _browser_play(
     if playlist:
         pid, _ = _find_api_playlist_by_name(playlist)
         if not pid:
-            pid = amp_api.resolve_playlist_id(playlist)
+            pid = amp_api.resolve_playlist_id(playlist, api_created_only=False)
         if not pid:
             return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
         ok, msg = browser.play_descriptor({"playlist": pid}, shuffle)
@@ -4113,14 +4123,22 @@ def playlist(
         else:
             return "Error: name and/or folder required for create"
     elif action == "add":
-        # Adding a catalog track needs the API. Without a generated dev token the
-        # only working API write path is the web rail; with one (or on macOS for
-        # library tracks) _playlist_add handles it natively/sanctioned.
-        if not _has_developer_token() and _has_user_token() and track and not album:
+        # macOS: the native path attaches via AppleScript, which edits ANY playlist
+        # — including Music.app-made ones the dev-token API can't (it library-adds
+        # catalog tracks over the API first, then attaches). So prefer it on a Mac.
+        if APPLESCRIPT_AVAILABLE:
+            return _label_write(
+                _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_add),
+                _write_rail("add"),
+            )
+        # Off macOS: the web rail (amp-api). It now resolves Music.app-made
+        # playlists too and attempts the write; if the web token can't edit one it
+        # surfaces the real error instead of a bogus "not found."
+        if track and not album:
             return _label_write(_playlist_add_api(playlist, track, artist), "web")
         return _label_write(
             _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_add),
-            _write_rail("add"),
+            "web",
         )
     elif action == "copy":
         return _playlist_copy(source, new_name)

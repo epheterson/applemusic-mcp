@@ -204,7 +204,7 @@ class TestRenamePlaylist:
         """Off macOS, rename routes to the web rail (no longer a macOS-only error)."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.r1")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.r1")
         monkeypatch.setattr(server.amp_api, "rename_playlist", lambda pid, new: (True, "ok"))
 
         result = server.playlist(action="rename", playlist="Old Name", new_name="New Name")
@@ -279,7 +279,7 @@ class TestMoveToFolder:
         """Off macOS, move routes to the web rail (no longer a macOS-only error)."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
-        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name, **k: "p.abc")
         monkeypatch.setattr(server.amp_api, "resolve_folder_id", lambda name: "f.fld1")
         monkeypatch.setattr(
             server.amp_api, "move_playlist_to_folder", lambda pid, fid: (True, "ok")
@@ -2604,8 +2604,8 @@ class TestApiModeReadRouting:
     ):
         """api mode: a p.xxx playlist id is used directly (no name lookup) and a
         library track id is added as type library-songs."""
-        # No dev token + a web session → the add takes the web (amp-api) rail.
-        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        # Off macOS + a web session → the add takes the web (amp-api) rail.
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         monkeypatch.setattr(server, "_has_developer_token", lambda: False)
         monkeypatch.setattr(server, "_has_user_token", lambda: True)
         self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)

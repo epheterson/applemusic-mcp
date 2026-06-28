@@ -77,6 +77,16 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Fixed
 
+- **Adds to Music.app-made playlists failed with "could not find playlist."**
+  `resolve_playlist_id` silently skipped every playlist amp-api flags
+  `canEdit=False` — which is all playlists created in the Music app — so the web
+  rail couldn't even find them. That flag is about *origin* (API-created vs
+  Music.app-made), not editability: those playlists are perfectly editable via the
+  web session or AppleScript, just not via the generated developer token. Now the
+  web/native rails resolve them (`api_created_only=False`), macOS routes the
+  attach through AppleScript (which edits any playlist), and an off-macOS web
+  write that 401s explains it's a playlist-origin limitation instead of blaming
+  auth. `is_api_created()` names the distinction.
 - **`APPLEMUSIC_FORCE_TOKENLESS` was invisible and caused silent add failures.**
   The test flag forces tokenless mode (disabling every API write), but
   `auth-status` didn't check it, so it green-lit "add works" while every add was
