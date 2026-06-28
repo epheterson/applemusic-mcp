@@ -7427,13 +7427,21 @@ def playback(
             primary_label, other_label, other_value = "Music.app", "web player", "web"
 
         other_track = (other or {}).get("name", "")
-        if other_track and other_track != primary_track:
-            # Real state, not a blanket "playing" — the other engine is often paused.
-            other_state = (other or {}).get("state") or "state unknown"
+        other_state = (other or {}).get("state") or ""
+        # Only nag about a split when the other engine might actually be making sound.
+        # A track that's loaded-but-paused isn't competing for audio, so suppress it
+        # (this is why pausing native used to keep flagging — it stayed "loaded").
+        # We only know native's state reliably; web reports none, so treat unknown as
+        # "could be playing" and still warn.
+        if (
+            other_track
+            and other_track != primary_track
+            and other_state not in ("paused", "stopped")
+        ):
             return (
                 f"{primary}\n\n⚠️ Engine split — you're controlling the {primary_label}; the "
-                f"other engine ({other_label}) also has a track loaded [{other_state}]: "
-                f"{other_track}. Pass engine='{other_value}' to control {other_label} instead."
+                f"other engine ({other_label}) is also playing: {other_track}. Pass "
+                f"engine='{other_value}' to control {other_label} instead."
             )
         return primary
     elif action == "settings":

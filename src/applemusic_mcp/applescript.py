@@ -434,6 +434,13 @@ def get_current_track() -> tuple[bool, dict]:
         end if
         set t to current track
         set output to ""
+        if player state is paused then
+            set output to output & "state:paused" & "\\n"
+        else if player state is playing then
+            set output to output & "state:playing" & "\\n"
+        else
+            set output to output & "state:" & (player state as text) & "\\n"
+        end if
         set output to output & "name:" & (name of t) & "\\n"
         set output to output & "artist:" & (artist of t) & "\\n"
         set output to output & "album:" & (album of t) & "\\n"
@@ -454,12 +461,14 @@ def get_current_track() -> tuple[bool, dict]:
     if output == "STOPPED":
         return True, {"state": "stopped"}
 
-    # Parse key:value pairs
-    track_info = {"state": "playing"}
+    # Parse key:value pairs (state is included in the output now — paused tracks
+    # were previously misreported as "playing" because it was hardcoded here).
+    track_info: dict = {}
     for line in output.split("\n"):
         if ":" in line:
             key, value = line.split(":", 1)
             track_info[key.strip()] = value.strip()
+    track_info.setdefault("state", "playing")
     return True, track_info
 
 

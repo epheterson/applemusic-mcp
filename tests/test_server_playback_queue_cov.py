@@ -212,11 +212,31 @@ class TestPlaybackDispatcher:
         monkeypatch.setattr(
             server.asc,
             "now_playing_if_running",
-            lambda: {"name": "Jeanie With The Light Brown Hair", "state": "paused"},
+            lambda: {"name": "Jeanie With The Light Brown Hair", "state": "playing"},
         )
         out = server.playback(action="now_playing")
         assert "Now's The Time" in out
         assert "Engine split" in out and "Jeanie" in out and "native" in out.lower()
+
+    def test_now_playing_no_split_when_other_engine_paused(self, monkeypatch):
+        """A loaded-but-PAUSED other engine isn't competing for audio — suppress the
+        split nag (the 'pause native won't stick' annoyance was this firing anyway)."""
+        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        from applemusic_mcp import browser
+
+        monkeypatch.setattr(
+            browser,
+            "now_playing",
+            lambda: {"name": "Now's The Time", "artist": "Bird", "album": "X"},
+        )
+        monkeypatch.setattr(
+            server.asc,
+            "now_playing_if_running",
+            lambda: {"name": "Top Back", "state": "paused"},
+        )
+        out = server.playback(action="now_playing")
+        assert "Engine split" not in out
 
     def test_now_playing_no_split_when_same_track(self, monkeypatch):
         """Both engines on the same track → no spurious split warning."""
