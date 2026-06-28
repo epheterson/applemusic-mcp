@@ -813,7 +813,7 @@ def get_storefront() -> str:
     return prefs.get("storefront", DEFAULT_STOREFRONT)
 
 
-mcp = FastMCP("AppleMusicAPI")
+mcp = FastMCP("Apple Music")
 
 
 # ============ MCP RESOURCES ============

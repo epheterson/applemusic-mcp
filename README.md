@@ -50,7 +50,7 @@ Everything in the **API** column runs anywhere, no browser and no Music app. Bro
 **Claude Code**, one line:
 
 ```bash
-claude mcp add applemusic -- uvx applemusic-mcp serve
+claude mcp add "Apple Music" -- uvx applemusic-mcp serve
 ```
 
 **Claude Desktop / Cursor / Cline / Windsurf**, install once, then add the config block:
