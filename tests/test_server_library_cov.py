@@ -163,19 +163,20 @@ class TestLibraryDispatcher:
             return "Removed via API"
 
         monkeypatch.setattr(server, "_library_remove_api", fake_remove_api)
-        monkeypatch.setattr(server, "_engine", lambda: "api")
+        monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
         monkeypatch.setattr(server, "get_user_preferences", lambda: _default_prefs())
         result = server.library(action="remove", track="MySong", artist="Artist")
         assert called
         assert "Removed" in result
 
-    def test_remove_requires_macos_when_native(self, monkeypatch):
-        monkeypatch.setattr(server, "_engine", lambda: "native")
+    def test_remove_off_macos_routes_to_web(self, monkeypatch):
+        """Off macOS, library remove routes to the web rail (not a macOS error)."""
+        monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(server, "_library_remove_api", lambda t, a: "Removed via API")
         monkeypatch.setattr(server, "get_user_preferences", lambda: _default_prefs())
         result = server.library(action="remove", track="MySong")
-        assert "Error" in result
-        assert "macOS" in result
+        assert "Removed" in result and "macOS" not in result
 
     def test_snapshot_new_routes_correctly(self, monkeypatch):
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
@@ -228,13 +229,13 @@ class TestLibraryDispatcher:
         assert "recently added result" == result
 
     def test_remove_native_path(self, monkeypatch):
-        """library(action='remove') with native engine routes to _library_remove (line 4155)."""
-        monkeypatch.setattr(server, "_engine", lambda: "native")
+        """library(action='remove') on macOS routes to _library_remove (native rail)."""
+        monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "native")
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         monkeypatch.setattr(server, "_library_remove", lambda track, artist: "Removed natively")
         monkeypatch.setattr(server, "get_user_preferences", lambda: _default_prefs())
         result = server.library(action="remove", track="Song A")
-        assert "Removed natively" == result
+        assert "Removed natively" in result
 
 
 # ============================================================================

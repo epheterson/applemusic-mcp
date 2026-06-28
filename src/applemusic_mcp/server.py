@@ -967,6 +967,65 @@ def _use_browser_playback() -> bool:
     return _engine() == "api"
 
 
+# Writes choose their rail by CREDENTIAL + capability, independent of the playback
+# `mode`. Choosing web *playback* must not force writes onto the grey rail when the
+# user holds a developer token. See docs/plans/sanctioned-first-writes.md.
+#
+# Ops whose only non-web (legit) implementation is macOS AppleScript — off macOS
+# the public API can't do them (delete 401s, move/rename have no public endpoint),
+# so they fall to the web (amp-api) rail there.
+_WEB_ONLY_OFF_MAC_OPS = {
+    "delete",
+    "remove",
+    "rename",
+    "move",
+    "create_folder",
+    "delete_folder",
+    "rename_folder",
+}
+
+# Human labels for the suffix that tells the user which rail a write took.
+_RAIL_LABELS = {
+    "native": "via Music.app",
+    "sanctioned": "via Apple Music API",
+    "web": "via web player",
+}
+
+
+def _write_rail(op: str, *, catalog: bool = False) -> str:
+    """Pick the write rail for ``op`` — INDEPENDENT of the playback mode.
+
+    Returns one of:
+      ``native``     – AppleScript on macOS (tokenless, local, fully legit)
+      ``sanctioned`` – Apple Music API with a generated developer token (official)
+      ``web``        – amp-api with the harvested web token (community path; used
+                       only for ops the public API can't do, or with no dev token)
+
+    Prefers the most official rail available. ``catalog=True`` marks an add of a
+    song not already in the library (it needs the API even on macOS)."""
+    if os.environ.get("APPLEMUSIC_FORCE_TOKENLESS") == "1" and APPLESCRIPT_AVAILABLE:
+        return "native"
+    if APPLESCRIPT_AVAILABLE:
+        # macOS: local Music.app handles tokenless writes. Only a catalog add (a
+        # song not yet in the library) needs the API.
+        if catalog and op in ("add", "library_add"):
+            return "sanctioned" if _has_developer_token() else "web"
+        return "native"
+    # off macOS — no AppleScript:
+    if op in _WEB_ONLY_OFF_MAC_OPS:
+        return "web"
+    return "sanctioned" if _has_developer_token() else "web"
+
+
+def _label_write(result: str, rail: str) -> str:
+    """Append a 'via <rail>' suffix to a successful write result so the user can
+    see which path it took. Left untouched on error strings."""
+    label = _RAIL_LABELS.get(rail)
+    if not label or not result or result.lstrip().startswith("Error"):
+        return result
+    return f"{result} ({label})"
+
+
 # --- playlist mutations over the API engine (cross-platform, no AppleScript) ---
 
 
@@ -4021,76 +4080,91 @@ def playlist(
         return _playlist_search(query, playlist)
     elif action == "create":
         if folder and not name:
-            if _engine() == "api":
-                return _folder_create_api(folder)
-            return _playlist_create_folder(folder)
+            rail = _write_rail("create_folder")
+            if rail == "web":
+                return _label_write(_folder_create_api(folder), rail)
+            return _label_write(_playlist_create_folder(folder), rail)
         elif folder and name:
             return _playlist_create_in_folder(name, folder, description)
         elif name:
-            if _engine() == "api":
-                return _playlist_create_api(name, description)
-            return _playlist_create(name, description)
+            rail = _write_rail("create")
+            if rail == "web":
+                return _label_write(_playlist_create_api(name, description), rail)
+            return _label_write(_playlist_create(name, description), rail)
         else:
             return "Error: name and/or folder required for create"
     elif action == "add":
-        if _engine() == "api" and track and not album:
-            return _playlist_add_api(playlist, track, artist)
-        return _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_add)
+        # Adding a catalog track needs the API. Without a generated dev token the
+        # only working API write path is the web rail; with one (or on macOS for
+        # library tracks) _playlist_add handles it natively/sanctioned.
+        if not _has_developer_token() and _has_user_token() and track and not album:
+            return _label_write(_playlist_add_api(playlist, track, artist), "web")
+        return _label_write(
+            _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_add),
+            _write_rail("add"),
+        )
     elif action == "copy":
         return _playlist_copy(source, new_name)
     elif action == "remove":
-        if _engine() == "api":
-            return _playlist_remove_api(playlist, track, artist)
+        rail = _write_rail("remove")
+        if rail == "web":
+            return _label_write(_playlist_remove_api(playlist, track, artist), rail)
         if err := _macos_only("remove"):
             return err
-        return _playlist_remove(playlist, track, artist)
+        return _label_write(_playlist_remove(playlist, track, artist), rail)
     elif action == "delete":
         if folder:
-            if _engine() == "api":
-                return _folder_delete_api(folder)
+            rail = _write_rail("delete_folder")
+            if rail == "web":
+                return _label_write(_folder_delete_api(folder), rail)
             if err := _macos_only("delete folder"):
                 return err
-            return _playlist_delete_folder(folder)
+            return _label_write(_playlist_delete_folder(folder), rail)
         playlist_name = name or playlist
         if not playlist_name:
             return "Error: name, playlist, or folder required for delete"
-        if _engine() == "api":
-            return _playlist_delete_api(playlist_name)
+        rail = _write_rail("delete")
+        if rail == "web":
+            return _label_write(_playlist_delete_api(playlist_name), rail)
         if err := _macos_only("delete"):
             return err
-        return _playlist_delete(playlist_name)
+        return _label_write(_playlist_delete(playlist_name), rail)
     elif action == "rename":
         if not new_name:
             return "Error: new_name required for rename"
         if folder:
+            # Folder rename has no API implementation — AppleScript only.
             if err := _macos_only("rename folder"):
                 return err
-            return _playlist_rename_folder(folder, new_name)
+            return _label_write(_playlist_rename_folder(folder, new_name), "native")
         playlist_name = name or playlist
         if not playlist_name:
             return "Error: playlist, name, or folder required for rename"
-        if _engine() == "api":
-            return _playlist_rename_api(playlist_name, new_name)
+        rail = _write_rail("rename")
+        if rail == "web":
+            return _label_write(_playlist_rename_api(playlist_name, new_name), rail)
         if err := _macos_only("rename"):
             return err
-        return _playlist_rename(playlist_name, new_name)
+        return _label_write(_playlist_rename(playlist_name, new_name), rail)
     elif action == "create_folder":
         # Backward compat — redirect to create(folder=...)
         if not name:
             return "Error: name required for create_folder"
-        if _engine() == "api":
-            return _folder_create_api(name)
+        rail = _write_rail("create_folder")
+        if rail == "web":
+            return _label_write(_folder_create_api(name), rail)
         if err := _macos_only("create_folder"):
             return err
-        return _playlist_create_folder(name)
+        return _label_write(_playlist_create_folder(name), rail)
     elif action == "move":
         if not playlist:
             return "Error: playlist required for move"
         folder_target = folder or name
-        if _engine() == "api":
+        rail = _write_rail("move")
+        if rail == "web":
             # The API moves a playlist into a folder OR back to the top level
             # directly (the AppleScript path can't move out of folders at all).
-            return _playlist_move_api(playlist, folder_target or "root")
+            return _label_write(_playlist_move_api(playlist, folder_target or "root"), rail)
         if err := _macos_only("move"):
             return err
         if not folder_target:
@@ -4170,11 +4244,12 @@ def library(
             return "Error: rate_action required (love, dislike, get, set)"
         return _library_rate(rate_action, track, artist, stars)
     elif action == "remove":
-        if _engine() == "api":
-            return _library_remove_api(track, artist)
+        rail = _write_rail("remove")
+        if rail == "web":
+            return _label_write(_library_remove_api(track, artist), rail)
         if err := _macos_only("remove"):
             return err
-        return _library_remove(track, artist)
+        return _label_write(_library_remove(track, artist), rail)
     elif action == "snapshot":
         if err := _macos_only("snapshot"):
             return err
@@ -5692,7 +5767,7 @@ def _library_rate(
             return f"Error: {msg}"
 
         # For get/set, need to look up track name for AppleScript
-        if _engine() != "native" or not APPLESCRIPT_AVAILABLE:
+        if not APPLESCRIPT_AVAILABLE:
             return _STAR_NATIVE_ONLY
         try:
             headers = get_headers()
@@ -5727,7 +5802,7 @@ def _library_rate(
 
     # Now we have track_name, handle each action
     if action == "get":
-        if _engine() != "native" or not APPLESCRIPT_AVAILABLE:
+        if not APPLESCRIPT_AVAILABLE:
             return _STAR_NATIVE_ONLY
         success, rating_val = asc.get_rating(track_name, track_artist if track_artist else None)
         if success:
@@ -5736,7 +5811,7 @@ def _library_rate(
         return f"Error: {_format_applescript_error(str(rating_val), 'get star rating')}"
 
     if action == "set":
-        if _engine() != "native" or not APPLESCRIPT_AVAILABLE:
+        if not APPLESCRIPT_AVAILABLE:
             return _STAR_NATIVE_ONLY
         rating_val = max(0, min(5, stars)) * 20
         success, result = asc.set_rating(

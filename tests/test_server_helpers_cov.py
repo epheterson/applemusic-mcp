@@ -764,6 +764,55 @@ class TestUseBrowserPlayback:
 
 
 # ---------------------------------------------------------------------------
+# _write_rail — sanctioned-first write routing, independent of playback mode
+# ---------------------------------------------------------------------------
+
+
+class TestWriteRail:
+    def test_macos_uses_native_regardless_of_mode(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.delenv("APPLEMUSIC_FORCE_TOKENLESS", raising=False)
+        # Even pinned to web *playback*, writes stay native on macOS.
+        monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": "web"})
+        for op in ("create", "delete", "rename", "move", "remove"):
+            assert server._write_rail(op) == "native"
+
+    def test_macos_catalog_add_needs_api(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.delenv("APPLEMUSIC_FORCE_TOKENLESS", raising=False)
+        monkeypatch.setattr(server, "_has_developer_token", lambda: True)
+        assert server._write_rail("add", catalog=True) == "sanctioned"
+        monkeypatch.setattr(server, "_has_developer_token", lambda: False)
+        assert server._write_rail("add", catalog=True) == "web"
+        # a non-catalog add on macOS stays native (AppleScript)
+        assert server._write_rail("add", catalog=False) == "native"
+
+    def test_off_macos_dev_token_is_sanctioned(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(server, "_has_developer_token", lambda: True)
+        assert server._write_rail("create") == "sanctioned"
+        assert server._write_rail("add") == "sanctioned"
+
+    def test_off_macos_no_dev_token_is_web(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(server, "_has_developer_token", lambda: False)
+        assert server._write_rail("create") == "web"
+
+    def test_off_macos_gap_ops_always_web(self, monkeypatch):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(server, "_has_developer_token", lambda: True)  # even with a dev token
+        for op in ("delete", "remove", "rename", "move", "create_folder"):
+            assert server._write_rail(op) == "web"
+
+    def test_label_write_appends_only_on_success(self):
+        assert (
+            server._label_write("Created 'X'", "sanctioned") == "Created 'X' (via Apple Music API)"
+        )
+        assert server._label_write("Error: nope", "web") == "Error: nope"
+        assert server._label_write("Deleted", "native") == "Deleted (via Music.app)"
+
+
+# ---------------------------------------------------------------------------
 # _format_applescript_error
 # ---------------------------------------------------------------------------
 

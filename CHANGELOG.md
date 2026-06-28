@@ -12,6 +12,17 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Added
 
+- **Sanctioned-first write routing.** Writes (create / add / remove / delete /
+  rename / move / rate) now choose their path by *credential and capability*,
+  independent of the playback `mode`: the official Apple Music API when you hold a
+  developer token, the web player only for the operations the public API can't do
+  (delete, add-to-a-Music.app-made-playlist, move) or when you have no developer
+  token, and local Music.app on macOS. Choosing web *playback* no longer forces
+  your writes onto the web path. Each write reports the path it took, e.g.
+  `(via Apple Music API)` / `(via web player)` / `(via Music.app)`. Star ratings
+  now work on macOS regardless of the playback mode (they need AppleScript, not a
+  particular mode). See [docs/CAPABILITIES.md](docs/CAPABILITIES.md) and the
+  README "What's sanctioned vs web" section.
 - **`now_playing` surfaces an engine split.** When the active engine is playing
   one track and the OTHER engine is also live with a different track (the classic
   "queued in the web player but transport drove the native app" confusion),

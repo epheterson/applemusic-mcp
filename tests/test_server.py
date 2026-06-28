@@ -156,10 +156,11 @@ class TestCreatePlaylist:
         with open(user_token_file, "w") as f:
             json.dump({"music_user_token": mock_user_token}, f)
 
-        # API engine creates over amp-api (the web player's host).
+        # With a developer token, off-macOS create takes the SANCTIONED rail
+        # (api.music.apple.com), not the grey amp-api host.
         responses.add(
             responses.POST,
-            "https://amp-api.music.apple.com/v1/me/library/playlists",
+            "https://api.music.apple.com/v1/me/library/playlists",
             json={"data": [{"id": "p.newplaylist123"}]},
             status=201,
         )
@@ -170,6 +171,7 @@ class TestCreatePlaylist:
 
         assert "My New Playlist" in result
         assert "p.newplaylist123" in result
+        assert "Apple Music API" in result  # sanctioned-rail label
 
 
 @pytest.mark.skipif(
@@ -198,16 +200,16 @@ class TestRenamePlaylist:
         assert "Old Name" in result
         assert "New Name" in result
 
-    def test_requires_macos(self, monkeypatch):
-        """In NATIVE mode without AppleScript, rename errors macOS-only.
-        (In api/auto mode rename works cross-platform via the API engine.)"""
+    def test_off_macos_routes_to_web(self, monkeypatch):
+        """Off macOS, rename routes to the web rail (no longer a macOS-only error)."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
-        monkeypatch.setattr(server, "_engine", lambda: "native")
+        monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.r1")
+        monkeypatch.setattr(server.amp_api, "rename_playlist", lambda pid, new: (True, "ok"))
 
         result = server.playlist(action="rename", playlist="Old Name", new_name="New Name")
 
-        assert "Error" in result
-        assert "macOS" in result
+        assert "Renamed" in result and "macOS" not in result
 
     def test_requires_new_name(self, monkeypatch):
         """Should error when new_name not provided."""
@@ -235,16 +237,17 @@ class TestCreateFolder:
         assert "My Folder" in result
         assert "ABCD1234" in result
 
-    def test_requires_macos(self, monkeypatch):
-        """In native mode without AppleScript, folder create errors macOS-only.
-        (Folders work cross-platform via the API engine.)"""
+    def test_off_macos_routes_to_web(self, monkeypatch):
+        """Off macOS, folder create routes to the web rail (no macOS-only error)."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
-        monkeypatch.setattr(server, "_engine", lambda: "native")
+        monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
+        monkeypatch.setattr(
+            server.amp_api, "create_folder", lambda name, parent_id=None: (True, "f.fld1")
+        )
 
         result = server.playlist(action="create_folder", name="My Folder")
 
-        assert "Error" in result
-        assert "macOS" in result
+        assert "My Folder" in result and "macOS" not in result
 
     def test_requires_name(self, monkeypatch):
         """Should error when name not provided."""
@@ -272,16 +275,19 @@ class TestMoveToFolder:
         assert "My Playlist" in result
         assert "My Folder" in result
 
-    def test_requires_macos(self, monkeypatch):
-        """In native mode without AppleScript, move errors macOS-only.
-        (Move works cross-platform via the API engine — even out of folders.)"""
+    def test_off_macos_routes_to_web(self, monkeypatch):
+        """Off macOS, move routes to the web rail (no longer a macOS-only error)."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
-        monkeypatch.setattr(server, "_engine", lambda: "native")
+        monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda name: "p.abc")
+        monkeypatch.setattr(server.amp_api, "resolve_folder_id", lambda name: "f.fld1")
+        monkeypatch.setattr(
+            server.amp_api, "move_playlist_to_folder", lambda pid, fid: (True, "ok")
+        )
 
         result = server.playlist(action="move", playlist="My Playlist", name="My Folder")
 
-        assert "Error" in result
-        assert "macOS" in result
+        assert "Moved" in result and "macOS" not in result
 
     def test_requires_playlist_name(self, monkeypatch):
         """Should error when playlist name not provided."""
@@ -2028,10 +2034,11 @@ class TestUserJourneyAPIOnly:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
 
-        # 6. Create a new playlist (API engine -> amp-api host)
+        # 6. Create a new playlist. With a dev token, off-macOS create takes the
+        # sanctioned rail (api.music.apple.com), not the grey amp-api host.
         responses.add(
             responses.POST,
-            "https://amp-api.music.apple.com/v1/me/library/playlists",
+            "https://api.music.apple.com/v1/me/library/playlists",
             json={"data": [{"id": "p.new123", "attributes": {"name": "My New Playlist"}}]},
             status=201,
         )
@@ -2520,18 +2527,19 @@ class TestApiModeReadRouting:
         assert "Money" in result
         mock_asc.love_track.assert_not_called()
 
-    def test_star_get_in_api_mode_refused(
+    def test_star_get_refused_without_applescript(
         self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
     ):
-        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_engine", lambda: "api")
+        # Star ratings need AppleScript (macOS), independent of the playback mode.
+        # Off macOS they're refused; on macOS they work regardless of mode.
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
 
         mock_asc = MagicMock()
         monkeypatch.setattr(server, "asc", mock_asc)
 
         result = server.library(action="rate", rate_action="get", track="Money")
-        assert "native mode" in result.lower()
+        assert "native" in result.lower()
         mock_asc.get_rating.assert_not_called()
 
     @responses.activate
@@ -2539,7 +2547,7 @@ class TestApiModeReadRouting:
         self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
     ):
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_engine", lambda: "api")
+        monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
         self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
 
         mock_asc = MagicMock()
@@ -2578,8 +2586,10 @@ class TestApiModeReadRouting:
     ):
         """api mode: a p.xxx playlist id is used directly (no name lookup) and a
         library track id is added as type library-songs."""
+        # No dev token + a web session → the add takes the web (amp-api) rail.
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_engine", lambda: "api")
+        monkeypatch.setattr(server, "_has_developer_token", lambda: False)
+        monkeypatch.setattr(server, "_has_user_token", lambda: True)
         self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
 
         responses.add(
@@ -2601,7 +2611,7 @@ class TestApiModeReadRouting:
         """Data-loss guard: a short/common term that substring-matches many
         library songs must delete EXACTLY ONE (exact title preferred), not all."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_engine", lambda: "api")
+        monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "web")
         self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
         monkeypatch.setattr(server, "asc", MagicMock())
 
