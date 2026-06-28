@@ -1243,6 +1243,17 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
                 "modify. On macOS it's edited locally instead; off macOS, add to an "
                 "API-created playlist."
             )
+        # The amp-api tracks endpoint reliably 500s ("Unable to update tracks",
+        # code 50001) for Music.app-made and Apple-curated playlists — the web API
+        # genuinely can't write them (verified in-page and external, both id forms).
+        # Say so honestly rather than surface a raw 500.
+        if "Unable to update tracks" in msg or msg.startswith("status 500"):
+            return (
+                f"Error: '{playlist}' can't be modified over the Apple Music web API "
+                "— it was created in Music.app (or is Apple-curated). On macOS the "
+                "tool edits it locally through Music.app; off macOS, the API can't "
+                "add to these playlists."
+            )
         return f"Error: {msg}"
     # Surface the playlist fuzzy match (parity with the native path) so the user
     # knows if "Rock" landed in "Rock & Roll Classics".
@@ -2417,11 +2428,13 @@ def _auto_search_and_add_to_playlist(
             return False, f"Failed to add to library (status {add_response.status_code})", steps
 
         # Attach the now-in-library track to the playlist via the rail that can
-        # ACTUALLY write it. Resolve the playlist INCLUDING Music.app-made ones
-        # (api_created_only=False) — the generated dev token can't write those, but
-        # the web session can. API-created → sanctioned dev-token POST; Music.app-
-        # made → the web session (amp-api). Same cloud namespace as the library-add
-        # above, so no cross-engine sync race.
+        # ACTUALLY write that KIND of playlist (classified by origin):
+        #   api    → sanctioned dev-token POST (works, no sync race).
+        #   apple  → Apple-curated; NO rail can add — reject honestly.
+        #   user   → the user's own Music.app playlist. The amp-api REST add 500s on
+        #            these (verified), so on macOS (this path) attach via AppleScript;
+        #            the track was just library-added to the cloud, so poll for it to
+        #            sync into the local Music.app first.
         if playlist_id:
             pl = {"id": playlist_id, "canEdit": True}  # explicit id from caller
         else:
@@ -2434,8 +2447,17 @@ def _auto_search_and_add_to_playlist(
                 steps,
             )
         playlist_id = pl["id"]
+        kind = amp_api.playlist_kind(pl)
 
-        if amp_api.is_api_created(pl):
+        if kind == "apple":
+            return (
+                False,
+                f"'{playlist_name}' is an Apple-curated playlist — you can't add your "
+                "own tracks to it (it's Apple's content, not editable on any path).",
+                steps,
+            )
+
+        if kind == "api":
             pl_add_response = requests.post(
                 f"{BASE_URL}/me/library/playlists/{playlist_id}/tracks",
                 headers=headers,
@@ -2444,20 +2466,41 @@ def _auto_search_and_add_to_playlist(
             )
             if pl_add_response.status_code in (200, 201, 204):
                 return True, f"{found_name} - {found_artist}", steps
-            # The dev-token endpoint can't write a Music.app-made playlist (and a
-            # just-propagated playlist may misreport canEdit). Fall through to the
-            # web session rather than fail.
-            steps.append(
-                f"dev-token playlist POST returned {pl_add_response.status_code}; "
-                "retrying via the web session"
+            return (
+                False,
+                f"Failed to add to playlist (status {pl_add_response.status_code})",
+                steps,
             )
 
-        # Music.app-made playlist, or the sanctioned POST didn't take: write through
-        # the web session (the rail that can edit Music.app-made playlists).
-        wok, wmsg = amp_api.add_tracks(playlist_id, [catalog_id])
-        if wok:
-            return True, f"{found_name} - {found_artist}", steps
-        return False, f"Failed to add to playlist: {wmsg}", steps
+        # kind == "user": this path is macOS-only (off-mac never reaches here), so
+        # attach via AppleScript. Poll because the catalog track was just added to
+        # the cloud library and Music.app needs a moment to sync it locally.
+        if not APPLESCRIPT_AVAILABLE:  # pragma: no cover  # off-mac uses _playlist_add_api
+            return (
+                False,
+                f"'{playlist_name}' was created in Music.app; the web API can't modify "
+                "it. Adding to it currently requires macOS.",
+                steps,
+            )
+        last = ""
+        for attempt in range(6):  # ~25s for cloud→local sync
+            ok2, res2, split = _smart_as_add_track_to_playlist(
+                playlist_name, found_name, found_artist or None, None
+            )
+            last = res2
+            if ok2 and _verify_track_in_playlist(playlist_name, found_name, found_artist or ""):
+                steps.append("Attached via Music.app (native)")
+                return True, f"{found_name} - {found_artist}", steps
+            if not ok2 and "Track not found" not in res2:
+                break  # a real error, not sync lag
+            time.sleep(_VERIFY_DELAY_S)
+        return (
+            False,
+            f"Added '{found_name}' to your library, but couldn't attach it to "
+            f"'{playlist_name}' yet — Music.app may still be syncing the new track. "
+            f"Try the add again in a moment. ({last})",
+            steps,
+        )
 
     except Exception as e:
         return False, f"Error: {str(e)}", steps

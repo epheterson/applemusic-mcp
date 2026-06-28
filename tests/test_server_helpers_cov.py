@@ -1791,12 +1791,13 @@ class TestAutoSearchAndAddToPlaylist:
         assert "Hey Jude" in msg
 
     @responses.activate
-    def test_success_app_made_routes_to_web(
+    def test_success_app_made_routes_to_native(
         self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
     ):
-        """A Music.app-made (canEdit=False) playlist attaches via the web session,
-        NOT the dev-token endpoint that can't write it."""
+        """A Music.app-made (canEdit=False) playlist attaches via NATIVE AppleScript
+        — the web/amp-api rail 500s on these (verified), so it must not be used."""
         _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         responses.add(
             responses.GET,
             "https://api.music.apple.com/v1/catalog/us/search",
@@ -1812,20 +1813,33 @@ class TestAutoSearchAndAddToPlaylist:
             status=200,
         )
         responses.add(responses.POST, "https://api.music.apple.com/v1/me/library", status=202)
+        # user-made playlist (pl.u- globalId) → kind 'user'
         monkeypatch.setattr(
             server.amp_api,
             "resolve_playlist",
-            lambda name, api_created_only=True: {"id": "p.app", "name": name, "canEdit": False},
+            lambda name, api_created_only=True: {
+                "id": "p.app",
+                "name": name,
+                "canEdit": False,
+                "globalId": "pl.u-abc",
+            },
         )
-        calls = []
+        # the web rail must NOT be called for a user-made playlist
         monkeypatch.setattr(
             server.amp_api,
             "add_tracks",
-            lambda pid, items: calls.append((pid, items)) or (True, "ok"),
+            lambda pid, items: (_ for _ in ()).throw(AssertionError("web rail must not run")),
         )
+        native_calls = []
+        monkeypatch.setattr(
+            server,
+            "_smart_as_add_track_to_playlist",
+            lambda pl, n, a, al: native_calls.append((pl, n)) or (True, "ok", None),
+        )
+        monkeypatch.setattr(server, "_verify_track_in_playlist", lambda pl, n, a: True)
         ok, msg, steps = server._auto_search_and_add_to_playlist("So What", "Miles", "Jack & Norah")
         assert ok is True and "So What" in msg
-        assert calls == [("p.app", ["cat1"])]  # went through the web rail
+        assert native_calls == [("Jack & Norah", "So What")]  # attached natively
 
     @responses.activate
     def test_catalog_search_not_found(self, mock_config_dir, mock_developer_token, mock_user_token):

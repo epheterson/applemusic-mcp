@@ -104,6 +104,9 @@ def list_playlists() -> list[dict]:
                         "id": pl.get("id"),
                         "name": attrs.get("name", ""),
                         "canEdit": attrs.get("canEdit", True),
+                        # globalId tells a USER playlist (pl.u-…) from an
+                        # Apple-curated one (catalog hash) — see playlist_kind.
+                        "globalId": (attrs.get("playParams") or {}).get("globalId") or "",
                     }
                 )
             nxt = data.get("next")
@@ -117,13 +120,34 @@ def list_playlists() -> list[dict]:
     return out
 
 
+def playlist_kind(pl: dict) -> str:
+    """Classify a library playlist by ORIGIN — what determines who can write it:
+
+      ``api``    — canEdit=True: created via the API; the generated developer token
+                   can write it (and the web/native rails can too).
+      ``user``   — canEdit=False with no catalog globalId, or a ``pl.u-…`` one: the
+                   user's OWN Music.app playlist. Writable via AppleScript on macOS;
+                   the amp-api REST add 500s on these (verified 2026-06-28), so the
+                   dev-token rail can't, and cross-platform support needs the
+                   in-page web player.
+      ``apple``  — canEdit=False with a CATALOG globalId (``pl.<hash>``): an
+                   Apple-curated playlist added to the library. Read-only — NO rail
+                   can add tracks to it.
+
+    (Smart playlists also surface as ``user`` here; callers on macOS detect those
+    via AppleScript's ``smart`` flag and reject the add separately.)"""
+    if pl.get("canEdit", True):
+        return "api"
+    gid = pl.get("globalId") or ""
+    if gid and not gid.startswith("pl.u-"):
+        return "apple"
+    return "user"
+
+
 def is_api_created(pl: dict) -> bool:
-    """Whether a playlist was created via the API (and so is writable by the
-    generated developer token). We read amp-api's ``canEdit`` flag as the signal:
-    it's true for API-created playlists and false for Music.app-made ones. NB this
-    is about ORIGIN, not editability — Music.app-made playlists are still perfectly
-    editable via the web session or AppleScript, just not via the dev-token API."""
-    return bool(pl.get("canEdit", True))
+    """True only for API-created playlists (the dev-token rail can write these).
+    Thin wrapper over ``playlist_kind`` for the common two-way check."""
+    return playlist_kind(pl) == "api"
 
 
 def resolve_playlist(name: str, api_created_only: bool = True) -> Optional[dict]:

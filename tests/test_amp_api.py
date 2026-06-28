@@ -309,8 +309,8 @@ def test_list_playlists_paginates_and_normalizes():
     )
     out = amp_api.list_playlists()
     assert out == [
-        {"id": "p.1", "name": "A", "canEdit": True},
-        {"id": "p.2", "name": "B", "canEdit": False},
+        {"id": "p.1", "name": "A", "canEdit": True, "globalId": ""},
+        {"id": "p.2", "name": "B", "canEdit": False, "globalId": ""},
     ]
     # second request hit the amp-api host built from `next`
     assert (

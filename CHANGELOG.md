@@ -12,6 +12,14 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Added
 
+- **Managed Chrome uses your real Keychain now.** The sign-in/playback browser
+  was launched with Playwright's automation defaults (`--use-mock-keychain`,
+  `--password-store=basic`, `--disable-extensions`), which locked users out of
+  Touch ID, passkeys, saved/iCloud passwords, and extensions — making sign-in
+  needlessly painful. Those are dropped (like the Widevine flag already is), so
+  the dedicated profile behaves like normal Chrome: sign in with Touch ID /
+  passkey / your password manager. (First Keychain use shows a one-time macOS
+  permission prompt.)
 - **Sanctioned-first write routing.** Writes (create / add / remove / delete /
   rename / move / rate) now choose their path by *credential and capability*,
   independent of the playback `mode`: the official Apple Music API when you hold a
@@ -88,6 +96,15 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
   dropped (unplayable/region-locked) instead of implying all landed; (5) the
   FORCE_TOKENLESS message no longer overclaims (macOS local edits/ratings still
   work); (6) `applemusic-mcp status` now has a request timeout so it can't hang.
+- **Music.app-made playlists add via native AppleScript (macOS); the web API
+  can't write them at all.** Verified live (in-page MusicKit *and* external REST,
+  both id forms): adding a track to a `canEdit=False` playlist returns HTTP 500
+  "Unable to update tracks" — the web path genuinely cannot do it. So the tool now
+  classifies playlists by origin (`playlist_kind`: `api` / `user` / `apple`, via
+  the `pl.u-` globalId tell) and routes a catalog add to a user-made playlist
+  through native AppleScript on macOS, rejects Apple-curated playlists with a clear
+  message (no rail can add to them), and gives an honest "requires macOS" off-mac
+  instead of a raw 500.
 - **Catalog-add to a Music.app-made playlist (the path that actually runs on
   macOS) is now origin-aware.** The first canEdit fix only taught the *new*
   web-rail helpers; the legacy auto-search-add path still used a second resolver
