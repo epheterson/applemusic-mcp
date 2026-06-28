@@ -86,7 +86,8 @@ def session_status() -> str:
 
 
 def list_playlists() -> list[dict]:
-    """All editable library playlists: [{id, name}]. Paginates."""
+    """All library playlists: [{id, name, canEdit}]. Paginates. (canEdit is
+    amp-api's API-created flag; callers decide whether to filter on it.)"""
     out: list[dict] = []
     url: Optional[str] = f"{AMP}/me/library/playlists?limit=100"
     try:

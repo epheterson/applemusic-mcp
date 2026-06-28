@@ -339,7 +339,7 @@ def test_list_playlists_exception_swallowed():
 
 
 @responses.activate
-def test_resolve_playlist_id_loose_and_skips_uneditable():
+def test_resolve_playlist_id_loose_and_skips_app_made():
     responses.add(
         responses.GET,
         f"{amp_api.AMP}/me/library/playlists",

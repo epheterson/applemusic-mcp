@@ -2360,7 +2360,7 @@ def _resolve_library_playlist_id(name: str) -> Optional[str]:
     """Resolve an existing library playlist's id (``p.xxxx``) by name via the API.
 
     Used to add tracks to a playlist over the API (reliable, cross-platform).
-    Matches loosely and prefers editable playlists. Returns None if not found
+    Matches loosely and prefers API-created playlists. Returns None if not found
     (e.g. a just-created playlist that hasn't synced to the cloud library yet).
     """
     try:
