@@ -42,6 +42,18 @@ with the reason each cell is what it is. For the short version, see the
 
 ## Notes
 
+- **Writes are sanctioned-first, and pick their path by credential, not by the
+  playback `mode`.** The API column above is really two paths: the **sanctioned**
+  Apple Music API (`api.music.apple.com`, your generated developer token) and the
+  **web** path (`amp-api.music.apple.com`, a harvested web-player token, the same
+  approach as Cider / Music Assistant). A write (create / add / remove / delete /
+  rename / move / rate) takes the official API when you hold a developer token;
+  it falls back to the web path only for the operations the public API can't do
+  (delete a playlist, add to a Music.app-created playlist, move) or when you have
+  no developer token. On macOS, local Music.app (AppleScript, tokenless) handles
+  writes too. Choosing web *playback* does not push your writes onto the web path,
+  and each write reports the path it took. `config(action="status")` shows the
+  resolved write rail on its `Writes:` line.
 - **One `mode` knob** drives both data and playback: `auto` (default; native Music.app on macOS, web API + Chrome web player elsewhere), `native` (local Music.app), or `web` (web API + web player, any OS). Playback always follows the engine, so there is no separate playback preference. `auto` falls back native→browser when a native play can't start (e.g. Accessibility not granted); `native` stays Music-app-only.
 - **Native catalog playback** drives Music.app via UI scripting: it foregrounds the app and moves the cursor to click Play, so it needs **Accessibility permission** and an unlocked screen.
 - **Browser playback / queue** open a real Chrome window (not for headless servers) and need an Apple Music **subscription** for full-track DRM audio — without one, MusicKit serves ~30-second previews.

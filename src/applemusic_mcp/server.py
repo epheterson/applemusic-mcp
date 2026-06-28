@@ -6564,20 +6564,20 @@ def _config_auth_status(mutation_status: "Optional[str]" = None) -> str:
     if mutation_status is not None:
         status.append(
             {
-                "ok": "Mutations (add / playlist / rate): OK (amp-api)",
+                "ok": "Web fallback writes (amp-api): OK",
                 "expired": (
-                    "Mutations (add / playlist / rate): UNAUTHORIZED — the web-player "
+                    "Web fallback writes (amp-api): UNAUTHORIZED — the web-player "
                     "session expired. Re-run `applemusic-mcp signin`."
                 ),
                 "throttled": (
-                    "Mutations (add / playlist / rate): RATE-LIMITED (429) — wait a "
+                    "Web fallback writes (amp-api): RATE-LIMITED (429) — wait a "
                     "moment and retry."
                 ),
                 "error": (
-                    "Mutations (add / playlist / rate): ERROR reaching amp-api "
+                    "Web fallback writes (amp-api): ERROR reaching amp-api "
                     "(check your connection)."
                 ),
-            }.get(mutation_status, f"Mutations (add / playlist / rate): {mutation_status}")
+            }.get(mutation_status, f"Web fallback writes (amp-api): {mutation_status}")
         )
 
     return "\n".join(status)
@@ -6908,7 +6908,10 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
                 "⚠️ Couldn't confirm the add/playlist/rate path (amp-api unreachable). "
                 "Check your connection, then retry."
             )
-        return f"{body}\nMode: {mode}\n\n{nxt}"
+        # Show which rail writes will actually take (independent of the playback
+        # mode), so "Mode: web" can't be mistaken for "my writes go to the web."
+        write_rail = _RAIL_LABELS.get(_write_rail("add"), "unknown")
+        return f"{body}\nMode: {mode}\nWrites: {write_rail}\n\n{nxt}"
 
     if action in ("signin", "login"):
         from . import browser

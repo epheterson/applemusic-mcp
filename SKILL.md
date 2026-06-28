@@ -486,6 +486,16 @@ end tell
 
 **Don't** click "Add to Playlist" menu items via UI — the AppleScript `duplicate` path is more reliable. Even if you have a dev token, **don't** hit `POST /v1/me/library/playlists/{id}/tracks` — it returns HTTP 500 for any playlist not originally created via API (the default for playlists made in Music.app). `duplicate` works for any playlist.
 
+### Write routing (sanctioned-first)
+
+The server picks a write's path by **credential and capability, not the playback mode**:
+
+- **Sanctioned** — the official Apple Music API (`api.music.apple.com`) with a generated developer token. Preferred whenever a dev token is present and the op is supported.
+- **Web** — `amp-api.music.apple.com` with the harvested web-player token. Used only for the gaps the public API can't do (delete a playlist, add to a Music.app-created playlist, move out of a folder) or when there's no dev token.
+- **Native** — local Music.app via AppleScript on macOS (tokenless), the default writer on a Mac.
+
+So `mode=web` (a *playback* choice) does NOT force writes onto the web path — a dev-token holder still writes via the official API. Star ratings need AppleScript (macOS) regardless of mode. Each write reports the path it took (`via Apple Music API` / `via web player` / `via Music.app`); `config(action="status")` shows the resolved rail on its `Writes:` line.
+
 ### Post-add verification
 
 The UI path can silently click the wrong result under stale search state, and AppleScript state lags briefly after a fresh add. Always verify the expected track actually landed:

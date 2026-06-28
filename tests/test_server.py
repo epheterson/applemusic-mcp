@@ -581,7 +581,8 @@ class TestAuthTool:
                 mg.return_value.status_code = 200
                 out = server.config(action="status")
         assert "Mode:" in out and "Ready" in out
-        assert "Mutations" in out and "OK" in out
+        assert "Web fallback writes" in out and "OK" in out
+        assert "Writes:" in out  # resolved write rail is surfaced
 
     def test_status_tokens_present_but_mutations_unauthorized(
         self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
