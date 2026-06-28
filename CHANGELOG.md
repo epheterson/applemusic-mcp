@@ -96,6 +96,14 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
   dropped (unplayable/region-locked) instead of implying all landed; (5) the
   FORCE_TOKENLESS message no longer overclaims (macOS local edits/ratings still
   work); (6) `applemusic-mcp status` now has a request timeout so it can't hang.
+- **Catalog adds to Music.app-made playlists now complete in one call.** Adding a
+  not-yet-owned track to a user-made playlist is inherently two-step (library-add
+  in the cloud → AppleScript attach locally), and Apple's passive iCloud sync
+  could take *minutes* in between. The tool now actively nudges the sync (File >
+  Library > Update Cloud Library, a single stable menu action — not the retired
+  result-row UI automation) and polls until the track lands locally, so it attaches
+  in one shot (~5s measured) instead of returning a half-done "added to library."
+  The nudge briefly focuses Music.app and restores your previous app afterward.
 - **Music.app-made playlists add via native AppleScript (macOS); the web API
   can't write them at all.** Verified live (in-page MusicKit *and* external REST,
   both id forms): adding a track to a `canEdit=False` playlist returns HTTP 500

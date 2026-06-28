@@ -1824,6 +1824,7 @@ class TestAutoSearchAndAddToPlaylist:
                 "globalId": "pl.u-abc",
             },
         )
+        monkeypatch.setattr(server.asc, "update_cloud_library", lambda: (True, "ok"))
         # the web rail must NOT be called for a user-made playlist
         monkeypatch.setattr(
             server.amp_api,

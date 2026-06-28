@@ -2482,8 +2482,14 @@ def _auto_search_and_add_to_playlist(
                 "it. Adding to it currently requires macOS.",
                 steps,
             )
+        # Force an iCloud sync so the just-added track reaches the LOCAL Music.app,
+        # rather than passively waiting on Apple's schedule, then poll-attach until
+        # it lands (we don't want to return a half-done "added to library" state).
+        nudged, _ = asc.update_cloud_library()
+        if nudged:
+            steps.append("Triggered Update Cloud Library to sync the new track")
         last = ""
-        for attempt in range(6):  # ~25s for cloud→local sync
+        for attempt in range(20):  # ~60s, with the sync actively nudged
             ok2, res2, split = _smart_as_add_track_to_playlist(
                 playlist_name, found_name, found_artist or None, None
             )
@@ -2496,9 +2502,9 @@ def _auto_search_and_add_to_playlist(
             time.sleep(_VERIFY_DELAY_S)
         return (
             False,
-            f"Added '{found_name}' to your library, but couldn't attach it to "
-            f"'{playlist_name}' yet — Music.app may still be syncing the new track. "
-            f"Try the add again in a moment. ({last})",
+            f"Added '{found_name}' to your library and triggered an iCloud sync, but "
+            f"Music.app hasn't received it yet to attach to '{playlist_name}'. This is "
+            f"Apple's sync lag — re-run the add shortly and it'll attach. ({last})",
             steps,
         )
 

@@ -504,6 +504,41 @@ def set_volume(volume: int) -> tuple[bool, str]:
     return run_applescript(f'tell application "Music" to set sound volume to {volume}')
 
 
+def update_cloud_library() -> tuple[bool, str]:
+    """Nudge an iCloud Music Library sync via File > Library > Update Cloud Library,
+    so a track just added to the library over the API shows up in the LOCAL
+    Music.app sooner (needed before AppleScript can attach it to a playlist).
+
+    Clicks a single, fixed menu item — far more stable than the result-row UI
+    automation we retired — but it still needs Accessibility permission, and the
+    item only exists when Sync Library is enabled. Returns (False, ...) if the menu
+    isn't reachable; callers treat that as "couldn't nudge" and just poll.
+
+    The menu click is an Accessibility action, not a mouse move, but macOS only
+    exposes the frontmost app's menu bar, so we briefly activate Music and then
+    restore the previously-frontmost app so the user's focus isn't stolen."""
+    script = """
+    set priorApp to ""
+    try
+        tell application "System Events" to set priorApp to ¬
+            name of first application process whose frontmost is true
+    end try
+    tell application "Music" to activate
+    delay 0.3
+    tell application "System Events" to tell process "Music"
+        click menu item "Update Cloud Library" of menu 1 of ¬
+            (menu item "Library" of menu 1 of menu bar item "File" of menu bar 1)
+    end tell
+    if priorApp is not "" and priorApp is not "Music" then
+        try
+            tell application "System Events" to tell process priorApp to set frontmost to true
+        end try
+    end if
+    return "ok"
+    """
+    return run_applescript(script)
+
+
 def get_shuffle() -> tuple[bool, bool | str]:
     """Get shuffle state.
 
