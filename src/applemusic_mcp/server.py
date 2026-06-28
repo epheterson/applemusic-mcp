@@ -2495,7 +2495,11 @@ def _auto_search_and_add_to_playlist(
         last = ""
         for _cycle in range(3):
             if asc.update_cloud_library()[0]:
-                steps.append("Triggered Update Cloud Library to sync the new track")
+                steps.append(
+                    "Briefly brought Music.app to the foreground to trigger an iCloud "
+                    "sync (File > Library > Update Cloud Library) so the new track lands "
+                    "locally and can be attached — this is why the app flashed forward"
+                )
             waited = 0.0
             while waited < 10.0:
                 ok2, res2, _split = _smart_as_add_track_to_playlist(
@@ -4164,7 +4168,7 @@ def playlist(
     verify: bool = True,
     auto_add: Optional[bool] = None,
 ) -> str:
-    """Playlist and folder operations. Actions: list, tracks, search, create, add, copy, move (macOS), path (macOS), remove (macOS), delete (macOS), rename (macOS). To find a playlist by name, use action='list' with filter='jack' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own."""
+    """Playlist and folder operations. Actions: list, tracks, search, create, add, copy, move (macOS), path (macOS), remove (macOS), delete (macOS), rename (macOS). To find a playlist by name, use action='list' with filter='jack' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own. Note: on macOS, adding a not-yet-owned catalog track to a Music.app-made playlist briefly brings Music.app to the foreground — the tool clicks File > Library > Update Cloud Library to force the iCloud sync so the track lands locally and can be attached. This flash is expected, not a glitch."""
     action = action.lower().strip().replace("-", "_")
 
     if action == "list":
