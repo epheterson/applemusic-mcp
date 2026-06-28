@@ -12,6 +12,17 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Added
 
+- **Mutating playback/queue commands now return the resulting state** — no more
+  blind "ok" that forces a follow-up `now_playing`/`list` call. `playback
+  control` (play/pause/next/seek) returns the now-playing line; queue
+  `set`/`jump`/`play_next`/`play_last`/`remove`/`clear` return the affected item
+  plus the resulting Up Next (windowed around the current item), e.g. a jump
+  replies `Jumped to: Roxanne — The Police` followed by the queue with `▶` on it.
+- **Clearer `now_playing` engine-split message.** It now labels the active engine
+  on the primary line (`Now playing — web player [playing]: …`), reports the
+  *other* engine's real state instead of assuming "playing" (it's usually
+  paused), names which engine your transport controls reach, and shows the exact
+  `engine='web'`/`engine='native'` override to target the other one.
 - **Managed Chrome uses your real Keychain now.** The sign-in/playback browser
   was launched with Playwright's automation defaults (`--use-mock-keychain`,
   `--password-store=basic`, `--disable-extensions`), which locked users out of

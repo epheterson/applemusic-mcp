@@ -7155,18 +7155,54 @@ def _queue_resolve_catalog_id(track: str, artist: str = "") -> Optional[str]:
     return songs[0]["id"] if songs else None
 
 
-def _format_queue(data: dict) -> str:
+def _format_queue(data: dict, limit: Optional[int] = None) -> str:
     items = data.get("items", [])
     autoplay = " · autoplay on" if data.get("autoplay") else ""
     if not items:
         return f"Up Next is empty{autoplay}"
     pos = data.get("position", -1)
-    lines = [f"Up Next ({len(items)} item(s){autoplay}):"]
-    for it in items:
+    # When limited, center the window on the current item so the relevant part of a
+    # long queue shows (the thing just played/jumped to, plus what's coming).
+    shown = items
+    if limit is not None and len(items) > limit:
+        start = max(0, pos)
+        shown = items[start : start + limit]
+        more = len(items) - len(shown)
+        head = f"Up Next ({len(items)} item(s){autoplay}; showing {len(shown)}, +{more} more):"
+    else:
+        head = f"Up Next ({len(items)} item(s){autoplay}):"
+    lines = [head]
+    for it in shown:
         marker = "▶ " if it["index"] == pos else "  "
         artist = f" — {it['artist']}" if it.get("artist") else ""
         lines.append(f"{marker}{it['index']}. {it['name']}{artist}")
     return "\n".join(lines)
+
+
+def _queue_after(header: str, top_n: int = 6) -> str:
+    """After a queue mutation, append the resulting Up Next (windowed to top_n) so
+    the caller sees the effect without a follow-up `list` call."""
+    from . import browser
+
+    ok, data = browser.queue_list()
+    if not ok or not isinstance(data, dict):
+        return header
+    return f"{header}\n\n{_format_queue(data, limit=top_n)}"
+
+
+def _queue_current_name() -> str:
+    """Name of the now-current Up Next item (the thing a jump landed on), or ''."""
+    from . import browser
+
+    ok, data = browser.queue_list()
+    if not ok or not isinstance(data, dict):
+        return ""
+    pos = data.get("position", -1)
+    for it in data.get("items", []):
+        if it.get("index") == pos:
+            artist = f" — {it['artist']}" if it.get("artist") else ""
+            return f"{it.get('name', '')}{artist}"
+    return ""
 
 
 @mcp.tool(
@@ -7233,7 +7269,7 @@ def queue(
             return f"Error: {msg}"
         if misses:
             msg += f" (skipped, not found: {', '.join(misses)})"
-        return _engine_note() + msg
+        return _queue_after(_engine_note() + msg)
     if action in ("play_next", "play_last"):
         cid = _queue_resolve_catalog_id(track, artist)
         if not cid:
@@ -7241,25 +7277,29 @@ def queue(
         ok, msg = (
             browser.queue_play_next(cid) if action == "play_next" else browser.queue_play_later(cid)
         )
-        return (_engine_note() + msg) if ok else f"Error: {msg}"
+        return _queue_after(_engine_note() + msg) if ok else f"Error: {msg}"
     if action == "remove":
         if index < 0:
             return "Error: index required (0-based) for remove"
         ok, msg = browser.queue_remove(index)
-        return msg if ok else f"Error: {msg}"
+        return _queue_after(msg) if ok else f"Error: {msg}"
     if action == "clear":
         ok, msg = browser.queue_clear()
-        return msg if ok else f"Error: {msg}"
+        return _queue_after(msg) if ok else f"Error: {msg}"
     if action == "jump":
         if index < 0:
             return "Error: index required (0-based) for jump"
         ok, msg = browser.queue_jump(index)
-        return (_engine_note() + msg) if ok else f"Error: {msg}"
+        if not ok:
+            return f"Error: {msg}"
+        name = _queue_current_name()
+        header = _engine_note() + (f"Jumped to: {name}" if name else msg)
+        return _queue_after(header)
     if action == "autoplay":
         if enabled is None:
             return "Error: autoplay needs enabled=true or enabled=false"
         ok, msg = browser.queue_autoplay(enabled)
-        return msg if ok else f"Error: {msg}"
+        return _queue_after(msg) if ok else f"Error: {msg}"
     return (
         f"Unknown action: {action}. Use: list, set, play_next, play_last, remove, clear, jump, "
         "autoplay"
@@ -7346,10 +7386,17 @@ def playback(
             from . import browser
 
             ok, msg = browser.playback_control(control, seconds)
-            return msg if ok else f"Error: {msg}"
-        if not APPLESCRIPT_AVAILABLE:
-            return _PLAYBACK_NEEDS_BROWSER
-        return _playback_control(control, seconds)
+            if not ok:
+                return f"Error: {msg}"
+        else:
+            if not APPLESCRIPT_AVAILABLE:
+                return _PLAYBACK_NEEDS_BROWSER
+            msg = _playback_control(control, seconds)
+            if msg.startswith("Error"):
+                return msg
+        # Return the resulting now-playing so the caller doesn't need a follow-up
+        # now_playing call after a play/pause/next/seek.
+        return f"{msg}\n\n{playback(action='now_playing', engine=engine)}"
     elif action == "now_playing":
         from . import browser
 
@@ -7360,28 +7407,33 @@ def playback(
         # engine is only peeked when already running — never launched just to check.
         if use_browser:
             np = browser.now_playing()
-            primary = (
-                f"Now playing: {np.get('name')} — {np.get('artist')} ({np.get('album')})"
-                if np
-                else "Nothing playing (web player)"
-            )
+            if np:
+                st = f" [{np.get('state')}]" if np.get("state") else ""
+                primary = (
+                    f"Now playing — web player{st}: "
+                    f"{np.get('name')} — {np.get('artist')} ({np.get('album')})"
+                )
+            else:
+                primary = "Nothing playing (web player)"
             primary_track = (np or {}).get("name", "")
             other = asc.now_playing_if_running() if APPLESCRIPT_AVAILABLE else None
-            other_label, other_track = "native (Music.app)", (other or {}).get("name", "")
+            primary_label, other_label, other_value = "web player", "native (Music.app)", "native"
         else:
             if not APPLESCRIPT_AVAILABLE:
                 return _PLAYBACK_NEEDS_BROWSER
             primary = _playback_now_playing()
             primary_track = (asc.now_playing_if_running() or {}).get("name", "")
             other = browser.now_playing_if_running()
-            other_label, other_track = "web player", (other or {}).get("name", "")
+            primary_label, other_label, other_value = "Music.app", "web player", "web"
 
+        other_track = (other or {}).get("name", "")
         if other_track and other_track != primary_track:
-            other_state = (other or {}).get("state") or "playing"
+            # Real state, not a blanket "playing" — the other engine is often paused.
+            other_state = (other or {}).get("state") or "state unknown"
             return (
-                f"{primary}\n\n⚠️ Engine split — {other_label} is also live "
-                f"({other_state}): {other_track}. Transport controls only reach the "
-                f"active engine; pass engine= to target the other."
+                f"{primary}\n\n⚠️ Engine split — you're controlling the {primary_label}; the "
+                f"other engine ({other_label}) also has a track loaded [{other_state}]: "
+                f"{other_track}. Pass engine='{other_value}' to control {other_label} instead."
             )
         return primary
     elif action == "settings":
