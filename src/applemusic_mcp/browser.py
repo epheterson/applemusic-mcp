@@ -598,11 +598,18 @@ _QUEUE_LIST_JS = """
   const mk = window.MusicKit.getInstance();
   const q = mk.queue;
   if (!q) return { position: -1, autoplay: !!mk.autoplayEnabled, items: [] };
+  // Prefer the ACTUAL now-playing item for the position marker — q.position can
+  // lag the real playhead when the queue auto-advances, so the ▶ marker and
+  // now_playing would disagree. Fall back to q.position if no now-playing item.
+  const np = mk.nowPlayingItem;
+  const npid = np && np.id;
+  let pos = q.position;
   const items = q.items.map((it, i) => {
     const a = (it && it.attributes) || {};
-    return { index: i, name: a.name || '', artist: a.artistName || '' };
+    if (npid && it.id === npid) pos = i;
+    return { index: i, id: (it && it.id) || '', name: a.name || '', artist: a.artistName || '' };
   });
-  return { position: q.position, autoplay: !!mk.autoplayEnabled, items };
+  return { position: pos, autoplay: !!mk.autoplayEnabled, items };
 }
 """
 
@@ -634,9 +641,22 @@ _QUEUE_REMOVE_JS = """
 async (i) => {
   const mk = window.MusicKit.getInstance();
   if (i < 0 || i >= mk.queue.items.length) return -1;
+  // MusicKit throws an opaque mk-007 INVALID_ARGUMENTS when removing the
+  // currently-playing item — detect it up front and signal -2 for a clear error.
+  if (i === mk.queue.position) return -2;
   const r = mk.queue.remove(i);
   if (r && typeof r.then === 'function') await r;
   return mk.queue.items.length;
+}
+"""
+
+_QUEUE_JUMP_BY_ID_JS = """
+async (id) => {
+  const mk = window.MusicKit.getInstance();
+  const idx = mk.queue.items.findIndex(it => it && it.id === id);
+  if (idx < 0) return -1;
+  await mk.changeToMediaAtIndex(idx);
+  return mk.queue.position;
 }
 """
 
@@ -741,6 +761,11 @@ def queue_remove(index: int) -> tuple[bool, str]:
 
     try:
         n = _engine.submit(run)
+        if n == -2:
+            return False, (
+                "Can't remove the currently-playing item — jump to another track first "
+                "(queue jump), then remove it."
+            )
         if n < 0:
             return False, f"No queue item at index {index}"
         return True, f"Removed item {index} ({n} left in queue)"
@@ -777,6 +802,25 @@ def queue_jump(index: int) -> tuple[bool, str]:
         pos = _engine.submit(run)
         if pos < 0:
             return False, f"No queue item at index {index}"
+        return True, f"Jumped to item {pos}"
+    except BrowserUnavailable as exc:
+        return False, str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return False, f"Queue jump failed: {exc}"
+
+
+def queue_jump_id(catalog_id: str) -> tuple[bool, str]:
+    """Jump to the Up Next item with the given catalog id — drift-proof: targets the
+    track regardless of how the queue auto-advanced since it was listed."""
+
+    def run(page):
+        _ensure_player_ready(page)
+        return page.evaluate(_QUEUE_JUMP_BY_ID_JS, catalog_id)
+
+    try:
+        pos = _engine.submit(run)
+        if pos < 0:
+            return False, f"No queue item with catalog id {catalog_id}"
         return True, f"Jumped to item {pos}"
     except BrowserUnavailable as exc:
         return False, str(exc)

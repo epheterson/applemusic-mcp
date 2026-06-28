@@ -107,7 +107,8 @@ def test_queue_clear_routes(monkeypatch):
 
 
 def test_queue_jump_requires_index():
-    assert "index required" in server.queue(action="jump")
+    out = server.queue(action="jump")
+    assert "index" in out and "track" in out  # accepts index OR track now
 
 
 def test_queue_jump_routes(monkeypatch):

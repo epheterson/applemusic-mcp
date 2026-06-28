@@ -7233,9 +7233,9 @@ def queue(
     - `set` — replace the whole queue in order, one call (`track`=comma/newline-separated ids or names)
     - `play_next` — insert a track right after the current one (`track`=name or catalog id, optional `artist`)
     - `play_last` — append a track to the end of Up Next
-    - `remove` — remove the item at `index`
+    - `remove` — remove the item at `index` (can't remove the currently-playing item — jump away first)
     - `clear` — empty the queue
-    - `jump` — jump playback to the item at `index`
+    - `jump` — jump playback to a track: by `track` (name or catalog id — drift-proof, preferred since Up Next auto-advances) or by `index`
     - `autoplay` — set Autoplay (∞: keep playing similar music when the queue ends); pass `enabled=true` or `enabled=false` (required)
     """
     from . import browser
@@ -7291,9 +7291,18 @@ def queue(
         ok, msg = browser.queue_clear()
         return _queue_after(msg) if ok else f"Error: {msg}"
     if action == "jump":
-        if index < 0:
-            return "Error: index required (0-based) for jump"
-        ok, msg = browser.queue_jump(index)
+        # Prefer jump-by-track (name or catalog id): the Up Next auto-advances in
+        # real time, so an index captured a moment ago can land on the wrong track.
+        # Targeting by id is drift-proof.
+        if track:
+            cid = _queue_resolve_catalog_id(track, artist)
+            if not cid:
+                return f"Error: '{track}' not found to jump to"
+            ok, msg = browser.queue_jump_id(cid)
+        elif index >= 0:
+            ok, msg = browser.queue_jump(index)
+        else:
+            return "Error: jump needs index (0-based) or track (name/catalog id — drift-proof)"
         if not ok:
             return f"Error: {msg}"
         name = _queue_current_name()

@@ -12,6 +12,11 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Added
 
+- **Drift-proof queue jump.** The web Up Next auto-advances in real time, so an
+  index captured a moment ago lands on the wrong track. `queue jump` now accepts
+  `track` (name or catalog id) and targets that track regardless of drift; the
+  `▶` marker in `queue list` now follows the *actual* now-playing item (it read
+  the queue pointer, which lags), so the marker and `now_playing` agree.
 - **Mutating playback/queue commands now return the resulting state** — no more
   blind "ok" that forces a follow-up `now_playing`/`list` call. `playback
   control` (play/pause/next/seek) returns the now-playing line; queue
@@ -109,6 +114,9 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
   dropped (unplayable/region-locked) instead of implying all landed; (5) the
   FORCE_TOKENLESS message no longer overclaims (macOS local edits/ratings still
   work); (6) `applemusic-mcp status` now has a request timeout so it can't hang.
+- **`queue remove` on the currently-playing item gives a clear error** instead of
+  an opaque MusicKit `mk-007 INVALID_ARGUMENTS` — "can't remove the
+  currently-playing item — jump to another track first."
 - **Catalog adds to Music.app-made playlists now complete in one call.** Adding a
   not-yet-owned track to a user-made playlist is inherently two-step (library-add
   in the cloud → AppleScript attach locally), and Apple's passive iCloud sync
