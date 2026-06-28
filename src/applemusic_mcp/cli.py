@@ -33,8 +33,19 @@ def cmd_login(args):
     authorize)."""
     if args.dev:
         return _login_dev(args)
-    from .browser import _cli_signin
+    from .browser import _cli_signin, _profile_in_use
 
+    # Fail fast rather than fighting a running MCP server for the Chrome profile
+    # (which orphans windows and kills the server's browser context).
+    if _profile_in_use():
+        print(
+            "The MCP server appears to be running and using the browser profile.\n"
+            "Sign in through the server instead — ask your assistant to run the Apple\n"
+            "Music sign-in (it'll open the player window) — or stop the server first,\n"
+            "then re-run `applemusic-mcp login`.",
+            flush=True,
+        )
+        return 1
     return _cli_signin()
 
 

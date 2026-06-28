@@ -127,7 +127,7 @@ def test_delete_playlist_hits_amp_host():
 def test_delete_playlist_401_message():
     responses.add(responses.DELETE, f"{amp_api.AMP}/me/library/playlists/p.1", status=401)
     ok, msg = amp_api.delete_playlist("p.1")
-    assert not ok and "signin" in msg.lower()
+    assert not ok and "login" in msg.lower()
 
 
 @responses.activate
@@ -224,7 +224,7 @@ def test_401_reason_hints_signin():
     )
     ok, msg = amp_api.delete_playlist("p.x")
     assert ok is False
-    assert "signin" in msg.lower()
+    assert "login" in msg.lower()
 
 
 @responses.activate
@@ -557,7 +557,7 @@ def test_create_playlist_error_status():
 def test_rename_playlist_error_and_exception():
     responses.add(responses.PATCH, f"{amp_api.AMP}/me/library/playlists/p.1", status=403)
     ok, msg = amp_api.rename_playlist("p.1", "N")
-    assert not ok and "signin" in msg.lower()
+    assert not ok and "login" in msg.lower()
 
 
 @responses.activate
@@ -681,7 +681,7 @@ def test_delete_folder_ok():
 def test_delete_folder_error():
     responses.add(responses.DELETE, f"{amp_api.AMP}/me/library/playlist-folders/p.F", status=403)
     ok, msg = amp_api.delete_folder("p.F")
-    assert not ok and "signin" in msg.lower()
+    assert not ok and "login" in msg.lower()
 
 
 @responses.activate

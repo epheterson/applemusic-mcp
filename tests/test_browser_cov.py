@@ -312,7 +312,7 @@ def test_add_not_authorized(monkeypatch):
     page.returns["add"] = 401
     set_engine(monkeypatch, page=page)
     ok, msg = browser.add_catalog_track_to_library("9", name="T")
-    assert not ok and "Not authorized" in msg and "signin" in msg
+    assert not ok and "Not authorized" in msg and "login" in msg
 
 
 def test_add_other_status(monkeypatch):

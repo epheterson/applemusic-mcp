@@ -33,7 +33,9 @@ def test_login_web_delegates_to_browser(monkeypatch):
         return 0
 
     monkeypatch.setitem(
-        sys.modules, "applemusic_mcp.browser", types.SimpleNamespace(_cli_signin=fake_signin)
+        sys.modules,
+        "applemusic_mcp.browser",
+        types.SimpleNamespace(_cli_signin=fake_signin, _profile_in_use=lambda: False),
     )
     assert cli.cmd_login(_args(dev=False)) == 0
     assert called["signin"] is True

@@ -40,7 +40,7 @@ def _err(r: requests.Response, action: str) -> str:
     logger.warning("amp-api %s: HTTP %s — %s", action, r.status_code, body[:2000] or "(empty body)")
     reason = f"status {r.status_code}"
     if r.status_code in (401, 403):
-        reason += " — not authorized, re-run signin"
+        reason += " — not authorized, re-run `applemusic-mcp login`"
     snippet = body[:200].replace("\n", " ").strip()
     return f"{reason}: {snippet}" if snippet else reason
 

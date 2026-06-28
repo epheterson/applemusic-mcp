@@ -1075,7 +1075,7 @@ def _playlist_rename_api(name: str, new_name: str) -> str:
 
 
 _SESSION_EXPIRED_MSG = (
-    "Error: your Apple Music session has expired — re-run `applemusic-mcp signin` "
+    "Error: your Apple Music session has expired — re-run `applemusic-mcp login` "
     "(browser) or `applemusic-mcp authorize` (developer-token path)."
 )
 _SESSION_THROTTLED_MSG = (
@@ -2138,7 +2138,7 @@ def _add_to_library_api(catalog_ids: list[str], content_type: str = "songs") -> 
         if response.status_code in (401, 403):
             return False, (
                 f"Not authorized (status {response.status_code}) — your session may have "
-                "expired. Re-run `applemusic-mcp signin` or `applemusic-mcp generate-token`."
+                "expired. Re-run `applemusic-mcp login` or `applemusic-mcp generate-token`."
             )
         return False, f"API returned status {response.status_code}"
     except Exception as e:
@@ -2349,7 +2349,7 @@ def _unified_auto_search_to_playlist(
             return (False, f"Catalog add disabled: {_FORCED_TOKENLESS_MSG}", steps)
         return (
             False,
-            "Catalog add needs the API. Run `applemusic-mcp signin` (browser sign-in, "
+            "Catalog add needs the API. Run `applemusic-mcp login` (browser sign-in, "
             "no Apple Developer account) or `applemusic-mcp generate-token`.",
             steps,
         )
@@ -2562,7 +2562,7 @@ def _rate_song_api(song_id: str, rating: str) -> tuple[bool, str]:
         if response.status_code in (401, 403):
             return False, (
                 f"Not authorized (status {response.status_code}) — your session may have "
-                "expired. Re-run `applemusic-mcp signin` or `applemusic-mcp generate-token`."
+                "expired. Re-run `applemusic-mcp login` or `applemusic-mcp generate-token`."
             )
         return False, f"API returned status {response.status_code}"
     except Exception as e:
@@ -4646,7 +4646,7 @@ def _library_add(
             return f"Error: Adding to your library is disabled: {_FORCED_TOKENLESS_MSG}"
         return (
             "Error: Adding to your library needs the API. Run "
-            "`applemusic-mcp signin` (browser sign-in, no Apple Developer account) "
+            "`applemusic-mcp login` (browser sign-in, no Apple Developer account) "
             "or `applemusic-mcp generate-token`."
         )
 
@@ -6632,18 +6632,18 @@ def _config_auth_status(mutation_status: "Optional[str]" = None) -> str:
         status.append("Developer Token: OK (web player — auto-refreshes, no action needed)")
     else:
         status.append(
-            "Developer Token: MISSING — run `applemusic-mcp signin` (browser, no account) "
+            "Developer Token: MISSING — run `applemusic-mcp login` (browser, no account) "
             "or `applemusic-mcp generate-token` (Apple Developer)"
         )
 
     # User token (media-user-token). Persists; re-auth = signin (browser) or authorize.
     if user_present:
         status.append(
-            "Music User Token: OK (persists; re-auth with `applemusic-mcp signin` if it fails)"
+            "Music User Token: OK (persists; re-auth with `applemusic-mcp login` if it fails)"
         )
     else:
         status.append(
-            "Music User Token: MISSING — run `applemusic-mcp signin` (browser) "
+            "Music User Token: MISSING — run `applemusic-mcp login` (browser) "
             "or `applemusic-mcp authorize` (dev token)"
         )
 
@@ -6662,7 +6662,7 @@ def _config_auth_status(mutation_status: "Optional[str]" = None) -> str:
             elif response.status_code in (401, 403):
                 status.append(
                     "API Connection: UNAUTHORIZED — your session expired. Re-run "
-                    "`applemusic-mcp signin` (browser) or `applemusic-mcp authorize` (dev token)."
+                    "`applemusic-mcp login` (browser) or `applemusic-mcp authorize` (dev token)."
                 )
             elif response.status_code == 429:
                 status.append("API Connection: RATE-LIMITED (429) — wait a moment and retry.")
@@ -6680,7 +6680,7 @@ def _config_auth_status(mutation_status: "Optional[str]" = None) -> str:
                 "ok": "Web fallback writes (amp-api): OK",
                 "expired": (
                     "Web fallback writes (amp-api): UNAUTHORIZED — the web-player "
-                    "session expired. Re-run `applemusic-mcp signin`."
+                    "session expired. Re-run `applemusic-mcp login`."
                 ),
                 "throttled": (
                     "Web fallback writes (amp-api): RATE-LIMITED (429) — wait a "
@@ -7147,7 +7147,7 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
 # =============================================================================
 # The personal playback queue is MusicKit-instance state (no REST endpoint), so
 # these route through the browser engine that drives the web player's MusicKit.
-# Cross-platform; needs a signed-in browser session (`applemusic-mcp signin`).
+# Cross-platform; needs a signed-in browser session (`applemusic-mcp login`).
 
 
 def _queue_resolve_catalog_id(track: str, artist: str = "") -> Optional[str]:

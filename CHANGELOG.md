@@ -114,6 +114,15 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
   dropped (unplayable/region-locked) instead of implying all landed; (5) the
   FORCE_TOKENLESS message no longer overclaims (macOS local edits/ratings still
   work); (6) `applemusic-mcp status` now has a request timeout so it can't hang.
+- **Smoother re-auth.** Three sign-in papercuts fixed: (1) error/status messages
+  now consistently point to `applemusic-mcp login` (the documented command;
+  `signin` stays as a hidden alias) instead of a mix of both; (2) a standalone
+  `applemusic-mcp login` now **fails fast** when the MCP server is already running
+  and holding the Chrome profile — it tells you to sign in through the server
+  rather than fighting for the profile lock (which orphaned windows and killed the
+  server's browser context); (3) if Playwright's Chromium build is missing (common
+  right after a version bump), the engine **auto-installs it once and retries**
+  instead of dumping a raw stack trace — with a clear one-line fix if that fails.
 - **`queue remove` on the currently-playing item gives a clear error** instead of
   an opaque MusicKit `mk-007 INVALID_ARGUMENTS` — "can't remove the
   currently-playing item — jump to another track first."

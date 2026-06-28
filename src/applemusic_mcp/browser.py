@@ -46,6 +46,52 @@ PROFILE_DIR = Path.home() / ".applemusic-mcp" / "chrome"
 _STOP = object()
 
 
+def _looks_like_missing_browser(exc: BaseException) -> bool:
+    """True if a Playwright launch error means the browser build isn't installed."""
+    s = str(exc).lower()
+    return (
+        "playwright install" in s
+        or "executable doesn't exist" in s
+        or "looks like playwright was just installed" in s
+    )
+
+
+def _install_playwright_chromium() -> bool:
+    """One-time auto-install of Playwright's Chromium build. Returns True on success."""
+    import subprocess
+    import sys
+
+    try:
+        print("Installing Playwright's Chromium (one-time, ~150MB)…", flush=True)
+        r = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _profile_in_use() -> bool:
+    """True if a Chrome is already running on our persistent profile (e.g. the MCP
+    server holds it). Used so a standalone CLI login fails fast instead of fighting
+    the server for the profile lock and tearing down its browser context."""
+    import subprocess
+
+    try:
+        r = subprocess.run(
+            ["pgrep", "-f", f"--user-data-dir={PROFILE_DIR}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return r.returncode == 0 and bool(r.stdout.strip())
+    except Exception:
+        return False
+
+
 class BrowserUnavailable(RuntimeError):
     """Raised when the browser engine can't start (Playwright missing, no Chrome,
     launch failure). Callers should fall back or surface a clear 'how to enable'."""
@@ -153,15 +199,37 @@ class _BrowserEngine:
             self._using_chrome = True
             return ctx
         except Exception:
-            ctx = launch(
-                user_data_dir,
-                headless=False,
-                args=args,
-                ignore_default_args=ignore_defaults,
-                chromium_sandbox=True,
-            )
-            self._using_chrome = False
-            return ctx
+            try:
+                ctx = launch(
+                    user_data_dir,
+                    headless=False,
+                    args=args,
+                    ignore_default_args=ignore_defaults,
+                    chromium_sandbox=True,
+                )
+                self._using_chrome = False
+                return ctx
+            except Exception as cx_exc:
+                # Bundled Chromium isn't installed (common right after a Playwright
+                # version bump). Auto-install it once and retry instead of dumping a
+                # raw Playwright stack trace at the user.
+                if not _looks_like_missing_browser(cx_exc):
+                    raise
+                if not _install_playwright_chromium():
+                    raise BrowserUnavailable(
+                        "Playwright's Chromium isn't installed (and neither system "
+                        "Chrome nor auto-install worked). Run:  "
+                        "python -m playwright install chromium"
+                    ) from cx_exc
+                ctx = launch(
+                    user_data_dir,
+                    headless=False,
+                    args=args,
+                    ignore_default_args=ignore_defaults,
+                    chromium_sandbox=True,
+                )
+                self._using_chrome = False
+                return ctx
 
     def _serve(self) -> None:
         while True:
@@ -322,7 +390,7 @@ def add_catalog_track_to_library(song_id: str, name: str = "") -> tuple[bool, st
     if status in (401, 403):
         return False, (
             f"Not authorized (HTTP {status}) — the browser session may be signed "
-            f"out. Run `python -m applemusic_mcp.browser signin`."
+            f"out. Run `applemusic-mcp login`."
         )
     return False, f"Add returned HTTP {status} for {label}"
 
@@ -405,13 +473,13 @@ def _ensure_player_ready(page) -> None:
     # Surface a sign-in problem with a clear, actionable message instead of a
     # cryptic MusicKit timeout (covers a signed-out or expired session).
     if not _read_user_token(page):
-        raise BrowserUnavailable("Not signed in to Apple Music — run `applemusic-mcp signin`.")
+        raise BrowserUnavailable("Not signed in to Apple Music — run `applemusic-mcp login`.")
     try:
         page.wait_for_function(_MUSICKIT_READY, timeout=20000)
     except Exception as exc:
         raise BrowserUnavailable(
             "Apple Music web player didn't initialize (session may have expired) — "
-            "re-run `applemusic-mcp signin`."
+            "re-run `applemusic-mcp login`."
         ) from exc
 
 
@@ -945,7 +1013,7 @@ def clear_session() -> None:
 def _cli_signin(timeout_s: int = 600) -> int:
     """Interactive sign-in helper: open the window once, then poll the cookie
     (without navigating) until the user has signed in. The persistent profile
-    makes this a one-time step. Run via ``python -m applemusic_mcp.browser signin``."""
+    makes this a one-time step. Run via `applemusic-mcp login`."""
     import time
 
     print(f"Launching Chrome (profile: {PROFILE_DIR}) ...", flush=True)
@@ -991,7 +1059,7 @@ def _cli_add(song_id: str) -> int:
     ``python -m applemusic_mcp.browser add <catalog_song_id>``."""
     try:
         if not _engine.submit(_cookie_signed_in):
-            print("Not signed in. Run: python -m applemusic_mcp.browser signin", flush=True)
+            print("Not signed in. Run: applemusic-mcp login", flush=True)
             return 1
     except BrowserUnavailable as exc:
         print(f"Browser engine unavailable:\n{exc}", flush=True)

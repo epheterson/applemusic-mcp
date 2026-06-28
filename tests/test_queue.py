@@ -185,7 +185,7 @@ def test_resolve_failure_msg_expired(monkeypatch):
     """A resolve miss while the session is expired must say so, not 'not found'."""
     monkeypatch.setattr(server.amp_api, "session_status", lambda: "expired")
     msg = server._resolve_failure_msg("playlist 'X' not found in your library")
-    assert "expired" in msg.lower() and "signin" in msg.lower()
+    assert "expired" in msg.lower() and "login" in msg.lower()
     assert "not found" not in msg.lower()
 
 

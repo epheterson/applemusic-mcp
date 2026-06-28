@@ -2011,7 +2011,7 @@ class TestUnifiedAutoSearchToPlaylist:
         monkeypatch.setattr(server, "_can_use_library_api", lambda: False)
         ok, msg, steps = server._unified_auto_search_to_playlist("Song", "Artist", "Playlist")
         assert ok is False
-        assert "signin" in msg
+        assert "login" in msg
 
     @responses.activate
     def test_splits_combined_name(
