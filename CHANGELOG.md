@@ -77,6 +77,14 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Fixed
 
+- **`APPLEMUSIC_FORCE_TOKENLESS` was invisible and caused silent add failures.**
+  The test flag forces tokenless mode (disabling every API write), but
+  `auth-status` didn't check it, so it green-lit "add works" while every add was
+  blocked, and the add errors blamed missing auth and told you to sign in (which
+  doesn't help while the flag is set). Status now calls the flag out prominently
+  and reports writes as DISABLED, and the catalog/library add errors name the flag
+  and say to unset it. (This flag, left set in a host's environment, was the real
+  cause of adds silently failing.)
 - **`auth-status` could claim "add works" while adds failed.** Its API probe
   tested the generated developer token against `api.music.apple.com`, but catalog
   adds, playlist edits, and ratings run through `amp-api.music.apple.com` with the

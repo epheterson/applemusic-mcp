@@ -918,6 +918,23 @@ def _has_user_token() -> bool:
         return False
 
 
+def _forced_tokenless() -> bool:
+    """True if APPLEMUSIC_FORCE_TOKENLESS=1 is set — a TEST flag that forces the
+    tokenless path and so DISABLES every API write (catalog add, playlist edit,
+    rating). It's easy to leave set in a host's environment and then wonder why
+    adds silently fail, so status and the write-gate errors must call it out by
+    name rather than blame missing auth."""
+    return os.environ.get("APPLEMUSIC_FORCE_TOKENLESS") == "1"
+
+
+_FORCED_TOKENLESS_MSG = (
+    "APPLEMUSIC_FORCE_TOKENLESS=1 is set in this server's environment, which "
+    "forces tokenless mode and disables API writes (catalog add, playlist edits, "
+    "ratings). Unset it (and restart the MCP server) to enable them — signing in "
+    "again won't help while it's set."
+)
+
+
 def _can_use_library_api() -> bool:
     """True if the unified API mutation path is usable: a developer token is
     obtainable (generated OR harvested) AND a media-user-token is saved.
@@ -926,7 +943,7 @@ def _can_use_library_api() -> bool:
     tokens resolve, adds go through ``_add_to_library_api``; otherwise we fall
     back (AppleScript UI on macOS). Honors APPLEMUSIC_FORCE_TOKENLESS for testing.
     """
-    if os.environ.get("APPLEMUSIC_FORCE_TOKENLESS") == "1":
+    if _forced_tokenless():
         return False
     return has_any_developer_token() and _has_user_token()
 
@@ -2290,6 +2307,8 @@ def _unified_auto_search_to_playlist(
     # no UI fallback. If the API path isn't available, tell the user how to enable
     # it rather than degrading to something unreliable.
     if not _can_use_library_api():
+        if _forced_tokenless():
+            return (False, f"Catalog add disabled: {_FORCED_TOKENLESS_MSG}", steps)
         return (
             False,
             "Catalog add needs the API. Run `applemusic-mcp signin` (browser sign-in, "
@@ -4531,6 +4550,8 @@ def _library_add(
     # is no UI fallback. If the API path isn't available, tell the user how to
     # enable it.
     if not _can_use_library_api():
+        if _forced_tokenless():
+            return f"Error: Adding to your library is disabled: {_FORCED_TOKENLESS_MSG}"
         return (
             "Error: Adding to your library needs the API. Run "
             "`applemusic-mcp signin` (browser sign-in, no Apple Developer account) "
@@ -6890,9 +6911,20 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
         # status can promise writes that 401. Probe it once; pass it to the body
         # renderer and use it for the verdict.
         tokens_present = has_any_developer_token() and has_user_token()
-        mut = amp_api.session_status() if tokens_present else None
+        # APPLEMUSIC_FORCE_TOKENLESS disables every API write regardless of tokens.
+        # It's a test flag that's easy to leave set, so it must NOT be green-lit.
+        forced = _forced_tokenless()
+        mut = amp_api.session_status() if (tokens_present and not forced) else None
         body = _config_auth_status(mut)
-        if not tokens_present:
+        if forced:
+            body = f"⚠️ {_FORCED_TOKENLESS_MSG}\n\n{body}"
+        if forced:
+            nxt = (
+                "⚠️ Writes are DISABLED — APPLEMUSIC_FORCE_TOKENLESS=1 is set. Catalog "
+                "add, playlist edits, and ratings via the API won't work until it's "
+                "unset and the server restarts. (Reads and macOS Music.app still work.)"
+            )
+        elif not tokens_present:
             nxt = "⚠️ Not signed in yet — run config(action='signin') to finish setup."
         elif mut == "ok":
             nxt = "✅ Ready — catalog, playlists, add, and rate all work."
@@ -6910,7 +6942,13 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
             )
         # Show which rail writes will actually take (independent of the playback
         # mode), so "Mode: web" can't be mistaken for "my writes go to the web."
-        write_rail = _RAIL_LABELS.get(_write_rail("add"), "unknown")
+        if forced:
+            write_rail = (
+                f"{_RAIL_LABELS.get(_write_rail('add'), 'unknown')} for library-only ops; "
+                "API writes (catalog add) DISABLED by APPLEMUSIC_FORCE_TOKENLESS"
+            )
+        else:
+            write_rail = _RAIL_LABELS.get(_write_rail("add"), "unknown")
         return f"{body}\nMode: {mode}\nWrites: {write_rail}\n\n{nxt}"
 
     if action in ("signin", "login"):

@@ -584,6 +584,23 @@ class TestAuthTool:
         assert "Web fallback writes" in out and "OK" in out
         assert "Writes:" in out  # resolved write rail is surfaced
 
+    def test_status_flags_forced_tokenless(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        # The flag that silently blocked every add must be surfaced, not green-lit.
+        self._tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setenv("APPLEMUSIC_FORCE_TOKENLESS", "1")
+        out = server.config(action="status")
+        assert "Ready" not in out
+        assert "FORCE_TOKENLESS" in out and "DISABLED" in out
+
+    def test_library_add_names_the_flag_when_forced(self, monkeypatch):
+        # The add error must name the flag, not tell the user to log in (which
+        # wouldn't help while it's set).
+        monkeypatch.setenv("APPLEMUSIC_FORCE_TOKENLESS", "1")
+        out = server.library(action="add", track="Some Song")
+        assert "FORCE_TOKENLESS" in out and "Unset it" in out
+
     def test_status_tokens_present_but_mutations_unauthorized(
         self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
     ):
