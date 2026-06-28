@@ -1258,7 +1258,9 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
     # Surface the playlist fuzzy match (parity with the native path) so the user
     # knows if "Rock" landed in "Rock & Roll Classics".
     dest = f"'{fuzzy.matched_name}'" if fuzzy and fuzzy.matched_name else f"'{playlist}'"
-    out = f"Added {len(items)} track(s) to {dest}:\n" + "\n".join(f"  + {n}" for n in added_names)
+    out = f"Added {len(items)} track(s) to {dest}:\n" + "\n".join(
+        f"  + {n} (added to library + playlist via the Apple Music web API)" for n in added_names
+    )
     if fuzzy:
         out += f"\n{_format_fuzzy_match(fuzzy)}"
     if errors:
@@ -2465,7 +2467,12 @@ def _auto_search_and_add_to_playlist(
                 timeout=REQUEST_TIMEOUT,
             )
             if pl_add_response.status_code in (200, 201, 204):
-                return True, f"{found_name} - {found_artist} (added to your library)", steps
+                return (
+                    True,
+                    f"{found_name} - {found_artist} "
+                    "(added to library + playlist via the Apple Music API)",
+                    steps,
+                )
             return (
                 False,
                 f"Failed to add to playlist (status {pl_add_response.status_code})",
@@ -2473,8 +2480,8 @@ def _auto_search_and_add_to_playlist(
             )
 
         # kind == "user": this path is macOS-only (off-mac never reaches here), so
-        # attach via AppleScript. Poll because the catalog track was just added to
-        # the cloud library and Music.app needs a moment to sync it locally.
+        # attach via AppleScript. The catalog track was just library-added in the
+        # cloud; nudge iCloud and poll until it syncs into the local Music.app.
         if not APPLESCRIPT_AVAILABLE:  # pragma: no cover  # off-mac uses _playlist_add_api
             return (
                 False,
@@ -2482,24 +2489,32 @@ def _auto_search_and_add_to_playlist(
                 "it. Adding to it currently requires macOS.",
                 steps,
             )
-        # Force an iCloud sync so the just-added track reaches the LOCAL Music.app,
-        # rather than passively waiting on Apple's schedule, then poll-attach until
-        # it lands (we don't want to return a half-done "added to library" state).
-        nudged, _ = asc.update_cloud_library()
-        if nudged:
-            steps.append("Triggered Update Cloud Library to sync the new track")
+        # Up to ~3 nudge cycles; each nudge is rate-limited (≤once/4s, so a batch of
+        # adds won't re-foreground Music every time), and we allow ~10s after a
+        # nudge for the track to surface locally before re-nudging.
         last = ""
-        for attempt in range(20):  # ~60s, with the sync actively nudged
-            ok2, res2, split = _smart_as_add_track_to_playlist(
-                playlist_name, found_name, found_artist or None, None
-            )
-            last = res2
-            if ok2 and _verify_track_in_playlist(playlist_name, found_name, found_artist or ""):
-                steps.append("Attached via Music.app (native)")
-                return True, f"{found_name} - {found_artist} (added to your library)", steps
-            if not ok2 and "Track not found" not in res2:
-                break  # a real error, not sync lag
-            time.sleep(_VERIFY_DELAY_S)
+        for _cycle in range(3):
+            if asc.update_cloud_library()[0]:
+                steps.append("Triggered Update Cloud Library to sync the new track")
+            waited = 0.0
+            while waited < 10.0:
+                ok2, res2, _split = _smart_as_add_track_to_playlist(
+                    playlist_name, found_name, found_artist or None, None
+                )
+                last = res2
+                if ok2 and _verify_track_in_playlist(playlist_name, found_name, found_artist or ""):
+                    steps.append("Attached via Music.app (native)")
+                    return (
+                        True,
+                        f"{found_name} - {found_artist} "
+                        "(added to library via the Apple Music API; "
+                        "attached to playlist via Music.app)",
+                        steps,
+                    )
+                if not ok2 and "Track not found" not in res2:
+                    return False, f"Error adding '{found_name}' to playlist: {res2}", steps
+                time.sleep(_VERIFY_DELAY_S)
+                waited += _VERIFY_DELAY_S
         return (
             False,
             f"Added '{found_name}' to your library and triggered an iCloud sync, but "
@@ -3596,9 +3611,10 @@ def _playlist_add(
                 if split_match:
                     s_name, s_artist = split_match
                     steps.append(f"Resolved '{name}' → '{s_name}' by '{s_artist}'")
-                    added.append(f"{s_name} - {s_artist}")
+                    added.append(f"{s_name} - {s_artist} (via Music.app)")
                 else:
-                    added.append(f"{name} - {track_artist}" if track_artist else name)
+                    base = f"{name} - {track_artist}" if track_artist else name
+                    added.append(f"{base} (via Music.app)")
             elif "Track not found" in result and auto_add:
                 # Out-of-library auto-search: prefer API, fall back to UI automation
                 search_success, search_result, search_steps = _unified_auto_search_to_playlist(
@@ -3717,11 +3733,15 @@ def _playlist_add(
                 if not success:
                     errors.append(f"{name}: {result}")
                 elif not verify:
-                    added.append(f"{name} - {artist_name}" if artist_name else name)
+                    added.append(
+                        (f"{name} - {artist_name}" if artist_name else name) + " (via Music.app)"
+                    )
                 elif _verify_track_in_playlist(
                     resolved.applescript_name, name, artist_name or None
                 ):
-                    added.append(f"{name} - {artist_name}" if artist_name else name)
+                    added.append(
+                        (f"{name} - {artist_name}" if artist_name else name) + " (via Music.app)"
+                    )
                 else:
                     # AppleScript reported success but verify says the track
                     # isn't in the playlist. Retry once to absorb iCloud
@@ -3735,7 +3755,10 @@ def _playlist_add(
                     if success2 and _verify_track_in_playlist(
                         resolved.applescript_name, name, artist_name or None
                     ):
-                        added.append(f"{name} - {artist_name}" if artist_name else name)
+                        added.append(
+                            (f"{name} - {artist_name}" if artist_name else name)
+                            + " (via Music.app)"
+                        )
                     else:
                         errors.append(
                             f"{name}: AppleScript reported success but track did not "
@@ -4173,20 +4196,17 @@ def playlist(
         # macOS: the native path attaches via AppleScript, which edits ANY playlist
         # — including Music.app-made ones the dev-token API can't (it library-adds
         # catalog tracks over the API first, then attaches). So prefer it on a Mac.
+        # No coarse rail label here: an add can touch two rails (library vs
+        # playlist) and a batch can mix per-track methods, so each sub-path
+        # attributes its own method in the result instead.
         if APPLESCRIPT_AVAILABLE:
-            return _label_write(
-                _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_add),
-                _write_rail("add"),
-            )
+            return _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_add)
         # Off macOS: the web rail (amp-api). It now resolves Music.app-made
         # playlists too and attempts the write; if the web token can't edit one it
         # surfaces the real error instead of a bogus "not found."
         if track and not album:
-            return _label_write(_playlist_add_api(playlist, track, artist), "web")
-        return _label_write(
-            _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_add),
-            "web",
-        )
+            return _playlist_add_api(playlist, track, artist)
+        return _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_add)
     elif action == "copy":
         return _playlist_copy(source, new_name)
     elif action == "remove":

@@ -1840,7 +1840,9 @@ class TestAutoSearchAndAddToPlaylist:
         monkeypatch.setattr(server, "_verify_track_in_playlist", lambda pl, n, a: True)
         ok, msg, steps = server._auto_search_and_add_to_playlist("So What", "Miles", "Jack & Norah")
         assert ok is True and "So What" in msg
-        assert "added to your library" in msg  # surfaces the library side-effect
+        # per-leg method attribution: library via the API, playlist via Music.app
+        assert "added to library via the Apple Music API" in msg
+        assert "attached to playlist via Music.app" in msg
         assert native_calls == [("Jack & Norah", "So What")]  # attached natively
 
     @responses.activate

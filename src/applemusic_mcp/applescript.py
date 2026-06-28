@@ -504,10 +504,19 @@ def set_volume(volume: int) -> tuple[bool, str]:
     return run_applescript(f'tell application "Music" to set sound volume to {volume}')
 
 
-def update_cloud_library() -> tuple[bool, str]:
+_last_cloud_nudge = 0.0
+_CLOUD_NUDGE_MIN_INTERVAL = 4.0  # seconds — don't re-foreground Music more than ~once/4s
+
+
+def update_cloud_library(min_interval: float = _CLOUD_NUDGE_MIN_INTERVAL) -> tuple[bool, str]:
     """Nudge an iCloud Music Library sync via File > Library > Update Cloud Library,
     so a track just added to the library over the API shows up in the LOCAL
     Music.app sooner (needed before AppleScript can attach it to a playlist).
+
+    Rate-limited: each click briefly foregrounds Music, so a batch of adds (or
+    rapid retries) must not stomp on it. Calls within ``min_interval`` seconds of
+    the last one are skipped, returning (False, "throttled") — the caller just
+    keeps polling.
 
     Clicks a single, fixed menu item — far more stable than the result-row UI
     automation we retired — but it still needs Accessibility permission, and the
@@ -517,6 +526,11 @@ def update_cloud_library() -> tuple[bool, str]:
     The menu click is an Accessibility action, not a mouse move, but macOS only
     exposes the frontmost app's menu bar, so we briefly activate Music and then
     restore the previously-frontmost app so the user's focus isn't stolen."""
+    global _last_cloud_nudge
+    now = time.monotonic()
+    if now - _last_cloud_nudge < min_interval:
+        return False, "throttled (nudged recently)"
+    _last_cloud_nudge = now
     script = """
     set priorApp to ""
     try
