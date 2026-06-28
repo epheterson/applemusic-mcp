@@ -106,6 +106,29 @@ This captures your session from a local signed-in Chrome profile (your password 
 **From source:** `git clone … && pip install -e .`, then point the config `command` at `<repo>/venv/bin/applemusic-mcp` or use `python -m applemusic_mcp`.
 </details>
 
+## What's sanctioned vs web
+
+This server reaches Apple Music three ways and prefers the most official one available:
+
+- **Apple Music API (sanctioned).** Your own developer token (from `login --dev`) against `api.music.apple.com`, Apple's documented API.
+- **Web player (community path).** A token from a signed-in `music.apple.com` session against the web player's backend, the same approach as [Cider](https://github.com/ciderapp/Cider-2) and [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/). This is the no-developer-account path, and it fills the few gaps the public API doesn't expose.
+- **Music.app (macOS).** Local AppleScript automation of your own app. No tokens, no network.
+
+With a developer token, writes go through the sanctioned API; the web path is used only for the operations Apple's public API can't do. With web sign-in alone, everything runs on the web path. On macOS, library and playlist edits can also run locally through Music.app. Each write tells you which path it took.
+
+| Write | Apple Music API | Web player | Music.app (macOS) |
+|---|:---:|:---:|:---:|
+| Add to library | ✓ | ✓ | ✓ |
+| Create playlist | ✓ | ✓ | ✓ |
+| Add tracks (API-made playlist) | ✓ | ✓ | ✓ |
+| Add tracks (Music.app-made playlist) | ✗ | ✓ | ✓ |
+| Rate 1 to 5 | ✓ | ✗ | ✓ |
+| Love / dislike | ✓ | ✓ | ✓ |
+| Delete playlist | ✗ | ✓ | ✓ |
+| Rename / move into folder | partial | ✓ | ✓ |
+
+The `✗` cells are operations Apple's public API doesn't offer, so they route to the web player or Music.app.
+
 ## Usage
 
 Just talk to your assistant:
