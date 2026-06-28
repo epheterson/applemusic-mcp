@@ -1994,17 +1994,33 @@ class TestPlaylistDispatcher:
         assert "Added" in result
 
     def test_web_add_to_app_made_playlist_explains_origin(self, monkeypatch):
-        """Off macOS, a 401 adding to a Music.app-made playlist must explain it's
-        a playlist-origin limitation, not blame auth."""
+        """Off macOS, a 401/403 adding to a Music.app-made playlist (session OK)
+        must explain it's a playlist-origin limitation, not blame auth."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         monkeypatch.setattr(server, "_has_developer_token", lambda: False)
         monkeypatch.setattr(server, "_has_user_token", lambda: True)
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: ("p.app", None))
+        monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         monkeypatch.setattr(
             server.amp_api, "add_tracks", lambda pid, items: (False, "status 403: forbidden")
         )
         out = server.playlist(action="add", playlist="Jack & Norah", track="i.song1")
         assert "created in Music.app" in out and "403" in out
+
+    def test_web_add_401_with_expired_session_says_reauth(self, monkeypatch):
+        """A 401 add when the session is actually expired must say re-auth, NOT
+        blame the playlist origin (the disambiguation the review caught)."""
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(server, "_has_developer_token", lambda: False)
+        monkeypatch.setattr(server, "_has_user_token", lambda: True)
+        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: ("p.app", None))
+        monkeypatch.setattr(server.amp_api, "session_status", lambda: "expired")
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda pid, items: (False, "status 401: unauthorized")
+        )
+        out = server.playlist(action="add", playlist="Jack & Norah", track="i.song1")
+        assert "expired" in out.lower() and "login" in out.lower()
+        assert "created in Music.app" not in out
 
     def test_action_add_api_engine_with_album_falls_back(self, monkeypatch):
         """API engine with album param falls through to _playlist_add."""

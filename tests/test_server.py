@@ -604,9 +604,12 @@ class TestAuthTool:
     def test_status_tokens_present_but_mutations_unauthorized(
         self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
     ):
-        # The exact trap: tokens look fine, reads work, but the write path 401s.
-        # Status must NOT claim add works.
+        # The exact trap on the WEB rail: tokens look fine, reads work, but the
+        # write path 401s. Status must NOT claim add works. Force the web rail
+        # (off macOS, no generated dev token) so the verdict hinges on the session.
         self._tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        monkeypatch.setattr(server, "_has_developer_token", lambda: False)
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "expired")
         with patch.object(server, "get_headers", return_value={}):
             with patch("requests.get") as mg:

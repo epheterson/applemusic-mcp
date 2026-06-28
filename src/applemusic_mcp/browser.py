@@ -700,7 +700,13 @@ def queue_set(catalog_ids: list) -> tuple[bool, str]:
 
     try:
         n = _engine.submit(run)
-        return True, f"Queue set ({n} track(s))"
+        msg = f"Queue set ({n} track(s))"
+        # MusicKit silently drops ids it can't play (unplayable / region-locked),
+        # so the queue can end up shorter than requested — say so, don't imply all
+        # landed.
+        if isinstance(n, int) and n < len(ids):
+            msg += f" — {len(ids) - n} not queued by the player (unplayable/region-locked)"
+        return True, msg
     except BrowserUnavailable as exc:
         return False, str(exc)
     except Exception as exc:  # noqa: BLE001

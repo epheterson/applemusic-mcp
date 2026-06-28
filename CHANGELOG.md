@@ -77,6 +77,17 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Fixed
 
+- **Review pass (correctness + honest errors).** A multi-reviewer pass over the
+  release caught several issues, now fixed: (1) a web-rail add/remove that 401s no
+  longer always blames "playlist created in Music.app" — it probes the session
+  first and says "re-run login" when the session actually expired; (2) on macOS,
+  `auth-status` no longer reports writes as broken when only the *web* session is
+  stale — the verdict follows the real write rail (Music.app locally), with web
+  health shown as informational; (3) `_playlist_remove_api` surfaces the real
+  error instead of a flat "remove failed"; (4) `queue set` flags tracks MusicKit
+  dropped (unplayable/region-locked) instead of implying all landed; (5) the
+  FORCE_TOKENLESS message no longer overclaims (macOS local edits/ratings still
+  work); (6) `applemusic-mcp status` now has a request timeout so it can't hang.
 - **Adds to Music.app-made playlists failed with "could not find playlist."**
   `resolve_playlist_id` silently skipped every playlist amp-api flags
   `canEdit=False` — which is all playlists created in the Music app — so the web

@@ -929,9 +929,10 @@ def _forced_tokenless() -> bool:
 
 _FORCED_TOKENLESS_MSG = (
     "APPLEMUSIC_FORCE_TOKENLESS=1 is set in this server's environment, which "
-    "forces tokenless mode and disables API writes (catalog add, playlist edits, "
-    "ratings). Unset it (and restart the MCP server) to enable them — signing in "
-    "again won't help while it's set."
+    "disables the API write path — catalog and library adds won't work. (On macOS, "
+    "local Music.app playlist edits and ratings still work; off macOS, writes are "
+    "blocked.) Unset it and restart the MCP server to re-enable API adds — signing "
+    "in again won't help while it's set."
 )
 
 
@@ -1020,7 +1021,7 @@ def _write_rail(op: str, *, catalog: bool = False) -> str:
 
     Prefers the most official rail available. ``catalog=True`` marks an add of a
     song not already in the library (it needs the API even on macOS)."""
-    if os.environ.get("APPLEMUSIC_FORCE_TOKENLESS") == "1" and APPLESCRIPT_AVAILABLE:
+    if _forced_tokenless() and APPLESCRIPT_AVAILABLE:
         return "native"
     if APPLESCRIPT_AVAILABLE:
         # macOS: local Music.app handles tokenless writes. Only a catalog add (a
@@ -1120,9 +1121,20 @@ def _playlist_remove_api(playlist: str, track: str, artist: str = "") -> str:
     if not matches:
         return f"Error: {track!r} not found in {playlist!r}"
     chosen, others = _safe_single_match(matches, track)
-    ok, _ = amp_api.remove_track(pid, chosen["relationship_id"])
+    ok, msg = amp_api.remove_track(pid, chosen["relationship_id"])
     if not ok:
-        return f"Error: remove failed for {track!r}"
+        # Same 401/403 ambiguity as add: expired session vs a Music.app-made
+        # playlist the web API can't modify. Surface the real cause, not a flat
+        # "remove failed."
+        if msg.startswith("status 401") or msg.startswith("status 403"):
+            if amp_api.session_status() == "expired":
+                return f"Error: your web session expired — re-run `applemusic-mcp login`. ({msg})"
+            return (
+                f"Error: couldn't remove from '{playlist}' over the web API ({msg}). This "
+                "playlist was likely created in Music.app, which the web API can't modify "
+                "(on macOS it's edited locally instead)."
+            )
+        return f"Error: remove failed for {track!r}: {msg}"
     audit_log.log_action("remove_track", {"playlist": playlist, "track": track, "via": "api"})
     out = f"Removed {chosen['name']} - {chosen['artist']} from {playlist!r}"
     if others:
@@ -1218,10 +1230,13 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
         return "Error: nothing to add\n" + "\n".join(errors)
     ok, msg = amp_api.add_tracks(pid, items)
     if not ok:
-        # A 401/403 here usually means the playlist was created in Music.app (the
-        # web API can't modify those), not that the session is bad. Say so, and
-        # point at the path that does work, rather than blame auth.
-        if any(code in msg for code in ("401", "403")):
+        # A 401/403 is ambiguous: either the web session expired, OR the playlist
+        # was created in Music.app (the web API can't modify those). Disambiguate
+        # with a cheap session probe before blaming origin — otherwise an expired
+        # session gets the wrong cause and the wrong fix.
+        if msg.startswith("status 401") or msg.startswith("status 403"):
+            if amp_api.session_status() == "expired":
+                return f"Error: your web session expired — re-run `applemusic-mcp login`. ({msg})"
             return (
                 f"Error: couldn't add to '{playlist}' over the web API ({msg}). This "
                 "playlist was likely created in Music.app, which the web API can't "
@@ -6929,19 +6944,38 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
         # status can promise writes that 401. Probe it once; pass it to the body
         # renderer and use it for the verdict.
         tokens_present = has_any_developer_token() and has_user_token()
-        # APPLEMUSIC_FORCE_TOKENLESS disables every API write regardless of tokens.
-        # It's a test flag that's easy to leave set, so it must NOT be green-lit.
+        # APPLEMUSIC_FORCE_TOKENLESS disables the API write path regardless of
+        # tokens. It's a test flag that's easy to leave set, so never green-lit.
         forced = _forced_tokenless()
+        # The verdict must reflect the rail writes ACTUALLY take, not just the
+        # web-session probe: on macOS writes go native (Music.app), so a stale web
+        # session must not be reported as "your writes are broken."
+        rail = _write_rail("add")
         mut = amp_api.session_status() if (tokens_present and not forced) else None
         body = _config_auth_status(mut)
         if forced:
             body = f"⚠️ {_FORCED_TOKENLESS_MSG}\n\n{body}"
+
         if forced:
             nxt = (
-                "⚠️ Writes are DISABLED — APPLEMUSIC_FORCE_TOKENLESS=1 is set. Catalog "
-                "add, playlist edits, and ratings via the API won't work until it's "
-                "unset and the server restarts. (Reads and macOS Music.app still work.)"
+                "⚠️ API catalog/library adds are DISABLED — APPLEMUSIC_FORCE_TOKENLESS=1 "
+                "is set; unset it and restart the server. (On macOS, local Music.app "
+                "playlist edits and ratings still work; reads still work.)"
             )
+        elif rail == "native":
+            # macOS: playlist & library edits and ratings run locally through
+            # Music.app, independent of the web session. Catalog add still needs API.
+            nxt = (
+                "✅ Ready — on macOS, playlist & library edits and ratings run locally "
+                "through Music.app."
+            )
+            if not _can_use_library_api():
+                nxt += " Adding catalog tracks needs sign-in: config(action='signin')."
+            elif mut and mut != "ok":
+                nxt += " (Web player session looks degraded; playback/queue may need re-auth.)"
+        elif rail == "sanctioned":
+            # off-macOS with a developer token: writes go through the official API.
+            nxt = "✅ Ready — writes go through the Apple Music API (developer token)."
         elif not tokens_present:
             nxt = "⚠️ Not signed in yet — run config(action='signin') to finish setup."
         elif mut == "ok":
@@ -6958,15 +6992,14 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
                 "⚠️ Couldn't confirm the add/playlist/rate path (amp-api unreachable). "
                 "Check your connection, then retry."
             )
-        # Show which rail writes will actually take (independent of the playback
-        # mode), so "Mode: web" can't be mistaken for "my writes go to the web."
+        # Show which rail writes will actually take (independent of the playback mode).
         if forced:
             write_rail = (
-                f"{_RAIL_LABELS.get(_write_rail('add'), 'unknown')} for library-only ops; "
-                "API writes (catalog add) DISABLED by APPLEMUSIC_FORCE_TOKENLESS"
+                f"{_RAIL_LABELS.get(rail, 'unknown')} for local edits; "
+                "API catalog/library add DISABLED by APPLEMUSIC_FORCE_TOKENLESS"
             )
         else:
-            write_rail = _RAIL_LABELS.get(_write_rail("add"), "unknown")
+            write_rail = _RAIL_LABELS.get(rail, "unknown")
         return f"{body}\nMode: {mode}\nWrites: {write_rail}\n\n{nxt}"
 
     if action in ("signin", "login"):

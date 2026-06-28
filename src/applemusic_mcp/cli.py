@@ -138,6 +138,7 @@ def cmd_status(args):
             "https://api.music.apple.com/v1/me/library/playlists",
             headers=headers,
             params={"limit": 1},
+            timeout=30,
         )
         print("API: ok" if r.status_code == 200 else f"API: status {r.status_code}")
     except FileNotFoundError:
