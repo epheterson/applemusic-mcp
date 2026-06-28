@@ -2356,40 +2356,6 @@ def _unified_auto_search_to_playlist(
     return False, result, steps
 
 
-def _resolve_library_playlist_id(name: str) -> Optional[str]:
-    """Resolve an existing library playlist's id (``p.xxxx``) by name via the API.
-
-    Used to add tracks to a playlist over the API (reliable, cross-platform).
-    Matches loosely and prefers API-created playlists. Returns None if not found
-    (e.g. a just-created playlist that hasn't synced to the cloud library yet).
-    """
-    try:
-        headers = get_headers()
-        url = f"{BASE_URL}/me/library/playlists?limit=100"
-        loose_match = None
-        while url:
-            r = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-            if r.status_code != 200:
-                return None
-            data = r.json()
-            for pl in data.get("data", []):
-                attrs = pl.get("attributes", {})
-                if not attrs.get("canEdit", True):
-                    continue
-                pl_name = attrs.get("name", "")
-                # Prefer an exact (case-insensitive) name match to avoid adding to
-                # the wrong playlist when names overlap ("Workout" vs "Workout 2").
-                if pl_name.strip().lower() == name.strip().lower():
-                    return pl.get("id")
-                if _loose_contains(name, pl_name):
-                    loose_match = loose_match or pl.get("id")
-            nxt = data.get("next")
-            url = ("https://api.music.apple.com" + nxt) if nxt else None
-        return loose_match
-    except Exception:
-        return None
-
-
 def _auto_search_and_add_to_playlist(
     track_name: str,
     artist: str,
@@ -2450,31 +2416,48 @@ def _auto_search_and_add_to_playlist(
         if add_response.status_code not in (200, 202):
             return False, f"Failed to add to library (status {add_response.status_code})", steps
 
-        # Add the catalog track directly to the playlist over the API. Verified
-        # reliable for existing library playlists: POST the catalog id to the
-        # playlist's library id (p.xxxx) -> 204, lands in seconds. No AppleScript,
-        # no iCloud-sync race, works cross-platform. (The old AppleScript-insert
-        # hybrid raced local library sync; the "500" that motivated it only occurs
-        # for freshly-created playlists that haven't propagated to the cloud yet.)
-        if not playlist_id:
-            playlist_id = _resolve_library_playlist_id(playlist_name)
-        if not playlist_id:
+        # Attach the now-in-library track to the playlist via the rail that can
+        # ACTUALLY write it. Resolve the playlist INCLUDING Music.app-made ones
+        # (api_created_only=False) — the generated dev token can't write those, but
+        # the web session can. API-created → sanctioned dev-token POST; Music.app-
+        # made → the web session (amp-api). Same cloud namespace as the library-add
+        # above, so no cross-engine sync race.
+        if playlist_id:
+            pl = {"id": playlist_id, "canEdit": True}  # explicit id from caller
+        else:
+            pl = amp_api.resolve_playlist(playlist_name, api_created_only=False)
+        if not pl:
             return (
                 False,
                 f"Could not find playlist '{playlist_name}' in your library "
                 "(a just-created playlist can take a moment to sync before it's addable)",
                 steps,
             )
+        playlist_id = pl["id"]
 
-        pl_add_response = requests.post(
-            f"{BASE_URL}/me/library/playlists/{playlist_id}/tracks",
-            headers=headers,
-            json={"data": [{"id": catalog_id, "type": "songs"}]},
-            timeout=REQUEST_TIMEOUT,
-        )
-        if pl_add_response.status_code in (200, 201, 204):
+        if amp_api.is_api_created(pl):
+            pl_add_response = requests.post(
+                f"{BASE_URL}/me/library/playlists/{playlist_id}/tracks",
+                headers=headers,
+                json={"data": [{"id": catalog_id, "type": "songs"}]},
+                timeout=REQUEST_TIMEOUT,
+            )
+            if pl_add_response.status_code in (200, 201, 204):
+                return True, f"{found_name} - {found_artist}", steps
+            # The dev-token endpoint can't write a Music.app-made playlist (and a
+            # just-propagated playlist may misreport canEdit). Fall through to the
+            # web session rather than fail.
+            steps.append(
+                f"dev-token playlist POST returned {pl_add_response.status_code}; "
+                "retrying via the web session"
+            )
+
+        # Music.app-made playlist, or the sanctioned POST didn't take: write through
+        # the web session (the rail that can edit Music.app-made playlists).
+        wok, wmsg = amp_api.add_tracks(playlist_id, [catalog_id])
+        if wok:
             return True, f"{found_name} - {found_artist}", steps
-        return False, f"Failed to add to playlist (status {pl_add_response.status_code})", steps
+        return False, f"Failed to add to playlist: {wmsg}", steps
 
     except Exception as e:
         return False, f"Error: {str(e)}", steps

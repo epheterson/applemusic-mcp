@@ -1735,120 +1735,15 @@ class TestSmartAsAddTrackToPlaylist:
 
 
 # ---------------------------------------------------------------------------
-# _resolve_library_playlist_id
-# ---------------------------------------------------------------------------
-
-
-class TestResolveLibraryPlaylistId:
-    @responses.activate
-    def test_finds_exact_match(self, mock_config_dir, mock_developer_token, mock_user_token):
-        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
-        responses.add(
-            responses.GET,
-            "https://api.music.apple.com/v1/me/library/playlists",
-            json={
-                "data": [
-                    {
-                        "id": "p.exact",
-                        "attributes": {"name": "My Playlist", "canEdit": True},
-                    },
-                    {
-                        "id": "p.other",
-                        "attributes": {"name": "My Playlist Extended", "canEdit": True},
-                    },
-                ]
-            },
-            status=200,
-        )
-        pid = server._resolve_library_playlist_id("My Playlist")
-        assert pid == "p.exact"
-
-    @responses.activate
-    def test_skips_nonedit(self, mock_config_dir, mock_developer_token, mock_user_token):
-        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
-        responses.add(
-            responses.GET,
-            "https://api.music.apple.com/v1/me/library/playlists",
-            json={
-                "data": [
-                    {
-                        "id": "p.noedit",
-                        "attributes": {"name": "My Playlist", "canEdit": False},
-                    }
-                ]
-            },
-            status=200,
-        )
-        pid = server._resolve_library_playlist_id("My Playlist")
-        assert pid is None
-
-    @responses.activate
-    def test_returns_none_on_error(self, mock_config_dir, mock_developer_token, mock_user_token):
-        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
-        responses.add(
-            responses.GET,
-            "https://api.music.apple.com/v1/me/library/playlists",
-            status=401,
-        )
-        pid = server._resolve_library_playlist_id("My Playlist")
-        assert pid is None
-
-    @responses.activate
-    def test_loose_match_fallback(self, mock_config_dir, mock_developer_token, mock_user_token):
-        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
-        responses.add(
-            responses.GET,
-            "https://api.music.apple.com/v1/me/library/playlists",
-            json={
-                "data": [
-                    {
-                        "id": "p.loose",
-                        "attributes": {"name": "My Rock Playlist", "canEdit": True},
-                    }
-                ]
-            },
-            status=200,
-        )
-        pid = server._resolve_library_playlist_id("My Rock")
-        # Loose match: "My Rock" is contained in "My Rock Playlist"
-        assert pid == "p.loose"
-
-    @responses.activate
-    def test_pagination_follows_next(self, mock_config_dir, mock_developer_token, mock_user_token):
-        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
-        # First page with next link
-        responses.add(
-            responses.GET,
-            "https://api.music.apple.com/v1/me/library/playlists",
-            json={
-                "data": [{"id": "p.1", "attributes": {"name": "Other", "canEdit": True}}],
-                "next": "/v1/me/library/playlists?limit=100&offset=100",
-            },
-            status=200,
-        )
-        # Second page with target
-        responses.add(
-            responses.GET,
-            "https://api.music.apple.com/v1/me/library/playlists",
-            json={
-                "data": [
-                    {"id": "p.target", "attributes": {"name": "Target Playlist", "canEdit": True}}
-                ]
-            },
-            status=200,
-        )
-        pid = server._resolve_library_playlist_id("Target Playlist")
-        assert pid == "p.target"
-
-
-# ---------------------------------------------------------------------------
 # _auto_search_and_add_to_playlist
 # ---------------------------------------------------------------------------
 
 
 class TestAutoSearchAndAddToPlaylist:
     @responses.activate
-    def test_success(self, mock_config_dir, mock_developer_token, mock_user_token):
+    def test_success_api_created(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
         _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
         # Catalog search
         responses.add(
@@ -1874,14 +1769,16 @@ class TestAutoSearchAndAddToPlaylist:
             "https://api.music.apple.com/v1/me/library",
             status=202,
         )
-        # Resolve playlist
-        responses.add(
-            responses.GET,
-            "https://api.music.apple.com/v1/me/library/playlists",
-            json={"data": [{"id": "p.rock", "attributes": {"name": "Rock Hits", "canEdit": True}}]},
-            status=200,
+        # Resolve to an API-created playlist → sanctioned dev-token POST
+        monkeypatch.setattr(
+            server.amp_api,
+            "resolve_playlist",
+            lambda name, api_created_only=True: {
+                "id": "p.rock",
+                "name": "Rock Hits",
+                "canEdit": True,
+            },
         )
-        # Add to playlist
         responses.add(
             responses.POST,
             "https://api.music.apple.com/v1/me/library/playlists/p.rock/tracks",
@@ -1892,6 +1789,43 @@ class TestAutoSearchAndAddToPlaylist:
         )
         assert ok is True
         assert "Hey Jude" in msg
+
+    @responses.activate
+    def test_success_app_made_routes_to_web(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """A Music.app-made (canEdit=False) playlist attaches via the web session,
+        NOT the dev-token endpoint that can't write it."""
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        responses.add(
+            responses.GET,
+            "https://api.music.apple.com/v1/catalog/us/search",
+            json={
+                "results": {
+                    "songs": {
+                        "data": [
+                            {"id": "cat1", "attributes": {"name": "So What", "artistName": "Miles"}}
+                        ]
+                    }
+                }
+            },
+            status=200,
+        )
+        responses.add(responses.POST, "https://api.music.apple.com/v1/me/library", status=202)
+        monkeypatch.setattr(
+            server.amp_api,
+            "resolve_playlist",
+            lambda name, api_created_only=True: {"id": "p.app", "name": name, "canEdit": False},
+        )
+        calls = []
+        monkeypatch.setattr(
+            server.amp_api,
+            "add_tracks",
+            lambda pid, items: calls.append((pid, items)) or (True, "ok"),
+        )
+        ok, msg, steps = server._auto_search_and_add_to_playlist("So What", "Miles", "Jack & Norah")
+        assert ok is True and "So What" in msg
+        assert calls == [("p.app", ["cat1"])]  # went through the web rail
 
     @responses.activate
     def test_catalog_search_not_found(self, mock_config_dir, mock_developer_token, mock_user_token):
@@ -1943,7 +1877,9 @@ class TestAutoSearchAndAddToPlaylist:
         assert ok is False
 
     @responses.activate
-    def test_playlist_not_found(self, mock_config_dir, mock_developer_token, mock_user_token):
+    def test_playlist_not_found(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
         _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
         responses.add(
             responses.GET,
@@ -1964,11 +1900,8 @@ class TestAutoSearchAndAddToPlaylist:
             "https://api.music.apple.com/v1/me/library",
             status=202,
         )
-        responses.add(
-            responses.GET,
-            "https://api.music.apple.com/v1/me/library/playlists",
-            json={"data": []},
-            status=200,
+        monkeypatch.setattr(
+            server.amp_api, "resolve_playlist", lambda name, api_created_only=True: None
         )
         ok, msg, steps = server._auto_search_and_add_to_playlist(
             "Song", "Artist", "Nonexistent Playlist"
@@ -2011,7 +1944,10 @@ class TestAutoSearchAndAddToPlaylist:
         assert ok is True
 
     @responses.activate
-    def test_add_to_playlist_fails(self, mock_config_dir, mock_developer_token, mock_user_token):
+    def test_add_to_playlist_fails(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        # dev-token POST 500s, then the web-session fallback also fails → error.
         _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
         responses.add(
             responses.GET,
@@ -2037,11 +1973,14 @@ class TestAutoSearchAndAddToPlaylist:
             "https://api.music.apple.com/v1/me/library/playlists/p.known/tracks",
             status=500,
         )
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda pid, items: (False, "status 403: forbidden")
+        )
         ok, msg, steps = server._auto_search_and_add_to_playlist(
             "Song", "Artist", "My Playlist", playlist_id="p.known"
         )
         assert ok is False
-        assert "500" in msg
+        assert "Failed to add to playlist" in msg
 
 
 # ---------------------------------------------------------------------------
@@ -2618,16 +2557,6 @@ class TestUnifiedAutoSearchPropagationLag:
             )
         assert ok is True
         assert any("propagation" in s for s in steps)
-
-
-class TestResolveLibraryPlaylistIdException:
-    """server.py:2280-2281 — except branch when requests.get raises."""
-
-    def test_exception_returns_none(self, mock_config_dir, mock_developer_token, mock_user_token):
-        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
-        with patch("requests.get", side_effect=ConnectionError("timeout")):
-            pid = server._resolve_library_playlist_id("My Playlist")
-        assert pid is None
 
 
 class TestAutoSearchAndAddException:

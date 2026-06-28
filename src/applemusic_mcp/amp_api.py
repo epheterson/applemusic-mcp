@@ -126,22 +126,30 @@ def is_api_created(pl: dict) -> bool:
     return bool(pl.get("canEdit", True))
 
 
-def resolve_playlist_id(name: str, api_created_only: bool = True) -> Optional[str]:
-    """Library playlist id (p.xxxx) by name — exact match first, then loose.
+def resolve_playlist(name: str, api_created_only: bool = True) -> Optional[dict]:
+    """Resolve a library playlist by name to its full ``{id, name, canEdit}`` dict
+    — exact match first, then loose substring. Returns the dict (so callers can
+    see ``canEdit`` / origin), or None.
 
-    ``api_created_only`` (default) returns only API-created playlists, because the
-    generated-dev-token rail can only write those. Pass ``api_created_only=False``
-    to also match Music.app-made playlists — the web session and AppleScript can
-    write those, and any rail can read/play them."""
+    ``api_created_only`` (default) considers only API-created playlists, because
+    the generated-dev-token rail can only write those. Pass ``False`` to also
+    match Music.app-made playlists — the web session can write those, and any rail
+    can read/play them."""
     loose = None
     for pl in list_playlists():
         if api_created_only and not is_api_created(pl):
             continue
         if _loose_eq(pl["name"], name):
-            return pl["id"]
+            return pl
         if name.strip().lower() in pl["name"].strip().lower():
-            loose = loose or pl["id"]
+            loose = loose or pl
     return loose
+
+
+def resolve_playlist_id(name: str, api_created_only: bool = True) -> Optional[str]:
+    """Library playlist id (p.xxxx) by name. Thin wrapper over resolve_playlist."""
+    pl = resolve_playlist(name, api_created_only=api_created_only)
+    return pl["id"] if pl else None
 
 
 def get_tracks(playlist_id: str) -> list[dict]:

@@ -88,6 +88,16 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
   dropped (unplayable/region-locked) instead of implying all landed; (5) the
   FORCE_TOKENLESS message no longer overclaims (macOS local edits/ratings still
   work); (6) `applemusic-mcp status` now has a request timeout so it can't hang.
+- **Catalog-add to a Music.app-made playlist (the path that actually runs on
+  macOS) is now origin-aware.** The first canEdit fix only taught the *new*
+  web-rail helpers; the legacy auto-search-add path still used a second resolver
+  (`_resolve_library_playlist_id`) that hard-skipped Music.app-made playlists and
+  then POSTed to the dev-token endpoint that can't write them — so adds to those
+  playlists still failed. That resolver is retired; the path now resolves via
+  `amp_api.resolve_playlist(api_created_only=False)` and attaches through the rail
+  that can write the playlist: the sanctioned dev-token API for API-created
+  playlists, the web session for Music.app-made ones (with a dev-token→web
+  fallback). Same cloud namespace as the library-add, so no cross-engine race.
 - **Adds to Music.app-made playlists failed with "could not find playlist."**
   `resolve_playlist_id` silently skipped every playlist amp-api flags
   `canEdit=False` — which is all playlists created in the Music app — so the web
