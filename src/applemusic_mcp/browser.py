@@ -135,7 +135,12 @@ class _BrowserEngine:
             "--use-mock-keychain",
             "--password-store=basic",
             "--disable-extensions",
+            "--no-sandbox",  # run sandboxed like real Chrome (security + no warning)
         ]
+        # Keep Chrome's sandbox ON. Playwright defaults chromium_sandbox=False,
+        # which injects --no-sandbox → a scary "Stability and security will suffer"
+        # banner and a real security downgrade. This is a normal desktop user
+        # session, so run sandboxed like real Chrome.
         try:
             ctx = launch(
                 user_data_dir,
@@ -143,6 +148,7 @@ class _BrowserEngine:
                 headless=False,
                 args=args,
                 ignore_default_args=ignore_defaults,
+                chromium_sandbox=True,
             )
             self._using_chrome = True
             return ctx
@@ -152,6 +158,7 @@ class _BrowserEngine:
                 headless=False,
                 args=args,
                 ignore_default_args=ignore_defaults,
+                chromium_sandbox=True,
             )
             self._using_chrome = False
             return ctx

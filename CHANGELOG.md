@@ -19,7 +19,9 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
   needlessly painful. Those are dropped (like the Widevine flag already is), so
   the dedicated profile behaves like normal Chrome: sign in with Touch ID /
   passkey / your password manager. (First Keychain use shows a one-time macOS
-  permission prompt.)
+  permission prompt.) The Chrome **sandbox is also kept on** (Playwright defaults
+  it off via `--no-sandbox`, which downgrades security and shows a scary warning
+  banner) — the window now runs sandboxed like real Chrome.
 - **Sanctioned-first write routing.** Writes (create / add / remove / delete /
   rename / move / rate) now choose their path by *credential and capability*,
   independent of the playback `mode`: the official Apple Music API when you hold a

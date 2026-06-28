@@ -186,7 +186,13 @@ class FakeChromium:
         self.chromium_ok = chromium_ok
 
     def launch_persistent_context(
-        self, user_data_dir, channel=None, headless=None, args=None, ignore_default_args=None
+        self,
+        user_data_dir,
+        channel=None,
+        headless=None,
+        args=None,
+        ignore_default_args=None,
+        chromium_sandbox=None,
     ):
         if channel == "chrome":
             if not self.chrome_ok:
