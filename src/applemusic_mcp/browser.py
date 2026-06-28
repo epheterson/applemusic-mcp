@@ -119,18 +119,30 @@ class _BrowserEngine:
         launch = self._pw.chromium.launch_persistent_context
         user_data_dir = str(PROFILE_DIR)
         args = ["--no-first-run", "--no-default-browser-check"]
-        # Playwright disables Chrome's component updater by default, which stops
-        # the Widevine CDM from registering -> no DRM -> MusicKit silently plays
-        # only 90s previews (and playlists error "No DRM KeySystem available").
-        # Un-removing that default is what unlocks full protected playback.
-        keep_widevine = ["--disable-component-update"]
+        # Drop the Playwright automation defaults that would cripple a real
+        # user-facing sign-in window. This is a persistent, human-signed-in profile,
+        # not a throwaway CI browser, so it should behave like normal Chrome:
+        #   --disable-component-update : re-enable it → registers the Widevine CDM,
+        #       so MusicKit plays full protected audio instead of 90s previews.
+        #   --use-mock-keychain / --password-store=basic : use the REAL macOS
+        #       Keychain → Touch ID, passkeys, and saved/iCloud passwords work, so
+        #       users sign in with their own credentials instead of being locked out.
+        #   --disable-extensions : allow extensions (e.g. iCloud Passwords).
+        # (The first Keychain access shows a one-time "Chrome wants to use your
+        # keychain" prompt — expected.)
+        ignore_defaults = [
+            "--disable-component-update",
+            "--use-mock-keychain",
+            "--password-store=basic",
+            "--disable-extensions",
+        ]
         try:
             ctx = launch(
                 user_data_dir,
                 channel="chrome",
                 headless=False,
                 args=args,
-                ignore_default_args=keep_widevine,
+                ignore_default_args=ignore_defaults,
             )
             self._using_chrome = True
             return ctx
@@ -139,7 +151,7 @@ class _BrowserEngine:
                 user_data_dir,
                 headless=False,
                 args=args,
-                ignore_default_args=keep_widevine,
+                ignore_default_args=ignore_defaults,
             )
             self._using_chrome = False
             return ctx
