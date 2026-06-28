@@ -2465,7 +2465,7 @@ def _auto_search_and_add_to_playlist(
                 timeout=REQUEST_TIMEOUT,
             )
             if pl_add_response.status_code in (200, 201, 204):
-                return True, f"{found_name} - {found_artist}", steps
+                return True, f"{found_name} - {found_artist} (added to your library)", steps
             return (
                 False,
                 f"Failed to add to playlist (status {pl_add_response.status_code})",
@@ -2496,7 +2496,7 @@ def _auto_search_and_add_to_playlist(
             last = res2
             if ok2 and _verify_track_in_playlist(playlist_name, found_name, found_artist or ""):
                 steps.append("Attached via Music.app (native)")
-                return True, f"{found_name} - {found_artist}", steps
+                return True, f"{found_name} - {found_artist} (added to your library)", steps
             if not ok2 and "Track not found" not in res2:
                 break  # a real error, not sync lag
             time.sleep(_VERIFY_DELAY_S)
