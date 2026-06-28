@@ -125,6 +125,8 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
   result-row UI automation) and polls until the track lands locally, so it attaches
   in one shot (~5s measured) instead of returning a half-done "added to library."
   The nudge briefly focuses Music.app and restores your previous app afterward.
+  When the sync is unusually slow, the add self-heals — it re-nudges with backoff
+  for ~75s rather than handing a "re-run it" error back after one short try.
 - **Music.app-made playlists add via native AppleScript (macOS); the web API
   can't write them at all.** Verified live (in-page MusicKit *and* external REST,
   both id forms): adding a track to a `canEdit=False` playlist returns HTTP 500

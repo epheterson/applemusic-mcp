@@ -2489,11 +2489,13 @@ def _auto_search_and_add_to_playlist(
                 "it. Adding to it currently requires macOS.",
                 steps,
             )
-        # Up to ~3 nudge cycles; each nudge is rate-limited (≤once/4s, so a batch of
-        # adds won't re-foreground Music every time), and we allow ~10s after a
-        # nudge for the track to surface locally before re-nudging.
+        # Self-healing nudge cycles with backoff (~75s total): some tracks take a
+        # while to sync cloud->local, and we'd rather retry internally than hand the
+        # caller a "re-run it" error. Each cycle re-nudges (rate-limited to ≤once/4s,
+        # so a batch of adds won't re-foreground Music every time) and waits a
+        # growing window for the track to surface before trying the attach again.
         last = ""
-        for _cycle in range(3):
+        for window in (8.0, 8.0, 12.0, 16.0, 16.0, 16.0):
             if asc.update_cloud_library()[0]:
                 steps.append(
                     "Briefly brought Music.app to the foreground to trigger an iCloud "
@@ -2501,7 +2503,7 @@ def _auto_search_and_add_to_playlist(
                     "locally and can be attached — this is why the app flashed forward"
                 )
             waited = 0.0
-            while waited < 10.0:
+            while waited < window:
                 ok2, res2, _split = _smart_as_add_track_to_playlist(
                     playlist_name, found_name, found_artist or None, None
                 )
@@ -2521,9 +2523,10 @@ def _auto_search_and_add_to_playlist(
                 waited += _VERIFY_DELAY_S
         return (
             False,
-            f"Added '{found_name}' to your library and triggered an iCloud sync, but "
-            f"Music.app hasn't received it yet to attach to '{playlist_name}'. This is "
-            f"Apple's sync lag — re-run the add shortly and it'll attach. ({last})",
+            f"Added '{found_name}' to your library and nudged the iCloud sync repeatedly "
+            f"for over a minute, but Music.app still hasn't received it to attach to "
+            f"'{playlist_name}'. This is an unusually slow Apple sync — the track is in "
+            f"your library, so re-running the add shortly will attach it. ({last})",
             steps,
         )
 
