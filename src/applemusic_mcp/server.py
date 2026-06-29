@@ -2556,14 +2556,21 @@ def _auto_search_and_add_to_playlist(
         attached = False  # latch: do the AppleScript add AT MOST ONCE, then only
         # poll-verify. Re-running the add on every tick (when it succeeds but verify
         # lags/mismatches) would write duplicate copies into the playlist.
+        nudge_worked = False  # did "Update Cloud Library" actually fire even once?
         for window in (8.0, 8.0, 12.0, 16.0, 16.0, 16.0):
             # Only nudge while still waiting for the track to sync locally.
-            if not attached and asc.update_cloud_library()[0]:
-                steps.append(
-                    "Briefly brought Music.app to the foreground to trigger an iCloud "
-                    "sync (File > Library > Update Cloud Library) so the new track lands "
-                    "locally and can be attached — this is why the app flashed forward"
-                )
+            if not attached:
+                n_ok, n_msg = asc.update_cloud_library()
+                # Throttled means a recent nudge already fired (a batch add) — still
+                # counts as "the sync is being triggered".
+                if n_ok or "throttled" in n_msg:
+                    nudge_worked = True
+                if n_ok:
+                    steps.append(
+                        "Briefly brought Music.app to the foreground to trigger an iCloud "
+                        "sync (File > Library > Update Cloud Library) so the new track lands "
+                        "locally and can be attached — this is why the app flashed forward"
+                    )
             waited = 0.0
             while waited < window:
                 if not attached:
@@ -2588,6 +2595,18 @@ def _auto_search_and_add_to_playlist(
                     )
                 time.sleep(_VERIFY_DELAY_S)
                 waited += _VERIFY_DELAY_S
+        # Timed out. Be honest about WHY: if the sync nudge never fired, the track
+        # likely won't sync at all (Sync Library off, or a Music build without the
+        # "Update Cloud Library" menu item) — don't blame "a slow sync".
+        if not nudge_worked:
+            return (
+                False,
+                f"Added '{found_name}' to your library, but couldn't attach it to "
+                f"'{playlist_name}': it hasn't synced to this Mac and I couldn't trigger "
+                "an iCloud sync (the 'Update Cloud Library' menu item wasn't available). "
+                "Turn on Music → Settings → General → Sync Library, then re-run the add.",
+                steps,
+            )
         return (
             False,
             f"Added '{found_name}' to your library and nudged the iCloud sync repeatedly "
