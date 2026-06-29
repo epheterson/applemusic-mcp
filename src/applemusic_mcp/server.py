@@ -1148,6 +1148,10 @@ def _playlist_remove_api(playlist: str, track: str, artist: str = "") -> str:
         t for t in tracks if tl in t["name"].lower() and (not artist or al in t["artist"].lower())
     ]
     if not matches:
+        # An EMPTY read can mean an expired/throttled session, not a genuinely
+        # absent track — disambiguate instead of lying "not found".
+        if not tracks:
+            return _resolve_failure_msg(f"{track!r} not found in {playlist!r}")
         return f"Error: {track!r} not found in {playlist!r}"
     chosen, others = _safe_single_match(matches, track)
     ok, msg = amp_api.remove_track(pid, chosen["relationship_id"])
