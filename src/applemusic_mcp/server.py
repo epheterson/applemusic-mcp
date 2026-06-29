@@ -2508,8 +2508,12 @@ def _auto_search_and_add_to_playlist(
         # so a batch of adds won't re-foreground Music every time) and waits a
         # growing window for the track to surface before trying the attach again.
         last = ""
+        attached = False  # latch: do the AppleScript add AT MOST ONCE, then only
+        # poll-verify. Re-running the add on every tick (when it succeeds but verify
+        # lags/mismatches) would write duplicate copies into the playlist.
         for window in (8.0, 8.0, 12.0, 16.0, 16.0, 16.0):
-            if asc.update_cloud_library()[0]:
+            # Only nudge while still waiting for the track to sync locally.
+            if not attached and asc.update_cloud_library()[0]:
                 steps.append(
                     "Briefly brought Music.app to the foreground to trigger an iCloud "
                     "sync (File > Library > Update Cloud Library) so the new track lands "
@@ -2517,11 +2521,18 @@ def _auto_search_and_add_to_playlist(
                 )
             waited = 0.0
             while waited < window:
-                ok2, res2, _split = _smart_as_add_track_to_playlist(
-                    playlist_name, found_name, found_artist or None, None
-                )
-                last = res2
-                if ok2 and _verify_track_in_playlist(playlist_name, found_name, found_artist or ""):
+                if not attached:
+                    ok2, res2, _split = _smart_as_add_track_to_playlist(
+                        playlist_name, found_name, found_artist or None, None
+                    )
+                    last = res2
+                    if ok2:
+                        attached = True  # added — from here on, only confirm
+                    elif "Track not found" not in res2:
+                        return False, _attach_error(found_name, res2), steps
+                if attached and _verify_track_in_playlist(
+                    playlist_name, found_name, found_artist or ""
+                ):
                     steps.append("Attached via Music.app (native)")
                     return (
                         True,
@@ -2530,8 +2541,6 @@ def _auto_search_and_add_to_playlist(
                         "attached to playlist via Music.app)",
                         steps,
                     )
-                if not ok2 and "Track not found" not in res2:
-                    return False, _attach_error(found_name, res2), steps
                 time.sleep(_VERIFY_DELAY_S)
                 waited += _VERIFY_DELAY_S
         return (

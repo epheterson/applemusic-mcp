@@ -548,14 +548,24 @@ def update_cloud_library(min_interval: float = _CLOUD_NUDGE_MIN_INTERVAL) -> tup
     end try
     tell application "Music" to activate
     delay 0.3
-    tell application "System Events" to tell process "Music"
-        click menu item "Update Cloud Library" of menu 1 of ¬
-            (menu item "Library" of menu 1 of menu bar item "File" of menu bar 1)
-    end tell
+    set clickErr to ""
+    try
+        tell application "System Events" to tell process "Music"
+            click menu item "Update Cloud Library" of menu 1 of ¬
+                (menu item "Library" of menu 1 of menu bar item "File" of menu bar 1)
+        end tell
+    on error errMsg
+        set clickErr to errMsg
+    end try
+    -- Always restore the user's focus, even if the menu item was unreachable
+    -- (e.g. Sync Library disabled) — otherwise we'd steal focus and not give it back.
     if priorApp is not "" and priorApp is not "Music" then
         try
             tell application "System Events" to tell process priorApp to set frontmost to true
         end try
+    end if
+    if clickErr is not "" then
+        error clickErr
     end if
     return "ok"
     """

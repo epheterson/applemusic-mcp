@@ -62,15 +62,24 @@ def _install_playwright_chromium() -> bool:
     import sys
 
     try:
-        print("Installing Playwright's Chromium (one-time, ~150MB)…", flush=True)
+        # NEVER print to stdout here: the MCP server speaks JSON-RPC over stdout, and
+        # this can run on the engine thread during a tool call. Diagnostics go to stderr.
+        print("Installing Playwright's Chromium (one-time, ~150MB)…", file=sys.stderr, flush=True)
         r = subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
             capture_output=True,
             text=True,
             timeout=600,
         )
+        if r.returncode != 0:
+            print(
+                f"Chromium auto-install failed: {(r.stderr or '')[:500]}",
+                file=sys.stderr,
+                flush=True,
+            )
         return r.returncode == 0
-    except Exception:
+    except Exception as exc:
+        print(f"Chromium auto-install error: {exc}", file=sys.stderr, flush=True)
         return False
 
 
@@ -452,7 +461,13 @@ _NOW_PLAYING_JS = """
   const it = mk && mk.nowPlayingItem;
   if (!it) return null;
   const a = it.attributes || {};
-  return { name: a.name, artist: a.artistName, album: a.albumName, playing: !!mk.isPlaying };
+  // `state` mirrors native get_current_track so the server's engine-split logic
+  // (which reads .state) shows web play/paused and suppresses the split nag when
+  // the web "other" engine is paused.
+  return {
+    name: a.name, artist: a.artistName, album: a.albumName,
+    playing: !!mk.isPlaying, state: mk.isPlaying ? 'playing' : 'paused',
+  };
 }
 """
 
@@ -708,10 +723,15 @@ async (ids) => {
 _QUEUE_REMOVE_JS = """
 async (i) => {
   const mk = window.MusicKit.getInstance();
-  if (i < 0 || i >= mk.queue.items.length) return -1;
+  const items = mk.queue.items;
+  if (i < 0 || i >= items.length) return -1;
   // MusicKit throws an opaque mk-007 INVALID_ARGUMENTS when removing the
   // currently-playing item — detect it up front and signal -2 for a clear error.
-  if (i === mk.queue.position) return -2;
+  // Use the actual now-playing item's index (same basis as _QUEUE_LIST_JS's marker),
+  // since mk.queue.position can lag the real playhead.
+  const np = mk.nowPlayingItem;
+  const playingIdx = np ? items.findIndex(it => it && it.id === np.id) : mk.queue.position;
+  if (i === playingIdx) return -2;
   const r = mk.queue.remove(i);
   if (r && typeof r.then === 'function') await r;
   return mk.queue.items.length;
