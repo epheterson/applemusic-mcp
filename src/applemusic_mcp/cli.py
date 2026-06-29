@@ -181,27 +181,48 @@ def cmd_status(args):
         print(f"Developer token: valid ({days_left:.0f} days left)")
     elif data is not None:
         print("Developer token: expired")
+    elif has_user_token():
+        # The web/Safari path has no generated token — it's harvested from Apple's
+        # web player on demand. Say so rather than implying something's missing.
+        print("Developer token: none (web path — uses Apple's web-player token)")
     else:
         print("Developer token: none")
 
     print(f"User token: {'present' if has_user_token() else 'none'}")
 
+    # Live check. Prefer the generated developer token (api.music.apple.com); for
+    # the web/Safari path there's no generated token, so verify the WEB session
+    # (amp-api) instead — otherwise a fully signed-in web user is wrongly told
+    # "not configured" right after signing in.
     try:
-        import requests
+        dev = None
+        try:
+            dev = get_developer_token()
+        except FileNotFoundError:
+            dev = None
+        if dev:
+            import requests
 
-        headers = {
-            "Authorization": f"Bearer {get_developer_token()}",
-            "Music-User-Token": get_user_token(),
-        }
-        r = requests.get(
-            "https://api.music.apple.com/v1/me/library/playlists",
-            headers=headers,
-            params={"limit": 1},
-            timeout=30,
-        )
-        print("API: ok" if r.status_code == 200 else f"API: status {r.status_code}")
-    except FileNotFoundError:
-        print("API: not configured (run `applemusic-mcp login`)")
+            r = requests.get(
+                "https://api.music.apple.com/v1/me/library/playlists",
+                headers={"Authorization": f"Bearer {dev}", "Music-User-Token": get_user_token()},
+                params={"limit": 1},
+                timeout=30,
+            )
+            print("API: ok" if r.status_code == 200 else f"API: status {r.status_code}")
+        elif has_user_token():
+            from . import amp_api
+
+            st = amp_api.session_status()
+            print(
+                {
+                    "ok": "API: ok (web session)",
+                    "expired": "API: session expired (run `applemusic-mcp login`)",
+                    "throttled": "API: rate-limited (try again shortly)",
+                }.get(st, "API: not configured (run `applemusic-mcp login`)")
+            )
+        else:
+            print("API: not configured (run `applemusic-mcp login`)")
     except Exception as e:
         print(f"API: error ({e})")
     return 0

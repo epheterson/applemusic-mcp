@@ -313,3 +313,30 @@ def test_reset_all_wipes_all_state_dirs(tmp_path, monkeypatch):
     rc = cli.cmd_reset(types.SimpleNamespace(force=True, all=True))
     assert rc == 0
     assert all(not d.exists() for d in paths.all_state_dirs())
+
+
+def test_status_web_session_not_misreported(monkeypatch, tmp_path, capsys):
+    """A signed-in web/Safari user (no generated dev token) must read as OK, not
+    'not configured' — the regression that told a just-signed-in user to sign in.
+
+    Patches the real modules' attributes (not sys.modules): cmd_status uses
+    `from . import amp_api` / `from .auth import ...`, which read the already-bound
+    package attributes regardless of a sys.modules swap (order-dependent otherwise)."""
+    import applemusic_mcp.amp_api as real_amp
+    import applemusic_mcp.auth as real_auth
+
+    monkeypatch.setattr(cli, "get_config_dir", lambda: tmp_path)
+    monkeypatch.setattr(real_auth, "developer_token_info", lambda: None)
+    monkeypatch.setattr(real_auth, "has_user_token", lambda: True)
+    monkeypatch.setattr(real_amp, "session_status", lambda: "ok")
+
+    def _no_dev():
+        raise FileNotFoundError("no generated developer token")
+
+    monkeypatch.setattr(cli, "get_developer_token", _no_dev)
+    monkeypatch.setattr(cli, "get_user_token", lambda: "U")
+    assert cli.cmd_status(_args()) == 0
+    out = capsys.readouterr().out
+    assert "API: ok (web session)" in out
+    assert "not configured" not in out
+    assert "web-player token" in out  # dev-token line clarifies the web path
