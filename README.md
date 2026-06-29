@@ -159,7 +159,7 @@ Seven action-based tools keep the MCP context small. Each takes an `action` and 
 <summary>Common patterns</summary>
 
 - **`track` is one parameter that batches.** Pass a single name or ID, a comma- or newline-separated list, or a JSON array (`["A","B"]` or `[{"name":"A","artist":"X"}]`). Whole albums via `album`.
-- **Adding to a playlist** auto-searches the catalog and skips duplicates. Set the `auto_add` preference to `true` for "fill this playlist" workflows (default `false`).
+- **Adding to a playlist** auto-searches the catalog and skips duplicates. Set the `auto_add` preference to `true` for "fill this playlist" workflows (default `false`). `track` also accepts a **catalog song id** (e.g. `1440857781`) to pin an exact edition when a name would be version-ambiguous.
 - **The Music.app flash when adding is expected.** On macOS, adding a not-yet-owned catalog track to a *Music.app-made* playlist briefly brings Music.app to the foreground: the dev-token API can't write those playlists, so the tool adds the track to your library over the API, then clicks **File → Library → Update Cloud Library** to force the iCloud sync so the track lands locally and can be attached via AppleScript. The window flash (and a quick return of focus to your previous app) is that sync nudge, not a glitch.
 - **Output format** on list tools: `format` (`text` / `json` / `csv` / `none`), `export` (writes a file readable as an MCP resource via `exports://`), `full` (all metadata).
 - **URL playback** handles albums, playlists, and songs: `playback(action="play", url="https://music.apple.com/...")`.

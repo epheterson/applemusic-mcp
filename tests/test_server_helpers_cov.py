@@ -2687,3 +2687,12 @@ def test_play_after_add_distinguishes_real_failure_from_sync_lag():
     assert "permission denied" in denied.lower() and "sync pending" not in denied.lower()
     transient = server._play_after_add("X by Y", "Track not found")
     assert "sync pending" in transient.lower()
+
+
+def test_id_based_add_classifies_catalog_id():
+    """A numeric catalog id is routed as a CATALOG_ID (ID-based add pins the exact
+    edition) rather than treated as a track name."""
+    from applemusic_mcp.server import InputType, _resolve_track
+
+    assert _resolve_track("1440857781", "")[0].input_type == InputType.CATALOG_ID
+    assert _resolve_track("Hey Jude", "")[0].input_type == InputType.NAME
