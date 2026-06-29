@@ -100,16 +100,38 @@ def cmd_logout(args):
 
 def cmd_reset(args):
     """Wipe ALL credentials (developer token, config.json, user/web tokens,
-    browser session). The downloaded .p8 key file is left in place."""
-    from . import browser
+    browser session). The downloaded .p8 key file is left in place — unless
+    --all, which is a full uninstall that removes every state directory."""
+    import shutil
+
+    from . import browser, paths
     from .auth import secret_delete
 
+    full = getattr(args, "all", False)
     if not args.force:
-        print("This removes the developer token, config.json, the user/web tokens, and the")
-        print("browser session (your .p8 key file is kept). Re-run with --force to proceed.")
+        if full:
+            print("--all is a FULL UNINSTALL: it deletes every applemusic-mcp state directory —")
+            print("credentials AND your .p8 key, the Chrome profile, and the cache/exports:")
+            for d in paths.all_state_dirs():
+                print(f"  {d}")
+        else:
+            print("This removes the developer token, config.json, the user/web tokens, and the")
+            print("browser session (your .p8 key file is kept).")
+        print("Re-run with --force to proceed.")
         return 1
+
     for key in ("developer_token", "music_user_token", "harvested_token"):
         secret_delete(key)
+
+    if full:
+        # Full uninstall: nuke all three state roots (keychain secrets cleared above).
+        browser.clear_session()  # shut the engine down before removing the profile
+        for d in paths.all_state_dirs():
+            shutil.rmtree(d, ignore_errors=True)
+        print("Full reset complete — all applemusic-mcp state removed (including your .p8).")
+        print("Run `applemusic-mcp login` to start fresh.")
+        return 0
+
     cfg_file = get_config_dir() / "config.json"
     if cfg_file.exists():
         cfg_file.unlink()
@@ -194,6 +216,12 @@ def main():
     sub.add_parser("status", help="Show auth status")
     reset = sub.add_parser("reset", help="Wipe all credentials (keeps your .p8 key file)")
     reset.add_argument("--force", action="store_true", help="Confirm the wipe")
+    reset.add_argument(
+        "--all",
+        action="store_true",
+        dest="all",
+        help="Full uninstall: remove ALL state dirs (config incl. .p8, Chrome profile, cache)",
+    )
 
     args = parser.parse_args()
 

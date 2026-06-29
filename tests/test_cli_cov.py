@@ -296,3 +296,20 @@ def test_dunder_main_entrypoint(monkeypatch):
     monkeypatch.setattr(cli, "cmd_status", lambda args: 0)
     with pytest.raises(SystemExit):
         runpy.run_module("applemusic_mcp.cli", run_name="__main__")
+
+
+def test_reset_all_wipes_all_state_dirs(tmp_path, monkeypatch):
+    """reset --all --force removes every state root (full uninstall)."""
+    import types
+
+    monkeypatch.setenv("APPLEMUSIC_MCP_HOME", str(tmp_path))
+    from applemusic_mcp import auth, browser, paths
+
+    monkeypatch.setattr(browser, "clear_session", lambda: None)
+    monkeypatch.setattr(auth, "secret_delete", lambda k: None)
+    for d in paths.all_state_dirs():
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "marker").write_text("x")
+    rc = cli.cmd_reset(types.SimpleNamespace(force=True, all=True))
+    assert rc == 0
+    assert all(not d.exists() for d in paths.all_state_dirs())

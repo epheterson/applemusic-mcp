@@ -2658,3 +2658,23 @@ def test_attach_error_translates_10006():
     assert "Fire and Rain" in out and "different version" in out and "-10006" not in out
     # unrelated errors pass through unchanged
     assert server._attach_error("X", "boom") == "X: boom"
+
+
+def test_gc_exports_bounds_dir(tmp_path, monkeypatch):
+    """_gc_exports drops old timestamped exports and caps count, but never touches
+    cache.json / the audit log / snapshots."""
+    import os
+    import time as _t
+
+    old = tmp_path / "library_19990101_000000.csv"
+    old.write_text("x")
+    os.utime(old, (_t.time() - 10 * 86400, _t.time() - 10 * 86400))
+    new = tmp_path / "library_20260628_000000.json"
+    new.write_text("x")
+    keep = tmp_path / "cache.json"  # no underscore-timestamp → must survive
+    keep.write_text("{}")
+    audit = tmp_path / "audit_log.jsonl"
+    audit.write_text("")
+    server._gc_exports(tmp_path)
+    assert not old.exists()  # aged out
+    assert new.exists() and keep.exists() and audit.exists()

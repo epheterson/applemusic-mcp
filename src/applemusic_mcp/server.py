@@ -443,6 +443,33 @@ def get_timestamp() -> str:
     return time.strftime("%Y%m%d_%H%M%S")
 
 
+_EXPORT_TTL_S = 7 * 24 * 3600  # exports older than this are GC'd on the next write
+_EXPORT_MAX_FILES = 50  # hard cap on retained exports regardless of age
+
+
+def _gc_exports(cache_dir: Path) -> None:
+    """Keep the export dir bounded so artifacts never accumulate forever (release
+    contract: "cleans up after itself"). Drops timestamped export files older than
+    the TTL and caps the total count. Matches only ``prefix_timestamp`` exports
+    (the ``*_*`` glob) so it never touches ``cache.json``, the audit log, or the
+    snapshots subdir."""
+    try:
+        files = sorted(
+            list(cache_dir.glob("*_*.csv")) + list(cache_dir.glob("*_*.json")),
+            key=lambda f: f.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return
+    now = time.time()
+    for i, f in enumerate(files):
+        try:
+            if i >= _EXPORT_MAX_FILES or (now - f.stat().st_mtime) > _EXPORT_TTL_S:
+                f.unlink()
+        except OSError:
+            pass
+
+
 def format_duration(ms: int | None) -> str:
     """Format milliseconds as m:ss (e.g., 3:45).
 
@@ -726,6 +753,7 @@ def format_output(
     # Handle file export
     if export in ("csv", "json"):
         cache_dir = get_cache_dir()
+        _gc_exports(cache_dir)  # bound the export dir before writing another file
         timestamp = get_timestamp()
 
         if export == "csv":
