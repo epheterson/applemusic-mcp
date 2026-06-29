@@ -1425,6 +1425,18 @@ def _attach_error(name: str, raw: str) -> str:
     return f"{name}: {raw}"
 
 
+def _play_after_add(label: str, last_err: str) -> str:
+    """After adding a catalog track to the library, a failed play attempt is either
+    transient (the track hasn't synced locally yet → honest "sync pending") OR a
+    real break (Automation denied, Music not running, timeout). Surface the real
+    cause instead of always blaming sync — otherwise the user waits forever on a
+    "sync pending" that will never resolve."""
+    cat = asc.classify_error(last_err or "")
+    if cat in (asc.ERROR_AUTOMATION_DENIED, asc.ERROR_MUSIC_NOT_RUNNING, asc.ERROR_TIMEOUT):
+        return _format_applescript_error(last_err, "play the just-added track")
+    return f"[Catalog→Library] Added but sync pending: {label}"
+
+
 # ============ INTERNAL HELPERS ============
 
 
@@ -7816,6 +7828,7 @@ if APPLESCRIPT_AVAILABLE:
                             if add_ok:
                                 time.sleep(PLAY_TRACK_INITIAL_DELAY)
                                 # Re-search library for the album
+                                result = ""  # bound even if no synced track is found yet
                                 for attempt in range(PLAY_TRACK_MAX_ATTEMPTS):
                                     if attempt > 0:
                                         time.sleep(PLAY_TRACK_RETRY_DELAY)
@@ -7845,7 +7858,7 @@ if APPLESCRIPT_AVAILABLE:
                                                     )
                                                     return f"[Catalog→Library] Playing: {album_name} by {album_artist}{shuffle_note}"
                                                 break
-                                return f"[Catalog→Library] Added but sync pending: {album_name} by {album_artist}"
+                                return _play_after_add(f"{album_name} by {album_artist}", result)
                             return f"[Catalog] Failed to add: {add_msg}"
 
                         # Not in library — play it via the browser web player.
@@ -7906,7 +7919,7 @@ if APPLESCRIPT_AVAILABLE:
                                             {"track": track_name, "artist": track_artist},
                                         )
                                         return f"[Catalog→Library] Playing: {track_name} by {track_artist}"
-                                return f"[Catalog→Library] Added but sync pending: {track_name} by {track_artist}"
+                                return _play_after_add(f"{track_name} by {track_artist}", result)
                             return f"[Catalog] Failed to add: {add_msg}"
 
                         # UI play first; else play via the browser web player.
@@ -7914,8 +7927,16 @@ if APPLESCRIPT_AVAILABLE:
                         if ui_ok:
                             return ui_msg
                         return _catalog_miss_play(track_name, track_artist, song_url, reveal)
-            except Exception:
-                pass
+            except requests.exceptions.RequestException as e:
+                return f"Error looking up catalog ID {catalog_id}: {e}"
+            except (FileNotFoundError, ValueError) as e:
+                return f"Error: {e}"
+            except Exception as e:  # noqa: BLE001 - surface, never swallow into "not found"
+                return f"Error looking up catalog ID {catalog_id}: {e}"
+            # Reached only without an exception: a non-200/404 is a real API problem,
+            # not a missing track — don't disguise it as "not found".
+            if response.status_code not in (200, 404):
+                return f"Error looking up catalog ID {catalog_id}: HTTP {response.status_code}"
             return f"Track not found for catalog ID: {catalog_id}"
 
         # Name-based lookup
@@ -7983,7 +8004,7 @@ if APPLESCRIPT_AVAILABLE:
                                 "play_track", {"track": song_name, "artist": song_artist}
                             )
                             return f"[Catalog→Library] Playing: {song_name} by {song_artist}"
-                    return f"[Catalog→Library] Added but sync pending: {song_name} by {song_artist}"
+                    return _play_after_add(f"{song_name} by {song_artist}", result)
                 return f"[Catalog] Failed to add: {add_msg}"
 
             # UI play — works without adding to library; tried before the

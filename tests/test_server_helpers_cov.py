@@ -2678,3 +2678,12 @@ def test_gc_exports_bounds_dir(tmp_path, monkeypatch):
     server._gc_exports(tmp_path)
     assert not old.exists()  # aged out
     assert new.exists() and keep.exists() and audit.exists()
+
+
+def test_play_after_add_distinguishes_real_failure_from_sync_lag():
+    """A non-transient play failure (Automation denied / Music not running) is
+    surfaced; a transient 'not synced yet' stays the honest 'sync pending'."""
+    denied = server._play_after_add("X by Y", "Not authorized to send Apple events")
+    assert "permission denied" in denied.lower() and "sync pending" not in denied.lower()
+    transient = server._play_after_add("X by Y", "Track not found")
+    assert "sync pending" in transient.lower()

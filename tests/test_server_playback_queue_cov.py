@@ -1197,7 +1197,8 @@ class TestPlaybackPlay:
         self._setup(monkeypatch)
         monkeypatch.setattr(server, "get_headers", lambda: (_ for _ in ()).throw(Exception("fail")))
         out = server.playback(action="play", track="1234567890")
-        assert "not found" in out.lower()
+        # Honest: a real error is surfaced, NOT disguised as "track not found".
+        assert "error" in out.lower() and "fail" in out.lower()
 
     def test_track_in_library(self, monkeypatch):
         """Lines 7439-7455: track found in library."""
