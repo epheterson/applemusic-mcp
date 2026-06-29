@@ -11,7 +11,7 @@ MCP server for Apple Music. It gives any [MCP client](https://modelcontextprotoc
 
 ## Features
 
-Three engines back the server. **Native** drives the local Music.app on macOS via AppleScript. **API** uses Apple Music's web API (`amp-api.music.apple.com`) on any OS. **Browser** runs a local Google Chrome window with MusicKit for DRM audio on any OS. One `mode` preference picks the engine for both data and playback (`auto` by default; `native` or `web` to pin one). `✓` supported, `✗` not possible on that engine, `—` not applicable there.
+Four engines back the server. **Native** drives the local Music.app on macOS via AppleScript. **API** uses Apple Music's web API (`amp-api.music.apple.com`) on any OS. **Safari** drives your signed-in Safari's MusicKit on macOS (DRM-native, zero install). **Chrome** runs a local Google Chrome window with MusicKit for DRM audio on any OS. One `mode` preference picks the engine — `auto` (default) mixes the best of each: native Music.app for playback on macOS, Safari for the Up Next queue, the API for data, Chrome off-mac. Pin one with `native` / `safari` / `chrome` / `api`, or override a single playback/queue call with `engine=`. In the table below, the **Browser** column covers both the Safari and Chrome web players. `✓` supported, `✗` not possible on that engine, `—` not applicable there.
 
 |Capability|Native (Music.app) macOS|API (amp-api) any OS|Browser (Chrome) any OS|
 |---|:---:|:---:|:---:|
@@ -109,7 +109,7 @@ See the [appendix](#appendix-developer-token) for getting the MusicKit key.
 
 **Config file:** Claude Desktop uses `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows). Cursor, Cline, and Windsurf use the same `mcpServers` shape, see your client's docs.
 
-**`mode` preference** (engine for data and playback): `auto` (default; native Music.app on macOS, web API + Chrome web player elsewhere), `native` (local Music.app, no account), or `web` (web API + web player, any OS). Set it conversationally: `config(action="set-pref", preference="mode", string_value="web")`. Playback always follows the engine.
+**`mode` preference** picks the engine: `auto` (default — best of each: native Music.app for playback on macOS, **Safari** for the Up Next queue, the API for data; **Chrome** off-mac), `native` (Music.app only, no account), `safari` (drive your signed-in Safari — macOS, no Chrome/Playwright), `chrome` (Chrome web player, any OS), or `api` (REST only — data + writes, no playback). Set it conversationally: `config(action="set-pref", preference="mode", string_value="safari")`. A per-call `engine=` (`native` / `safari` / `chrome` / `web`) overrides one playback or queue call (e.g. queue in Safari, then `playback(action="play", engine="safari")`). Using the queue makes its engine the active one, so transport controls reach it. The Safari engine drives the actual Safari you're browsing in (only ever a `music.apple.com` tab); Chrome uses an isolated window.
 
 **Browser (Chrome web player) features** — cross-platform playback + the Up Next queue — need Google Chrome plus Playwright. Off macOS, Playwright is installed by default; **on macOS it's an opt-in extra** (`pip install 'applemusic-mcp[browser]'`) since Safari sign-in + native Music.app playback already cover the Mac. After installing, run the one-time browser download (`playwright install chromium`, or `uvx --from applemusic-mcp playwright install chromium`). The bundled Chromium can't decode Apple's DRM, so a real Chrome install is required, and these features open a local Chrome window (not for headless servers). You don't sign in twice: the web player authorizes off your existing sign-in (the Safari-harvested or developer token is bridged into its profile automatically), so on macOS a single `login` covers the API, native playback, *and* the Chrome web player/queue.
 
@@ -162,7 +162,7 @@ Seven action-based tools keep the MCP context small. Each takes an `action` and 
 | `catalog` | search, album_tracks, album_details, song_details, artist_details, song_station, genres |
 | `discover` | recommendations, heavy_rotation, charts, top_songs, similar_artists, search_suggestions, personal_station |
 | `playback` | play (track / album / playlist / URL), control, now_playing, settings, reveal, airplay |
-| `queue` | list, play_next, play_last, remove, jump, clear, autoplay (web player Up Next) |
+| `queue` | list, play_next, play_last, remove, jump, clear, autoplay (Up Next — Safari on macOS, Chrome elsewhere; `engine=` to pick) |
 | `config` | status, signin, logout, reset, set-pref, audit-log, cache, storefronts |
 
 <details>

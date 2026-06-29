@@ -6471,11 +6471,13 @@ def config(
             bool_prefs = ["fetch_explicit", "clean_only", "auto_add"]
             string_prefs = ["storefront", "mode"]
             # Enum string prefs: only these values are accepted. `mode` is the
-            # single engine knob (playback follows it). `api` stays accepted as a
-            # back-compat alias for `web` so older configs keep working. (Token
-            # storage is auto-decided by platform, not a user pref.)
+            # single engine knob (playback follows it): auto (best-of mix), native
+            # (Music.app), safari (drive Safari, macOS), chrome (Chrome web player),
+            # api (REST only). `web` stays accepted as a back-compat alias (the web
+            # engine — Safari on macOS, Chrome off-mac). (Token storage is
+            # auto-decided by platform, not a user pref.)
             enum_prefs = {
-                "mode": ("auto", "native", "web", "api"),
+                "mode": ("auto", "native", "safari", "chrome", "web", "api"),
             }
             all_prefs = bool_prefs + string_prefs
 
@@ -7224,7 +7226,10 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
             )
         else:
             write_rail = _RAIL_LABELS.get(rail, "unknown")
-        return f"{body}\nMode: {mode}\nWrites: {write_rail}\n\n{nxt}"
+        # Show the engines `mode` resolves to, so the user can see what auto picks
+        # (e.g. playback=native, queue=safari on macOS) and where playback will land.
+        engines = f"Engines: playback={_playback_engine()}, queue={_queue_engine()}"
+        return f"{body}\nMode: {mode}\n{engines}\nWrites: {write_rail}\n\n{nxt}"
 
     if action in ("signin", "login"):
         from . import browser

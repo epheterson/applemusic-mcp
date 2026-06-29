@@ -12,6 +12,18 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Added
 
+- **Safari is now a full playback + queue engine on macOS — not just sign-in.** The
+  same Apple-Events `do JavaScript` channel drives your signed-in Safari's MusicKit
+  to play songs/albums/playlists/URLs and manage the Up Next queue — DRM-native, no
+  Chrome, no Playwright. The engine model is one `mode` knob with five values:
+  `auto` (best of each — native Music.app playback, Safari queue, API data on macOS;
+  Chrome off-mac), `native`, `safari`, `chrome`, `api`, plus a per-call `engine=`
+  override (`native`/`safari`/`chrome`/`web`). Using the queue makes its engine the
+  active one, so transport controls follow it (queue in Safari → pause/next reach
+  Safari). The shared MusicKit JS (`musickit_js.py`) drives the Safari and Chrome
+  engines identically. Net: one macOS `login` powers the API, native playback, *and*
+  the Safari web player/queue — Chrome stays an option (`mode=chrome`) and the only
+  web engine off-mac.
 - **macOS: sign in via Safari — no Chrome, no ~1 GB Playwright download.**
   `applemusic-mcp login --safari` reads your `media-user-token` directly from a
   signed-in Safari (it's not httpOnly) via one AppleScript `do JavaScript

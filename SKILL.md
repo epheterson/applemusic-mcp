@@ -354,6 +354,14 @@ osascript stderr messages map to a small set of environmental states. When Apple
 > `pip install 'applemusic-mcp[browser]'`). **Off macOS**, `login` opens Chrome
 > (Playwright ships by default there). The UI primitives below remain only for
 > **playback / play-from-URL** and catalog *search*, not for adding.
+>
+> **Engines (`mode` pref / per-call `engine=`):** `auto` (default — native Music.app
+> for playback, **Safari** for the Up Next queue, the API for data on macOS; Chrome
+> off-mac), `native`, `safari`, `chrome`, `api`. The **Safari** engine drives your
+> signed-in Safari's MusicKit through the same `do JavaScript` channel (DRM-native,
+> no Chrome) for play/control/now_playing/settings and the full queue — so on macOS
+> the whole web-player surface works without Playwright. Using the `queue` makes its
+> engine the active one, so `playback control` reaches it.
 
 The remaining UI automation controls Music.app through System Events (Accessibility API) and CoreGraphics (mouse events).
 
