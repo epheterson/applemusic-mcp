@@ -72,7 +72,7 @@ class TestQueueMisc:
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "queue_clear", lambda: (False, "not signed in"))
-        out = server.queue(action="clear")
+        out = server.queue(action="clear", engine="chrome")
         assert out.startswith("Error:")
 
     def test_queue_play_next_error_surfaces(self, monkeypatch):
@@ -81,7 +81,7 @@ class TestQueueMisc:
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "queue_play_next", lambda cid: (False, "browser offline"))
-        out = server.queue(action="play_next", track="X")
+        out = server.queue(action="play_next", track="X", engine="chrome")
         assert out.startswith("Error:")
 
     def test_queue_play_last_error_surfaces(self, monkeypatch):
@@ -89,28 +89,28 @@ class TestQueueMisc:
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "queue_play_later", lambda cid: (False, "offline"))
-        out = server.queue(action="play_last", track="X")
+        out = server.queue(action="play_last", track="X", engine="chrome")
         assert out.startswith("Error:")
 
     def test_queue_remove_error_surfaces(self, monkeypatch):
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "queue_remove", lambda i: (False, "remove failed"))
-        out = server.queue(action="remove", index=0)
+        out = server.queue(action="remove", index=0, engine="chrome")
         assert out.startswith("Error:")
 
     def test_queue_jump_error_surfaces(self, monkeypatch):
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "queue_jump", lambda i: (False, "jump failed"))
-        out = server.queue(action="jump", index=0)
+        out = server.queue(action="jump", index=0, engine="chrome")
         assert out.startswith("Error:")
 
     def test_queue_autoplay_error_surfaces(self, monkeypatch):
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "queue_autoplay", lambda e: (False, "autoplay failed"))
-        out = server.queue(action="autoplay", enabled=True)
+        out = server.queue(action="autoplay", enabled=True, engine="chrome")
         assert out.startswith("Error:")
 
 

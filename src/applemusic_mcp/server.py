@@ -1070,6 +1070,23 @@ def _no_player_msg(engine_override: Optional[str] = None, for_queue: bool = Fals
     )
 
 
+# Active-engine tracking — the engine that last played or queued. control /
+# now_playing target it so a session that started native (Music.app) but then used
+# Up Next (Safari) stays coherent: the queue pulls transport control into Safari.
+_active_playback_engine = ""  # '' | 'native' | 'safari' | 'chrome'
+
+
+def _set_active_playback(engine: str) -> None:
+    global _active_playback_engine
+    if engine in ("native", "safari", "chrome"):
+        _active_playback_engine = engine
+
+
+def _get_active_playback() -> str:
+    """Engine for control / now_playing: the last-used one, else the auto default."""
+    return _active_playback_engine or _playback_engine()
+
+
 def _mode_pinned_native() -> bool:
     """True when the user explicitly pinned ``mode=native`` (so playback must
     stay in Music.app and never fall back to the browser). ``auto`` is NOT
@@ -7332,22 +7349,19 @@ def _format_queue(data: dict, limit: Optional[int] = None) -> str:
     return "\n".join(lines)
 
 
-def _queue_after(header: str, top_n: int = 6) -> str:
+def _queue_after(wp, header: str, top_n: int = 6) -> str:
     """After a queue mutation, append the resulting Up Next (windowed to top_n) so
-    the caller sees the effect without a follow-up `list` call."""
-    from . import browser
-
-    ok, data = browser.queue_list()
+    the caller sees the effect without a follow-up `list` call. ``wp`` is the
+    resolved web-player module (safari_player or browser)."""
+    ok, data = wp.queue_list()
     if not ok or not isinstance(data, dict):
         return header
     return f"{header}\n\n{_format_queue(data, limit=top_n)}"
 
 
-def _queue_current_name() -> str:
+def _queue_current_name(wp) -> str:
     """Name of the now-current Up Next item (the thing a jump landed on), or ''."""
-    from . import browser
-
-    ok, data = browser.queue_list()
+    ok, data = wp.queue_list()
     if not ok or not isinstance(data, dict):
         return ""
     pos = data.get("position", -1)
@@ -7369,13 +7383,14 @@ def queue(
     artist: str = "",
     index: int = -1,
     enabled: Optional[bool] = None,
+    engine: str = "",
 ) -> str:
-    """The Up Next play queue, via the web player (cross-platform; needs a signed-in
-    browser session from `applemusic-mcp login`). The queue is the web player's own
-    MusicKit state — the same Up Next you see in the player. It is web-only: when the
-    active engine isn't web (mode≠web), transport controls (playback control) won't
-    reach this queue unless you play through the web engine (mode=web or
-    playback(action='play', engine='web')).
+    """The Up Next play queue — the web player's own MusicKit state (the same Up Next
+    you see in the player). It runs on a web engine: Safari on macOS (no Chrome
+    needed) or Chrome elsewhere, picked by your `mode` (auto/safari/chrome) or a
+    per-call `engine=` ('safari' | 'chrome'). Using the queue makes it the active
+    playback engine, so transport controls reach it. Native (Music.app) mode has no
+    Up Next — set mode to safari/chrome or pass engine='safari'.
 
     Actions:
     - `list` — show Up Next (▶ marks the current item; indices are 0-based)
@@ -7387,24 +7402,15 @@ def queue(
     - `jump` — jump playback to a track: by `track` (name or catalog id — drift-proof, preferred since Up Next auto-advances) or by `index`
     - `autoplay` — set Autoplay (∞: keep playing similar music when the queue ends); pass `enabled=true` or `enabled=false` (required)
     """
-    from . import browser
-
     action = action.lower().strip().replace("-", "_")
 
-    # The queue lives in the web player. If the active engine is native, building
-    # or jumping it produces an Up Next that transport controls won't touch — warn
-    # so the user doesn't build an unreachable queue (the audition-trace trap).
-    def _engine_note() -> str:
-        if _engine() != "api":
-            return (
-                "⚠️ This queue is the web player's Up Next, but the active engine is "
-                "native — playback controls won't reach it. Play via the web engine "
-                "(mode=web, or playback(action='play', engine='web')).\n"
-            )
-        return ""
+    eng = _queue_engine(engine)
+    if eng == "none":
+        return "Error: " + _no_player_msg(engine, for_queue=True)
+    wp = _web_player(eng)
 
     if action in ("list", "show", "up_next"):
-        ok, data = browser.queue_list()
+        ok, data = wp.queue_list()
         return _format_queue(data) if ok else f"Error: {data}"
     if action == "set":
         raw = [t.strip() for t in re.split(r"[,\n]", track) if t.strip()]
@@ -7417,28 +7423,30 @@ def queue(
             (ids.append(cid) if cid else misses.append(t))
         if not ids:
             return f"Error: none of those resolved to catalog tracks: {', '.join(misses)}"
-        ok, msg = browser.queue_set(ids)
+        ok, msg = wp.queue_set(ids)
         if not ok:
             return f"Error: {msg}"
         if misses:
             msg += f" (skipped, not found: {', '.join(misses)})"
-        return _queue_after(_engine_note() + msg)
+        _set_active_playback(eng)
+        return _queue_after(wp, msg)
     if action in ("play_next", "play_last"):
         cid = _queue_resolve_catalog_id(track, artist)
         if not cid:
             return f"Error: '{track}' not found in catalog"
-        ok, msg = (
-            browser.queue_play_next(cid) if action == "play_next" else browser.queue_play_later(cid)
-        )
-        return _queue_after(_engine_note() + msg) if ok else f"Error: {msg}"
+        ok, msg = wp.queue_play_next(cid) if action == "play_next" else wp.queue_play_later(cid)
+        if not ok:
+            return f"Error: {msg}"
+        _set_active_playback(eng)
+        return _queue_after(wp, msg)
     if action == "remove":
         if index < 0:
             return "Error: index required (0-based) for remove"
-        ok, msg = browser.queue_remove(index)
-        return _queue_after(msg) if ok else f"Error: {msg}"
+        ok, msg = wp.queue_remove(index)
+        return _queue_after(wp, msg) if ok else f"Error: {msg}"
     if action == "clear":
-        ok, msg = browser.queue_clear()
-        return _queue_after(msg) if ok else f"Error: {msg}"
+        ok, msg = wp.queue_clear()
+        return _queue_after(wp, msg) if ok else f"Error: {msg}"
     if action == "jump":
         # Prefer jump-by-track (name or catalog id): the Up Next auto-advances in
         # real time, so an index captured a moment ago can land on the wrong track.
@@ -7447,21 +7455,22 @@ def queue(
             cid = _queue_resolve_catalog_id(track, artist)
             if not cid:
                 return f"Error: '{track}' not found to jump to"
-            ok, msg = browser.queue_jump_id(cid)
+            ok, msg = wp.queue_jump_id(cid)
         elif index >= 0:
-            ok, msg = browser.queue_jump(index)
+            ok, msg = wp.queue_jump(index)
         else:
             return "Error: jump needs index (0-based) or track (name/catalog id — drift-proof)"
         if not ok:
             return f"Error: {msg}"
-        name = _queue_current_name()
-        header = _engine_note() + (f"Jumped to: {name}" if name else msg)
-        return _queue_after(header)
+        _set_active_playback(eng)
+        name = _queue_current_name(wp)
+        header = f"Jumped to: {name}" if name else msg
+        return _queue_after(wp, header)
     if action == "autoplay":
         if enabled is None:
             return "Error: autoplay needs enabled=true or enabled=false"
-        ok, msg = browser.queue_autoplay(enabled)
-        return _queue_after(msg) if ok else f"Error: {msg}"
+        ok, msg = wp.queue_autoplay(enabled)
+        return _queue_after(wp, msg) if ok else f"Error: {msg}"
     return (
         f"Unknown action: {action}. Use: list, set, play_next, play_last, remove, clear, jump, "
         "autoplay"
