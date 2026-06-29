@@ -31,7 +31,7 @@ def cache(cache_dir):
 
 
 def test_get_cache_dir_real(tmp_path, monkeypatch):
-    monkeypatch.setattr(track_cache.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("APPLEMUSIC_MCP_HOME", str(tmp_path))
     d = track_cache.get_cache_dir()
     assert d == tmp_path / ".cache" / "applemusic-mcp"
     assert d.is_dir()

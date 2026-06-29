@@ -40,7 +40,9 @@ from typing import Any, Callable, Optional
 
 MUSIC_URL = "https://music.apple.com"
 BROWSE_URL = f"{MUSIC_URL}/us/browse"
-PROFILE_DIR = Path.home() / ".applemusic-mcp" / "chrome"
+from . import paths
+
+PROFILE_DIR = paths.data_dir() / "chrome"
 
 # Sentinel that tells the owner thread to shut down.
 _STOP = object()

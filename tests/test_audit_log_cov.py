@@ -23,7 +23,8 @@ def mock_audit_log_for_all_tests(tmp_path, monkeypatch):
     return tmp_path / ".cache" / "applemusic-mcp" / "audit_log.jsonl"
 
 
-def test_get_audit_log_path_creates_dir(tmp_path):
+def test_get_audit_log_path_creates_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPLEMUSIC_MCP_HOME", str(tmp_path))
     path = audit_log.get_audit_log_path()
     assert path == tmp_path / ".cache" / "applemusic-mcp" / "audit_log.jsonl"
     assert path.parent.is_dir()

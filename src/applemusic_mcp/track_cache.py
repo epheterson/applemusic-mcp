@@ -19,8 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 def get_cache_dir() -> Path:
-    """Get cache directory."""
-    cache_dir = Path.home() / ".cache" / "applemusic-mcp"
+    """Get cache directory (env-overridable; see paths.cache_dir)."""
+    from . import paths
+
+    cache_dir = paths.cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
 

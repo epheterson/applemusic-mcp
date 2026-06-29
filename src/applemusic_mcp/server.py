@@ -38,6 +38,7 @@ from . import applescript as asc
 from . import amp_api
 from .track_cache import get_track_cache, get_cache_dir
 from . import audit_log
+from . import paths
 
 # Check if AppleScript is available (macOS only)
 APPLESCRIPT_AVAILABLE = asc.is_available()
@@ -6730,7 +6731,7 @@ _DIFF_MAX_KEEP = 50
 
 def _get_snapshot_dir() -> Path:
     """Get the snapshot storage directory."""
-    snap_dir = Path.home() / ".cache" / "applemusic-mcp" / "snapshots"
+    snap_dir = paths.cache_dir() / "snapshots"
     snap_dir.mkdir(parents=True, exist_ok=True)
     return snap_dir
 

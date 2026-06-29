@@ -88,6 +88,15 @@ def _isolate_browser_profile(request, tmp_path, monkeypatch):
 # exercised explicitly in test_auth.py.
 os.environ.setdefault("APPLEMUSIC_NO_KEYRING", "1")
 
+# Redirect ALL persistent state (config / Chrome profile / cache / exports) to a
+# throwaway home for the whole session, BEFORE importing any applemusic_mcp module
+# (the path roots are read at import). This is the filesystem analogue of the
+# network/AppleScript guards: a test can never touch the user's real ~/.config,
+# ~/.applemusic-mcp, or ~/.cache, no matter what it forgets to mock.
+import tempfile as _tempfile
+
+os.environ.setdefault("APPLEMUSIC_MCP_HOME", _tempfile.mkdtemp(prefix="amc-test-home-"))
+
 from applemusic_mcp import applescript as asc
 from applemusic_mcp import audit_log
 

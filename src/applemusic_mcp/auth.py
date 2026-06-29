@@ -14,7 +14,9 @@ from urllib.parse import parse_qs
 import jwt
 import requests
 
-DEFAULT_CONFIG_DIR = Path.home() / ".config" / "applemusic-mcp"
+from . import paths
+
+DEFAULT_CONFIG_DIR = paths.config_dir()
 
 
 def _write_private(path, text: str) -> None:

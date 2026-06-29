@@ -34,8 +34,10 @@ _log_lock = threading.Lock()
 
 
 def get_audit_log_path() -> Path:
-    """Get the audit log file path."""
-    log_dir = Path.home() / ".cache" / "applemusic-mcp"
+    """Get the audit log file path (env-overridable; see paths.cache_dir)."""
+    from . import paths
+
+    log_dir = paths.cache_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir / "audit_log.jsonl"
 
