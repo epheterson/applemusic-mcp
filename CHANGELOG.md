@@ -123,6 +123,12 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
   server's browser context); (3) if Playwright's Chromium build is missing (common
   right after a version bump), the engine **auto-installs it once and retries**
   instead of dumping a raw stack trace — with a clear one-line fix if that fails.
+- **A stuck cloud/shared track reference (`-10006`) gets a clear message.** When a
+  specific library copy is an un-attachable shared/cloud reference, the AppleScript
+  attach fails with a raw `-10006`; the add now says "this library copy is a
+  cloud/shared reference Music.app can't add to a playlist — try a different
+  version of the track" instead of the stack trace. (A different catalog version of
+  the same song attaches fine.)
 - **`queue remove` on the currently-playing item gives a clear error** instead of
   an opaque MusicKit `mk-007 INVALID_ARGUMENTS` — "can't remove the
   currently-playing item — jump to another track first."

@@ -2644,3 +2644,17 @@ class TestUnifiedAutoSearchApiFailure:
             )
         assert ok is False
         assert "Catalog search failed" in msg
+
+
+def test_attach_error_translates_10006():
+    """The track-specific -10006 (stuck cloud/shared reference) gets a friendly,
+    actionable message instead of the raw AppleScript error."""
+    raw = (
+        "1475:1514: execution error: Music got an error: Can't set user playlist "
+        "id 67261 of source id 61 to shared track id 44260 of library playlist id "
+        "62 of source id 61. (-10006)"
+    )
+    out = server._attach_error("Fire and Rain", raw)
+    assert "Fire and Rain" in out and "different version" in out and "-10006" not in out
+    # unrelated errors pass through unchanged
+    assert server._attach_error("X", "boom") == "X: boom"

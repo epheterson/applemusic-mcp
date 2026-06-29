@@ -1383,6 +1383,19 @@ def _format_applescript_error(raw: str, operation: str = "") -> str:
     return f"AppleScript failed{op}: {raw}"
 
 
+def _attach_error(name: str, raw: str) -> str:
+    """Friendly per-track message for a playlist-attach failure. Catches the
+    track-specific -10006 ("Can't set user playlist … to shared track …"), which
+    means that library copy is a cloud/shared reference Music.app refuses to add to
+    a playlist — a different version of the same song usually attaches fine."""
+    if "-10006" in raw or ("shared track" in raw and "user playlist" in raw):
+        return (
+            f"{name}: this library copy is a cloud/shared reference that Music.app "
+            "can't add to a playlist — try a different version of the track."
+        )
+    return f"{name}: {raw}"
+
+
 # ============ INTERNAL HELPERS ============
 
 
@@ -2518,7 +2531,7 @@ def _auto_search_and_add_to_playlist(
                         steps,
                     )
                 if not ok2 and "Track not found" not in res2:
-                    return False, f"Error adding '{found_name}' to playlist: {res2}", steps
+                    return False, _attach_error(found_name, res2), steps
                 time.sleep(_VERIFY_DELAY_S)
                 waited += _VERIFY_DELAY_S
         return (
@@ -3643,7 +3656,7 @@ def _playlist_add(
                     "token is configured, UI automation on macOS otherwise)."
                 )
             else:
-                errors.append(f"{name}: {result}")
+                errors.append(_attach_error(name, result))
 
         # Process IDs (catalog or library IDs)
         # NOTE: track IDs require the API to resolve catalog/library metadata
@@ -3738,7 +3751,7 @@ def _playlist_add(
                     resolved.applescript_name, name, artist_name if artist_name else None
                 )
                 if not success:
-                    errors.append(f"{name}: {result}")
+                    errors.append(_attach_error(name, result))
                 elif not verify:
                     added.append(
                         (f"{name} - {artist_name}" if artist_name else name) + " (via Music.app)"
