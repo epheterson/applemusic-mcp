@@ -7591,892 +7591,894 @@ def playback(
 # - Volume and shuffle control
 # - Get currently playing track
 
-if APPLESCRIPT_AVAILABLE:
 
-    def _catalog_song_name(song_id: str) -> str:
-        """Look up a catalog song's display name by id (for deep-link row
-        matching). Returns "" if the lookup fails — callers treat that as
-        'no name hint' and fall back to the highlighted-row strategy."""
+def _catalog_song_name(song_id: str) -> str:
+    """Look up a catalog song's display name by id (for deep-link row
+    matching). Returns "" if the lookup fails — callers treat that as
+    'no name hint' and fall back to the highlighted-row strategy."""
+    try:
+        response = requests.get(
+            f"{BASE_URL}/catalog/{get_storefront()}/songs/{song_id}",
+            headers=get_headers(),
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code == 200:
+            data = response.json().get("data", [])
+            if data:
+                return data[0].get("attributes", {}).get("name", "") or ""
+    except Exception:
+        pass
+    return ""
+
+
+def _convert_song_url_to_album(url: str) -> Optional[str]:
+    """Convert a /song/ URL to /album/?i= format via Apple Music API.
+
+    Extracts the song ID from the URL, looks up its album via API,
+    and returns an album URL with ?i=songId. Returns None if the API
+    is unavailable or the lookup fails.
+    """
+    match = re.search(r"/song/[^/]*/(\d+)", url)
+    if not match:
+        return None
+    song_id = match.group(1)
+
+    try:
+        headers = get_headers()
+        sf = get_storefront()
+        response = requests.get(
+            f"{BASE_URL}/catalog/{sf}/songs/{song_id}",
+            headers=headers,
+            params={"include": "albums"},
+            timeout=REQUEST_TIMEOUT,
+        )
+        if response.status_code != 200:
+            return None
+        data = response.json().get("data", [])
+        if not data:
+            return None
+        # Get album from relationships
+        albums = data[0].get("relationships", {}).get("albums", {}).get("data", [])
+        if not albums:
+            return None
+        album_id = albums[0].get("id")
+        album_name = data[0].get("attributes", {}).get("albumName", "album")
+        if album_id:
+            # Construct album URL with ?i= for the specific song
+            album_slug = re.sub(r"[^a-z0-9]+", "-", album_name.lower()).strip("-")
+            return f"https://music.apple.com/{sf}/album/{album_slug}/{album_id}?i={song_id}"
+    except Exception:
+        pass
+    return None
+
+
+def _try_ui_catalog_play(
+    track_name: str,
+    track_artist: str,
+    source_label: str = "ui_catalog",
+    prefix: str = "[UI Catalog]",
+) -> tuple[bool, Optional[str]]:
+    """Try to play a catalog track via Music.app UI automation.
+
+    Centralizes the APPLESCRIPT_AVAILABLE gating, audit logging, and
+    success-message formatting that was previously duplicated across
+    three call sites in this function.
+
+    Returns:
+        (True, formatted_message) on success.
+        (False, raw_error_message) on UI failure (caller can choose
+            whether to surface the failure inline or fall through).
+        (False, None) when APPLESCRIPT_AVAILABLE is False — caller
+            should fall through to the next path.
+    """
+    if not APPLESCRIPT_AVAILABLE:
+        return False, None
+    ui_query = f"{track_name} {track_artist}".strip()
+    ok, msg = asc.ui_play_result_by_query(ui_query)
+    if ok:
+        audit_log.log_action(
+            "play_track",
+            {"track": track_name, "artist": track_artist, "source": source_label},
+        )
+        return True, f"{prefix} {msg}"
+    return False, msg
+
+
+def _catalog_miss_play(name: str, artist: str, url: str, reveal: bool) -> str:
+    """A catalog item isn't in the library and the UI-search play didn't take.
+    Play it natively in Music.app by deep-linking the URL and driving the UI
+    (the fixed CoreGraphics click for the album/playlist Play button, or a
+    name-matched double-click for a specific ?i= track). No library changes;
+    reveal=True just opens the page for a manual click.
+
+    If native UI play fails and playback isn't pinned to ``native``, fall
+    back to the browser web player (now full-DRM) rather than dead-ending —
+    a pinned-``native`` user explicitly opted out of the browser, so they
+    get the actionable message instead."""
+    if reveal and url:
+        success, _ = asc.open_catalog_song(url)
+        if success:
+            return f"[Catalog] Opened: {name} by {artist} (click play)"
+    if not url:
+        return f"[Catalog] Found {name} by {artist}."
+
+    ok, msg = asc.open_catalog_and_play(url, track_name=name)
+    if ok:
+        audit_log.log_action("play_track", {"track": name, "artist": artist, "source": "deep_link"})
+        return f"[Catalog] {msg}"
+
+    # Native UI play failed (commonly: Accessibility not granted, or a Music
+    # layout this build doesn't match). In auto/browser playback, the browser
+    # web player is a working fallback; pinned-native opted out of it.
+    pinned_native = _mode_pinned_native()
+    if not pinned_native and has_user_token():
+        bmsg = _browser_play(url=url)
+        if not bmsg.startswith("Error"):
+            return f"[Catalog→Browser] {bmsg}"
+
+    return (
+        f"[Catalog] Found {name} by {artist} — couldn't auto-play it in Music. "
+        "Grant Accessibility (System Settings → Privacy & Security → Accessibility) "
+        "for your terminal/MCP host, "
+        + (
+            "or play in the web player: set mode=web, or pass engine='web' for this call."
+            if has_user_token()
+            else "or run `login` to play in the web player (needs an Apple Music subscription)."
+        )
+    )
+
+
+def _playback_play(
+    track: str = "",
+    playlist: str = "",
+    album: str = "",
+    artist: str = "",
+    shuffle: bool = False,
+    reveal: Optional[bool] = None,
+    add_to_library: bool = False,
+    url: str = "",
+) -> str:
+    """Play a track, playlist, album, or URL (macOS). Provide ONE target."""
+    # === URL === (handle first, separate from other targets)
+    if url:
+        url = url.strip()
+        if track or playlist or album or artist:
+            return "Error: When using url, don't provide track, playlist, album, or artist"
+
+        # Convert /song/ URLs to /album/?i= format via API lookup
+        if "/song/" in url and "?i=" not in url:
+            converted = _convert_song_url_to_album(url)
+            if converted:
+                url = converted
+
+        # For a specific ?i= track, look up its name so the deep-link path can
+        # match the exact row and double-click it (rather than the album Play
+        # button, which would start the whole album from track 1).
+        track_name_hint = ""
+        i_match = re.search(r"[?&]i=(\d+)", url)
+        if i_match:
+            track_name_hint = _catalog_song_name(i_match.group(1))
+
+        success, result = asc.open_catalog_and_play(
+            url, shuffle=shuffle, track_name=track_name_hint
+        )
+        if success:
+            audit_log.log_action("play_url", {"url": url, "result": result})
+            return result
+        # Native UI play failed — fall back to the browser web player unless
+        # playback is pinned to native (same policy as _catalog_miss_play).
+        pinned_native = _mode_pinned_native()
+        if not pinned_native and has_user_token():
+            bmsg = _browser_play(url=url, shuffle=shuffle)
+            if not bmsg.startswith("Error"):
+                audit_log.log_action("play_url", {"url": url, "via": "browser"})
+                return f"[Browser] {bmsg}"
+        return f"Error: {result}"
+
+    # Count how many targets provided
+    targets = sum(1 for t in [track, playlist, album] if t)
+    if targets == 0:
+        return "Error: Provide track, playlist, or album parameter"
+    if targets > 1:
+        return "Error: Provide only ONE of track, playlist, or album"
+
+    # === PLAYLIST ===
+    if playlist:
+        success, result = asc.play_playlist(playlist, shuffle)
+        if success:
+            audit_log.log_action("play_playlist", {"playlist": playlist, "shuffle": shuffle})
+            return result
+        return f"Error: {result}"
+
+    # === ALBUM ===
+    if album:
+        reveal = bool(reveal)  # explicit "just show it"; default is to play
+
+        # Search library for tracks from this album
+        search_ok, lib_results = asc.search_library(album, "albums")
+        if search_ok and lib_results:
+            # Filter by artist if provided
+            for lib_track in lib_results:
+                lib_album = lib_track.get("album", "")
+                lib_artist = lib_track.get("artist", "")
+                if not _loose_contains(album, lib_album):
+                    continue
+                if artist and not _loose_contains(artist, lib_artist):
+                    continue
+                # Found match - play first track (Music continues with album)
+                if shuffle:
+                    asc.set_shuffle(True)
+                success, result = asc.play_track(lib_track.get("name", ""), lib_artist)
+                if success:
+                    shuffle_note = " (shuffled)" if shuffle else ""
+                    audit_log.log_action("play_album", {"album": lib_album, "artist": lib_artist})
+                    return f"[Library] Playing: {lib_album} by {lib_artist}{shuffle_note}"
+                break
+
+        # Not in library - search catalog
         try:
+            headers = get_headers()
             response = requests.get(
-                f"{BASE_URL}/catalog/{get_storefront()}/songs/{song_id}",
-                headers=get_headers(),
+                f"{BASE_URL}/catalog/{get_storefront()}/search",
+                headers=headers,
+                params={"term": f"{album} {artist}".strip(), "types": "albums", "limit": 5},
+                timeout=REQUEST_TIMEOUT,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                albums_data = data.get("results", {}).get("albums", {}).get("data", [])
+                for cat_album in albums_data:
+                    attrs = cat_album.get("attributes", {})
+                    album_name = attrs.get("name", "")
+                    album_artist = attrs.get("artistName", "")
+                    album_id = cat_album.get("id", "")
+                    if not _loose_contains(album, album_name):
+                        continue
+                    if artist and not _loose_contains(artist, album_artist):
+                        continue
+                    album_url = attrs.get("url", "")
+
+                    # Option 1: Add album to library and play
+                    if add_to_library and album_id:
+                        add_ok, add_msg = _add_album_to_library(album_id)
+                        if add_ok:
+                            time.sleep(PLAY_TRACK_INITIAL_DELAY)
+                            # Re-search library for the album
+                            result = ""  # bound even if no synced track is found yet
+                            for attempt in range(PLAY_TRACK_MAX_ATTEMPTS):
+                                if attempt > 0:
+                                    time.sleep(PLAY_TRACK_RETRY_DELAY)
+                                search_ok2, lib_results2 = asc.search_library(album_name, "albums")
+                                if search_ok2 and lib_results2:
+                                    for lib_track2 in lib_results2:
+                                        if (
+                                            album_name.lower()
+                                            in lib_track2.get("album", "").lower()
+                                        ):
+                                            if shuffle:
+                                                asc.set_shuffle(True)
+                                            success, result = asc.play_track(
+                                                lib_track2.get("name", ""),
+                                                lib_track2.get("artist", ""),
+                                            )
+                                            if success:
+                                                shuffle_note = " (shuffled)" if shuffle else ""
+                                                audit_log.log_action(
+                                                    "play_album",
+                                                    {
+                                                        "album": album_name,
+                                                        "artist": album_artist,
+                                                    },
+                                                )
+                                                return f"[Catalog→Library] Playing: {album_name} by {album_artist}{shuffle_note}"
+                                            break
+                            return _play_after_add(f"{album_name} by {album_artist}", result)
+                        return f"[Catalog] Failed to add: {add_msg}"
+
+                    # Not in library — play it via the browser web player.
+                    return _catalog_miss_play(album_name, album_artist, album_url, reveal)
+        except requests.exceptions.RequestException as e:
+            return f"API Error searching catalog: {str(e)}"
+        except (FileNotFoundError, ValueError) as e:
+            return f"Error: {str(e)}"
+        return f"Album not found: {album}"
+
+    # === TRACK ===
+    reveal = bool(reveal)  # explicit "just show it"; default is to play
+
+    # Resolve track input
+    resolved = _resolve_track(track, artist)
+    if not resolved:
+        return "Error: Could not resolve track"
+
+    r = resolved[0]  # Only first track
+    if r.error:
+        return f"Error: {r.error}"
+
+    track_name = ""
+    track_artist = r.artist or artist
+
+    # If catalog ID, look up track info and play directly
+    if r.input_type == InputType.CATALOG_ID:
+        catalog_id = r.value
+        try:
+            headers = get_headers()
+            response = requests.get(
+                f"{BASE_URL}/catalog/{get_storefront()}/songs/{catalog_id}",
+                headers=headers,
                 timeout=REQUEST_TIMEOUT,
             )
             if response.status_code == 200:
                 data = response.json().get("data", [])
                 if data:
-                    return data[0].get("attributes", {}).get("name", "") or ""
-        except Exception:
-            pass
-        return ""
+                    attrs = data[0].get("attributes", {})
+                    track_name = attrs.get("name", "")
+                    track_artist = attrs.get("artistName", "")
+                    song_url = attrs.get("url", "")
 
-    def _convert_song_url_to_album(url: str) -> Optional[str]:
-        """Convert a /song/ URL to /album/?i= format via Apple Music API.
-
-        Extracts the song ID from the URL, looks up its album via API,
-        and returns an album URL with ?i=songId. Returns None if the API
-        is unavailable or the lookup fails.
-        """
-        match = re.search(r"/song/[^/]*/(\d+)", url)
-        if not match:
-            return None
-        song_id = match.group(1)
-
-        try:
-            headers = get_headers()
-            sf = get_storefront()
-            response = requests.get(
-                f"{BASE_URL}/catalog/{sf}/songs/{song_id}",
-                headers=headers,
-                params={"include": "albums"},
-                timeout=REQUEST_TIMEOUT,
-            )
-            if response.status_code != 200:
-                return None
-            data = response.json().get("data", [])
-            if not data:
-                return None
-            # Get album from relationships
-            albums = data[0].get("relationships", {}).get("albums", {}).get("data", [])
-            if not albums:
-                return None
-            album_id = albums[0].get("id")
-            album_name = data[0].get("attributes", {}).get("albumName", "album")
-            if album_id:
-                # Construct album URL with ?i= for the specific song
-                album_slug = re.sub(r"[^a-z0-9]+", "-", album_name.lower()).strip("-")
-                return f"https://music.apple.com/{sf}/album/{album_slug}/{album_id}?i={song_id}"
-        except Exception:
-            pass
-        return None
-
-    def _try_ui_catalog_play(
-        track_name: str,
-        track_artist: str,
-        source_label: str = "ui_catalog",
-        prefix: str = "[UI Catalog]",
-    ) -> tuple[bool, Optional[str]]:
-        """Try to play a catalog track via Music.app UI automation.
-
-        Centralizes the APPLESCRIPT_AVAILABLE gating, audit logging, and
-        success-message formatting that was previously duplicated across
-        three call sites in this function.
-
-        Returns:
-            (True, formatted_message) on success.
-            (False, raw_error_message) on UI failure (caller can choose
-                whether to surface the failure inline or fall through).
-            (False, None) when APPLESCRIPT_AVAILABLE is False — caller
-                should fall through to the next path.
-        """
-        if not APPLESCRIPT_AVAILABLE:
-            return False, None
-        ui_query = f"{track_name} {track_artist}".strip()
-        ok, msg = asc.ui_play_result_by_query(ui_query)
-        if ok:
-            audit_log.log_action(
-                "play_track",
-                {"track": track_name, "artist": track_artist, "source": source_label},
-            )
-            return True, f"{prefix} {msg}"
-        return False, msg
-
-    def _catalog_miss_play(name: str, artist: str, url: str, reveal: bool) -> str:
-        """A catalog item isn't in the library and the UI-search play didn't take.
-        Play it natively in Music.app by deep-linking the URL and driving the UI
-        (the fixed CoreGraphics click for the album/playlist Play button, or a
-        name-matched double-click for a specific ?i= track). No library changes;
-        reveal=True just opens the page for a manual click.
-
-        If native UI play fails and playback isn't pinned to ``native``, fall
-        back to the browser web player (now full-DRM) rather than dead-ending —
-        a pinned-``native`` user explicitly opted out of the browser, so they
-        get the actionable message instead."""
-        if reveal and url:
-            success, _ = asc.open_catalog_song(url)
-            if success:
-                return f"[Catalog] Opened: {name} by {artist} (click play)"
-        if not url:
-            return f"[Catalog] Found {name} by {artist}."
-
-        ok, msg = asc.open_catalog_and_play(url, track_name=name)
-        if ok:
-            audit_log.log_action(
-                "play_track", {"track": name, "artist": artist, "source": "deep_link"}
-            )
-            return f"[Catalog] {msg}"
-
-        # Native UI play failed (commonly: Accessibility not granted, or a Music
-        # layout this build doesn't match). In auto/browser playback, the browser
-        # web player is a working fallback; pinned-native opted out of it.
-        pinned_native = _mode_pinned_native()
-        if not pinned_native and has_user_token():
-            bmsg = _browser_play(url=url)
-            if not bmsg.startswith("Error"):
-                return f"[Catalog→Browser] {bmsg}"
-
-        return (
-            f"[Catalog] Found {name} by {artist} — couldn't auto-play it in Music. "
-            "Grant Accessibility (System Settings → Privacy & Security → Accessibility) "
-            "for your terminal/MCP host, "
-            + (
-                "or play in the web player: set mode=web, or pass engine='web' for this call."
-                if has_user_token()
-                else "or run `login` to play in the web player (needs an Apple Music subscription)."
-            )
-        )
-
-    def _playback_play(
-        track: str = "",
-        playlist: str = "",
-        album: str = "",
-        artist: str = "",
-        shuffle: bool = False,
-        reveal: Optional[bool] = None,
-        add_to_library: bool = False,
-        url: str = "",
-    ) -> str:
-        """Play a track, playlist, album, or URL (macOS). Provide ONE target."""
-        # === URL === (handle first, separate from other targets)
-        if url:
-            url = url.strip()
-            if track or playlist or album or artist:
-                return "Error: When using url, don't provide track, playlist, album, or artist"
-
-            # Convert /song/ URLs to /album/?i= format via API lookup
-            if "/song/" in url and "?i=" not in url:
-                converted = _convert_song_url_to_album(url)
-                if converted:
-                    url = converted
-
-            # For a specific ?i= track, look up its name so the deep-link path can
-            # match the exact row and double-click it (rather than the album Play
-            # button, which would start the whole album from track 1).
-            track_name_hint = ""
-            i_match = re.search(r"[?&]i=(\d+)", url)
-            if i_match:
-                track_name_hint = _catalog_song_name(i_match.group(1))
-
-            success, result = asc.open_catalog_and_play(
-                url, shuffle=shuffle, track_name=track_name_hint
-            )
-            if success:
-                audit_log.log_action("play_url", {"url": url, "result": result})
-                return result
-            # Native UI play failed — fall back to the browser web player unless
-            # playback is pinned to native (same policy as _catalog_miss_play).
-            pinned_native = _mode_pinned_native()
-            if not pinned_native and has_user_token():
-                bmsg = _browser_play(url=url, shuffle=shuffle)
-                if not bmsg.startswith("Error"):
-                    audit_log.log_action("play_url", {"url": url, "via": "browser"})
-                    return f"[Browser] {bmsg}"
-            return f"Error: {result}"
-
-        # Count how many targets provided
-        targets = sum(1 for t in [track, playlist, album] if t)
-        if targets == 0:
-            return "Error: Provide track, playlist, or album parameter"
-        if targets > 1:
-            return "Error: Provide only ONE of track, playlist, or album"
-
-        # === PLAYLIST ===
-        if playlist:
-            success, result = asc.play_playlist(playlist, shuffle)
-            if success:
-                audit_log.log_action("play_playlist", {"playlist": playlist, "shuffle": shuffle})
-                return result
-            return f"Error: {result}"
-
-        # === ALBUM ===
-        if album:
-            reveal = bool(reveal)  # explicit "just show it"; default is to play
-
-            # Search library for tracks from this album
-            search_ok, lib_results = asc.search_library(album, "albums")
-            if search_ok and lib_results:
-                # Filter by artist if provided
-                for lib_track in lib_results:
-                    lib_album = lib_track.get("album", "")
-                    lib_artist = lib_track.get("artist", "")
-                    if not _loose_contains(album, lib_album):
-                        continue
-                    if artist and not _loose_contains(artist, lib_artist):
-                        continue
-                    # Found match - play first track (Music continues with album)
-                    if shuffle:
-                        asc.set_shuffle(True)
-                    success, result = asc.play_track(lib_track.get("name", ""), lib_artist)
-                    if success:
-                        shuffle_note = " (shuffled)" if shuffle else ""
-                        audit_log.log_action(
-                            "play_album", {"album": lib_album, "artist": lib_artist}
-                        )
-                        return f"[Library] Playing: {lib_album} by {lib_artist}{shuffle_note}"
-                    break
-
-            # Not in library - search catalog
-            try:
-                headers = get_headers()
-                response = requests.get(
-                    f"{BASE_URL}/catalog/{get_storefront()}/search",
-                    headers=headers,
-                    params={"term": f"{album} {artist}".strip(), "types": "albums", "limit": 5},
-                    timeout=REQUEST_TIMEOUT,
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    albums_data = data.get("results", {}).get("albums", {}).get("data", [])
-                    for cat_album in albums_data:
-                        attrs = cat_album.get("attributes", {})
-                        album_name = attrs.get("name", "")
-                        album_artist = attrs.get("artistName", "")
-                        album_id = cat_album.get("id", "")
-                        if not _loose_contains(album, album_name):
-                            continue
-                        if artist and not _loose_contains(artist, album_artist):
-                            continue
-                        album_url = attrs.get("url", "")
-
-                        # Option 1: Add album to library and play
-                        if add_to_library and album_id:
-                            add_ok, add_msg = _add_album_to_library(album_id)
-                            if add_ok:
-                                time.sleep(PLAY_TRACK_INITIAL_DELAY)
-                                # Re-search library for the album
-                                result = ""  # bound even if no synced track is found yet
-                                for attempt in range(PLAY_TRACK_MAX_ATTEMPTS):
-                                    if attempt > 0:
-                                        time.sleep(PLAY_TRACK_RETRY_DELAY)
-                                    search_ok2, lib_results2 = asc.search_library(
-                                        album_name, "albums"
+                    # For catalog ID, try to add to library and play
+                    if add_to_library:
+                        add_ok, add_msg = _add_songs_to_library([catalog_id])
+                        if add_ok:
+                            time.sleep(PLAY_TRACK_INITIAL_DELAY)
+                            result = ""  # bound even if no attempt runs
+                            for attempt in range(PLAY_TRACK_MAX_ATTEMPTS):
+                                if attempt > 0:
+                                    time.sleep(PLAY_TRACK_RETRY_DELAY)
+                                success, result = asc.play_track(track_name, track_artist)
+                                if success:
+                                    if reveal:
+                                        asc.reveal_track(track_name, track_artist)
+                                    audit_log.log_action(
+                                        "play_track",
+                                        {"track": track_name, "artist": track_artist},
                                     )
-                                    if search_ok2 and lib_results2:
-                                        for lib_track2 in lib_results2:
-                                            if (
-                                                album_name.lower()
-                                                in lib_track2.get("album", "").lower()
-                                            ):
-                                                if shuffle:
-                                                    asc.set_shuffle(True)
-                                                success, result = asc.play_track(
-                                                    lib_track2.get("name", ""),
-                                                    lib_track2.get("artist", ""),
-                                                )
-                                                if success:
-                                                    shuffle_note = " (shuffled)" if shuffle else ""
-                                                    audit_log.log_action(
-                                                        "play_album",
-                                                        {
-                                                            "album": album_name,
-                                                            "artist": album_artist,
-                                                        },
-                                                    )
-                                                    return f"[Catalog→Library] Playing: {album_name} by {album_artist}{shuffle_note}"
-                                                break
-                                return _play_after_add(f"{album_name} by {album_artist}", result)
-                            return f"[Catalog] Failed to add: {add_msg}"
+                                    return (
+                                        f"[Catalog→Library] Playing: {track_name} by {track_artist}"
+                                    )
+                            return _play_after_add(f"{track_name} by {track_artist}", result)
+                        return f"[Catalog] Failed to add: {add_msg}"
 
-                        # Not in library — play it via the browser web player.
-                        return _catalog_miss_play(album_name, album_artist, album_url, reveal)
-            except requests.exceptions.RequestException as e:
-                return f"API Error searching catalog: {str(e)}"
-            except (FileNotFoundError, ValueError) as e:
-                return f"Error: {str(e)}"
-            return f"Album not found: {album}"
+                    # UI play first; else play via the browser web player.
+                    ui_ok, ui_msg = _try_ui_catalog_play(track_name, track_artist)
+                    if ui_ok:
+                        return ui_msg
+                    return _catalog_miss_play(track_name, track_artist, song_url, reveal)
+        except requests.exceptions.RequestException as e:
+            return f"Error looking up catalog ID {catalog_id}: {e}"
+        except (FileNotFoundError, ValueError) as e:
+            return f"Error: {e}"
+        except Exception as e:  # noqa: BLE001 - surface, never swallow into "not found"
+            return f"Error looking up catalog ID {catalog_id}: {e}"
+        # Reached only without an exception: a non-200/404 is a real API problem,
+        # not a missing track — don't disguise it as "not found".
+        if response.status_code not in (200, 404):
+            return f"Error looking up catalog ID {catalog_id}: HTTP {response.status_code}"
+        return f"Track not found for catalog ID: {catalog_id}"
 
-        # === TRACK ===
-        reveal = bool(reveal)  # explicit "just show it"; default is to play
+    # Name-based lookup
+    track_name = r.value
+    track_artist = r.artist or artist
 
-        # Resolve track input
-        resolved = _resolve_track(track, artist)
-        if not resolved:
-            return "Error: Could not resolve track"
-
-        r = resolved[0]  # Only first track
-        if r.error:
-            return f"Error: {r.error}"
-
-        track_name = ""
-        track_artist = r.artist or artist
-
-        # If catalog ID, look up track info and play directly
-        if r.input_type == InputType.CATALOG_ID:
-            catalog_id = r.value
-            try:
-                headers = get_headers()
-                response = requests.get(
-                    f"{BASE_URL}/catalog/{get_storefront()}/songs/{catalog_id}",
-                    headers=headers,
-                    timeout=REQUEST_TIMEOUT,
-                )
-                if response.status_code == 200:
-                    data = response.json().get("data", [])
-                    if data:
-                        attrs = data[0].get("attributes", {})
-                        track_name = attrs.get("name", "")
-                        track_artist = attrs.get("artistName", "")
-                        song_url = attrs.get("url", "")
-
-                        # For catalog ID, try to add to library and play
-                        if add_to_library:
-                            add_ok, add_msg = _add_songs_to_library([catalog_id])
-                            if add_ok:
-                                time.sleep(PLAY_TRACK_INITIAL_DELAY)
-                                result = ""  # bound even if no attempt runs
-                                for attempt in range(PLAY_TRACK_MAX_ATTEMPTS):
-                                    if attempt > 0:
-                                        time.sleep(PLAY_TRACK_RETRY_DELAY)
-                                    success, result = asc.play_track(track_name, track_artist)
-                                    if success:
-                                        if reveal:
-                                            asc.reveal_track(track_name, track_artist)
-                                        audit_log.log_action(
-                                            "play_track",
-                                            {"track": track_name, "artist": track_artist},
-                                        )
-                                        return f"[Catalog→Library] Playing: {track_name} by {track_artist}"
-                                return _play_after_add(f"{track_name} by {track_artist}", result)
-                            return f"[Catalog] Failed to add: {add_msg}"
-
-                        # UI play first; else play via the browser web player.
-                        ui_ok, ui_msg = _try_ui_catalog_play(track_name, track_artist)
-                        if ui_ok:
-                            return ui_msg
-                        return _catalog_miss_play(track_name, track_artist, song_url, reveal)
-            except requests.exceptions.RequestException as e:
-                return f"Error looking up catalog ID {catalog_id}: {e}"
-            except (FileNotFoundError, ValueError) as e:
-                return f"Error: {e}"
-            except Exception as e:  # noqa: BLE001 - surface, never swallow into "not found"
-                return f"Error looking up catalog ID {catalog_id}: {e}"
-            # Reached only without an exception: a non-200/404 is a real API problem,
-            # not a missing track — don't disguise it as "not found".
-            if response.status_code not in (200, 404):
-                return f"Error looking up catalog ID {catalog_id}: HTTP {response.status_code}"
-            return f"Track not found for catalog ID: {catalog_id}"
-
-        # Name-based lookup
-        track_name = r.value
-        track_artist = r.artist or artist
-
-        # Search library first (doesn't foreground Music)
-        search_ok, lib_results = asc.search_library(track_name, "songs")
-        if search_ok and lib_results:
-            # Filter for matching artist if provided
-            for lib_track in lib_results:
-                lib_name = lib_track.get("name", "")
-                lib_artist = lib_track.get("artist", "")
-                if not _loose_contains(track_name, lib_name):
-                    continue
-                if track_artist and not _loose_contains(track_artist, lib_artist):
-                    continue
-                # Found match - now play it (will foreground Music)
-                success, result = asc.play_track(lib_name, lib_artist)
-                if success:
-                    if reveal:
-                        asc.reveal_track(lib_name, lib_artist)
-                    audit_log.log_action("play_track", {"track": lib_name, "artist": lib_artist})
-                    return f"[Library] {result}"
-                break
-
-        # Track not in library - search catalog
-        search_term = f"{track_name} {track_artist}".strip() if track_artist else track_name
-        songs = _search_catalog_songs(search_term, limit=5)
-
-        # Find best match
-        for song in songs:
-            attrs = song.get("attributes", {})
-            song_name = attrs.get("name", "")
-            song_artist = attrs.get("artistName", "")
-
-            # Check if it's a reasonable match
-            if not _loose_contains(track_name, song_name):
+    # Search library first (doesn't foreground Music)
+    search_ok, lib_results = asc.search_library(track_name, "songs")
+    if search_ok and lib_results:
+        # Filter for matching artist if provided
+        for lib_track in lib_results:
+            lib_name = lib_track.get("name", "")
+            lib_artist = lib_track.get("artist", "")
+            if not _loose_contains(track_name, lib_name):
                 continue
-            # Check artist in artistName OR song name (for "feat. X" cases)
-            if (
-                track_artist
-                and not _loose_contains(track_artist, song_artist)
-                and not _loose_contains(track_artist, song_name)
-            ):
+            if track_artist and not _loose_contains(track_artist, lib_artist):
                 continue
+            # Found match - now play it (will foreground Music)
+            success, result = asc.play_track(lib_name, lib_artist)
+            if success:
+                if reveal:
+                    asc.reveal_track(lib_name, lib_artist)
+                audit_log.log_action("play_track", {"track": lib_name, "artist": lib_artist})
+                return f"[Library] {result}"
+            break
 
-            catalog_id = song.get("id")
-            song_url = attrs.get("url", "")
+    # Track not in library - search catalog
+    search_term = f"{track_name} {track_artist}".strip() if track_artist else track_name
+    songs = _search_catalog_songs(search_term, limit=5)
 
-            # Option 1: Add to library first, then play
-            if add_to_library:
-                add_ok, add_msg = _add_songs_to_library([catalog_id])
-                if add_ok:
-                    # Wait for iCloud sync, then play
-                    time.sleep(PLAY_TRACK_INITIAL_DELAY)
-                    result = ""  # bound even if no attempt runs
-                    for attempt in range(PLAY_TRACK_MAX_ATTEMPTS):
-                        if attempt > 0:
-                            time.sleep(PLAY_TRACK_RETRY_DELAY)
-                        success, result = asc.play_track(song_name, song_artist)
-                        if success:
-                            if reveal:
-                                asc.reveal_track(song_name, song_artist)
-                            audit_log.log_action(
-                                "play_track", {"track": song_name, "artist": song_artist}
-                            )
-                            return f"[Catalog→Library] Playing: {song_name} by {song_artist}"
-                    return _play_after_add(f"{song_name} by {song_artist}", result)
-                return f"[Catalog] Failed to add: {add_msg}"
+    # Find best match
+    for song in songs:
+        attrs = song.get("attributes", {})
+        song_name = attrs.get("name", "")
+        song_artist = attrs.get("artistName", "")
 
-            # UI play — works without adding to library; tried before the
-            # browser fallback when Music.app automation is available.
-            ui_ok, ui_msg = _try_ui_catalog_play(song_name, song_artist)
-            if ui_ok:
-                return ui_msg
-            if ui_msg is not None:
-                # UI was attempted and failed — surface the reason rather than
-                # falling through to reveal/error. APPLESCRIPT_AVAILABLE=False
-                # returns (False, None), in which case we do fall through.
-                return f"[UI Catalog failed: {ui_msg}] Falling back — {song_name} by {song_artist}"
+        # Check if it's a reasonable match
+        if not _loose_contains(track_name, song_name):
+            continue
+        # Check artist in artistName OR song name (for "feat. X" cases)
+        if (
+            track_artist
+            and not _loose_contains(track_artist, song_artist)
+            and not _loose_contains(track_artist, song_name)
+        ):
+            continue
 
-            # Not in library and UI play didn't take — play via the browser.
-            return _catalog_miss_play(song_name, song_artist, song_url, reveal)
+        catalog_id = song.get("id")
+        song_url = attrs.get("url", "")
 
-        # API catalog search found nothing — try UI search as last resort.
-        # Different prefix ([UI Search] vs [UI Catalog]) signals to the user
-        # that this matched only via UI search, not via API confirmation.
-        ui_ok, ui_msg = _try_ui_catalog_play(
-            track_name, track_artist, source_label="ui_search", prefix="[UI Search]"
-        )
+        # Option 1: Add to library first, then play
+        if add_to_library:
+            add_ok, add_msg = _add_songs_to_library([catalog_id])
+            if add_ok:
+                # Wait for iCloud sync, then play
+                time.sleep(PLAY_TRACK_INITIAL_DELAY)
+                result = ""  # bound even if no attempt runs
+                for attempt in range(PLAY_TRACK_MAX_ATTEMPTS):
+                    if attempt > 0:
+                        time.sleep(PLAY_TRACK_RETRY_DELAY)
+                    success, result = asc.play_track(song_name, song_artist)
+                    if success:
+                        if reveal:
+                            asc.reveal_track(song_name, song_artist)
+                        audit_log.log_action(
+                            "play_track", {"track": song_name, "artist": song_artist}
+                        )
+                        return f"[Catalog→Library] Playing: {song_name} by {song_artist}"
+                return _play_after_add(f"{song_name} by {song_artist}", result)
+            return f"[Catalog] Failed to add: {add_msg}"
+
+        # UI play — works without adding to library; tried before the
+        # browser fallback when Music.app automation is available.
+        ui_ok, ui_msg = _try_ui_catalog_play(song_name, song_artist)
         if ui_ok:
             return ui_msg
+        if ui_msg is not None:
+            # UI was attempted and failed — surface the reason rather than
+            # falling through to reveal/error. APPLESCRIPT_AVAILABLE=False
+            # returns (False, None), in which case we do fall through.
+            return f"[UI Catalog failed: {ui_msg}] Falling back — {song_name} by {song_artist}"
 
-        return f"Track not found in library or catalog: {track_name}"
+        # Not in library and UI play didn't take — play via the browser.
+        return _catalog_miss_play(song_name, song_artist, song_url, reveal)
 
-    def _playback_control(action: str, seconds: float = 0) -> str:
-        """Control playback (macOS). Actions: play, pause, playpause, stop, next, previous, seek."""
-        action = action.lower().strip()
+    # API catalog search found nothing — try UI search as last resort.
+    # Different prefix ([UI Search] vs [UI Catalog]) signals to the user
+    # that this matched only via UI search, not via API confirmation.
+    ui_ok, ui_msg = _try_ui_catalog_play(
+        track_name, track_artist, source_label="ui_search", prefix="[UI Search]"
+    )
+    if ui_ok:
+        return ui_msg
 
-        # Handle seek separately since it takes a parameter
-        if action == "seek":
-            success, result = asc.seek(seconds)
-            if success:
-                audit_log.log_action(
-                    "playback_control", {"control": action, "seconds": seconds if seconds else None}
-                )
-                return f"Seeked to {int(seconds // 60)}:{int(seconds % 60):02d}"
-            return f"Error: {result}"
+    return f"Track not found in library or catalog: {track_name}"
 
-        action_map = {
-            "play": asc.play,
-            "pause": asc.pause,
-            "playpause": asc.playpause,
-            "stop": asc.stop,
-            "next": asc.next_track,
-            "previous": asc.previous_track,
-        }
-        if action not in action_map:
-            return (
-                f"Invalid action: {action}. Use: play, pause, playpause, stop, next, previous, seek"
-            )
 
-        success, result = action_map[action]()
+def _playback_control(action: str, seconds: float = 0) -> str:
+    """Control playback (macOS). Actions: play, pause, playpause, stop, next, previous, seek."""
+    action = action.lower().strip()
+
+    # Handle seek separately since it takes a parameter
+    if action == "seek":
+        success, result = asc.seek(seconds)
         if success:
-            audit_log.log_action("playback_control", {"control": action, "seconds": None})
-            return f"Playback: {action}"
+            audit_log.log_action(
+                "playback_control", {"control": action, "seconds": seconds if seconds else None}
+            )
+            return f"Seeked to {int(seconds // 60)}:{int(seconds % 60):02d}"
         return f"Error: {result}"
 
-    def _playback_now_playing() -> str:
-        """Get currently playing track and player state (macOS)."""
-        success, info = asc.get_current_track()
+    action_map = {
+        "play": asc.play,
+        "pause": asc.pause,
+        "playpause": asc.playpause,
+        "stop": asc.stop,
+        "next": asc.next_track,
+        "previous": asc.previous_track,
+    }
+    if action not in action_map:
+        return f"Invalid action: {action}. Use: play, pause, playpause, stop, next, previous, seek"
+
+    success, result = action_map[action]()
+    if success:
+        audit_log.log_action("playback_control", {"control": action, "seconds": None})
+        return f"Playback: {action}"
+    return f"Error: {result}"
+
+
+def _playback_now_playing() -> str:
+    """Get currently playing track and player state (macOS)."""
+    success, info = asc.get_current_track()
+    if not success:
+        return f"Error: {info}"
+
+    if info.get("state") == "stopped":
+        return "State: stopped\nNot currently playing"
+
+    parts = []
+    # Add player state first
+    state = info.get("state", "unknown")
+    parts.append(f"State: {state}")
+
+    if "name" in info:
+        parts.append(f"Track: {info['name']}")
+    if "artist" in info:
+        parts.append(f"Artist: {info['artist']}")
+    if "album" in info:
+        parts.append(f"Album: {info['album']}")
+    if "position" in info and "duration" in info:
+        try:
+            pos = float(info["position"])
+            dur = float(info["duration"])
+            pos_min, pos_sec = int(pos) // 60, int(pos) % 60
+            dur_min, dur_sec = int(dur) // 60, int(dur) % 60
+            parts.append(f"Position: {pos_min}:{pos_sec:02d} / {dur_min}:{dur_sec:02d}")
+        except (ValueError, TypeError):
+            pass
+
+    return "\n".join(parts) if parts else "Playing (no track info available)"
+
+
+def _playback_settings(
+    volume: int = -1,
+    shuffle: str = "",
+    repeat: str = "",
+) -> str:
+    """Get or set playback settings (macOS): volume, shuffle, repeat."""
+    changes = []
+
+    # Apply any changes
+    if volume >= 0:
+        v = max(0, min(100, volume))
+        success, result = asc.set_volume(v)
         if not success:
-            return f"Error: {info}"
+            return f"Error setting volume: {result}"
+        changes.append(f"Volume: {v}")
 
-        if info.get("state") == "stopped":
-            return "State: stopped\nNot currently playing"
+    if shuffle:
+        enabled = shuffle.lower() in ("on", "true", "1", "yes")
+        success, result = asc.set_shuffle(enabled)
+        if not success:
+            return f"Error setting shuffle: {result}"
+        changes.append(f"Shuffle: {'on' if enabled else 'off'}")
 
-        parts = []
-        # Add player state first
-        state = info.get("state", "unknown")
-        parts.append(f"State: {state}")
+    if repeat:
+        success, result = asc.set_repeat(repeat.lower())
+        if not success:
+            return f"Error setting repeat: {result}"
+        changes.append(f"Repeat: {repeat}")
 
-        if "name" in info:
-            parts.append(f"Track: {info['name']}")
-        if "artist" in info:
-            parts.append(f"Artist: {info['artist']}")
-        if "album" in info:
-            parts.append(f"Album: {info['album']}")
-        if "position" in info and "duration" in info:
-            try:
-                pos = float(info["position"])
-                dur = float(info["duration"])
-                pos_min, pos_sec = int(pos) // 60, int(pos) % 60
-                dur_min, dur_sec = int(dur) // 60, int(dur) % 60
-                parts.append(f"Position: {pos_min}:{pos_sec:02d} / {dur_min}:{dur_sec:02d}")
-            except (ValueError, TypeError):
-                pass
-
-        return "\n".join(parts) if parts else "Playing (no track info available)"
-
-    def _playback_settings(
-        volume: int = -1,
-        shuffle: str = "",
-        repeat: str = "",
-    ) -> str:
-        """Get or set playback settings (macOS): volume, shuffle, repeat."""
-        changes = []
-
-        # Apply any changes
+    # If changes were made, return confirmation
+    if changes:
+        audit_changes = {}
         if volume >= 0:
-            v = max(0, min(100, volume))
-            success, result = asc.set_volume(v)
-            if not success:
-                return f"Error setting volume: {result}"
-            changes.append(f"Volume: {v}")
-
+            audit_changes["volume"] = volume
         if shuffle:
-            enabled = shuffle.lower() in ("on", "true", "1", "yes")
-            success, result = asc.set_shuffle(enabled)
-            if not success:
-                return f"Error setting shuffle: {result}"
-            changes.append(f"Shuffle: {'on' if enabled else 'off'}")
-
+            audit_changes["shuffle"] = shuffle
         if repeat:
-            success, result = asc.set_repeat(repeat.lower())
-            if not success:
-                return f"Error setting repeat: {result}"
-            changes.append(f"Repeat: {repeat}")
+            audit_changes["repeat"] = repeat
+        if audit_changes:
+            audit_log.log_action("playback_settings", audit_changes)
+        return "Updated: " + ", ".join(changes)
 
-        # If changes were made, return confirmation
-        if changes:
-            audit_changes = {}
-            if volume >= 0:
-                audit_changes["volume"] = volume
-            if shuffle:
-                audit_changes["shuffle"] = shuffle
-            if repeat:
-                audit_changes["repeat"] = repeat
-            if audit_changes:
-                audit_log.log_action("playback_settings", audit_changes)
-            return "Updated: " + ", ".join(changes)
+    # Otherwise return current settings
+    success, stats = asc.get_library_stats()
+    if not success:
+        return f"Error: {stats}"
 
-        # Otherwise return current settings
-        success, stats = asc.get_library_stats()
-        if not success:
-            return f"Error: {stats}"
+    return (
+        f"Player: {stats['player_state']}\n"
+        f"Volume: {stats['volume']}\n"
+        f"Shuffle: {'on' if stats['shuffle'] else 'off'}\n"
+        f"Repeat: {stats['repeat']}"
+    )
 
-        return (
-            f"Player: {stats['player_state']}\n"
-            f"Volume: {stats['volume']}\n"
-            f"Shuffle: {'on' if stats['shuffle'] else 'off'}\n"
-            f"Repeat: {stats['repeat']}"
-        )
 
-    def _playlist_remove(
-        playlist: str = "",
-        track: str = "",
-        artist: str = "",
-        verify: bool = True,
-    ) -> str:
-        """Remove track(s) from a playlist (macOS). Removes from playlist only, not library."""
-        # Resolve playlist (name-based only for removal)
-        resolved = _resolve_playlist(playlist)
-        if resolved.error:
-            return resolved.error
+def _playlist_remove(
+    playlist: str = "",
+    track: str = "",
+    artist: str = "",
+    verify: bool = True,
+) -> str:
+    """Remove track(s) from a playlist (macOS). Removes from playlist only, not library."""
+    # Resolve playlist (name-based only for removal)
+    resolved = _resolve_playlist(playlist)
+    if resolved.error:
+        return resolved.error
 
-        # This function requires AppleScript name (macOS only)
-        if not resolved.applescript_name:
-            return "Error: Playlist not found or requires explicit playlist name (not just ID)"
+    # This function requires AppleScript name (macOS only)
+    if not resolved.applescript_name:
+        return "Error: Playlist not found or requires explicit playlist name (not just ID)"
 
-        if not track:
-            return "Error: Provide track parameter"
+    if not track:
+        return "Error: Provide track parameter"
 
-        results = []
-        errors = []
+    results = []
+    errors = []
 
-        def _record(
-            ok: bool, msg: str, name: Optional[str], track_artist: Optional[str], err_prefix: str
-        ):
-            """Record an asc.remove_track_from_playlist outcome with verify-after-remove.
+    def _record(
+        ok: bool, msg: str, name: Optional[str], track_artist: Optional[str], err_prefix: str
+    ):
+        """Record an asc.remove_track_from_playlist outcome with verify-after-remove.
 
-            On success, confirms the track is genuinely gone from the playlist —
-            same false-positive class as add (some user-created playlists
-            silently revert AppleScript edits server-side). On verify miss,
-            returns the action to errors with a clear caveat.
-            """
-            if not ok:
-                errors.append(f"{err_prefix}: {msg}")
-                return
-            if not verify or name is None:
-                results.append(msg)
-                return
-            if _verify_track_not_in_playlist(resolved.applescript_name, name, track_artist or ""):
-                results.append(msg)
-            else:
-                errors.append(
-                    f"{err_prefix}: AppleScript reported success but track still "
-                    f"appears in '{resolved.applescript_name}'. Some user-created "
-                    f"playlists silently revert AppleScript edits server-side; "
-                    f"removing manually via Music.app usually works."
-                )
-
-        # Resolve track input
-        track_resolved = _resolve_track(track, artist)
-
-        for r in track_resolved:
-            if r.error:
-                errors.append(r.error)
-                continue
-
-            if r.input_type == InputType.PERSISTENT_ID:
-                # Remove by persistent ID — verify by name/artist requires a
-                # name lookup we don't have here; verify is skipped.
-                success, result = asc.remove_track_from_playlist(
-                    resolved.applescript_name, track_id=r.value
-                )
-                _record(success, result, name=None, track_artist=None, err_prefix=f"ID {r.value}")
-
-            elif r.input_type == InputType.CATALOG_ID:
-                cache = get_track_cache()
-                info = cache.get_track_info(r.value)
-                if info and info.get("name"):
-                    success, result = asc.remove_track_from_playlist(
-                        resolved.applescript_name,
-                        track_name=info["name"],
-                        artist=info.get("artist") or None,
-                    )
-                    _record(
-                        success,
-                        result,
-                        name=info["name"],
-                        track_artist=info.get("artist"),
-                        err_prefix=info["name"],
-                    )
-                else:
-                    errors.append(f"Catalog ID {r.value}: Not in cache - use track name instead")
-
-            elif r.input_type == InputType.LIBRARY_ID:
-                cache = get_track_cache()
-                info = cache.get_track_info(r.value)
-                if info and info.get("name"):
-                    success, result = asc.remove_track_from_playlist(
-                        resolved.applescript_name,
-                        track_name=info["name"],
-                        artist=info.get("artist") or None,
-                    )
-                    _record(
-                        success,
-                        result,
-                        name=info["name"],
-                        track_artist=info.get("artist"),
-                        err_prefix=info["name"],
-                    )
-                else:
-                    errors.append(f"Library ID {r.value}: Not in cache - use track name instead")
-
-            elif r.input_type in (InputType.NAME, InputType.JSON_OBJECT):
-                success, result = asc.remove_track_from_playlist(
-                    resolved.applescript_name, track_name=r.value, artist=r.artist or None
-                )
-                _record(success, result, name=r.value, track_artist=r.artist, err_prefix=r.value)
-
-        # Log successful removes
-        if results:
-            audit_log.log_action(
-                "remove_from_playlist",
-                {"playlist": resolved.applescript_name, "tracks": results},
-                undo_info={"playlist_name": resolved.applescript_name, "tracks": results},
-            )
-
-        result = _build_track_results(
-            results, errors, success_verb="removed", error_verb="failed to remove"
-        )
-        fuzzy_info = _format_fuzzy_match(resolved.fuzzy_match)
-        return result + fuzzy_info
-
-    def _library_remove(
-        track: str = "",
-        artist: str = "",
-        verify: bool = True,
-    ) -> str:
-        """Remove track(s) from your library entirely (macOS). PERMANENT deletion."""
-        if not track:
-            return "Error: Provide track parameter"
-
-        results = []
-        errors = []
-
-        def _verify_gone(name: str, track_artist: Optional[str]) -> bool:
-            """Confirm a track is no longer searchable in the local library."""
-            for attempt in range(_VERIFY_ATTEMPTS):
-                if attempt > 0:
-                    time.sleep(_VERIFY_DELAY_S)
-                ok, lib_results = asc.search_library(name, "songs")
-                if not ok or not lib_results:
-                    return True
-                # If we got results but none match the artist filter, treat as gone
-                if track_artist:
-                    matches = [
-                        t
-                        for t in lib_results
-                        if _loose_contains(track_artist, t.get("artist") or "")
-                    ]
-                    if not matches:
-                        return True
-            return False
-
-        def _record(
-            ok: bool, msg: str, name: Optional[str], track_artist: Optional[str], err_prefix: str
-        ):
-            """Record an asc.remove_from_library outcome with verify-after-remove."""
-            if not ok:
-                errors.append(f"{err_prefix}: {msg}")
-                return
-            if not verify or name is None:
-                results.append(msg)
-                return
-            if _verify_gone(name, track_artist):
-                results.append(msg)
-            else:
-                errors.append(
-                    f"{err_prefix}: AppleScript reported success but the track "
-                    f"is still in the library after retry. Some tracks resist "
-                    f"library removal (iCloud Music Library re-syncs them); "
-                    f"removing manually via Music.app may be required."
-                )
-
-        # Resolve track input
-        resolved = _resolve_track(track, artist)
-
-        for r in resolved:
-            if r.error:
-                errors.append(r.error)
-                continue
-
-            if r.input_type == InputType.PERSISTENT_ID:
-                success, result = asc.remove_from_library(track_id=r.value)
-                # Persistent ID removal — verify by name requires a lookup we
-                # don't have here. Skip verify (best-effort).
-                _record(success, result, name=None, track_artist=None, err_prefix=f"ID {r.value}")
-
-            elif r.input_type == InputType.CATALOG_ID:
-                cache = get_track_cache()
-                info = cache.get_track_info(r.value)
-                if info and info.get("name"):
-                    success, result = asc.remove_from_library(
-                        track_name=info["name"], artist=info.get("artist") or None
-                    )
-                    _record(
-                        success,
-                        result,
-                        name=info["name"],
-                        track_artist=info.get("artist"),
-                        err_prefix=info["name"],
-                    )
-                else:
-                    errors.append(f"Catalog ID {r.value}: Not in cache - use track name instead")
-
-            elif r.input_type == InputType.LIBRARY_ID:
-                cache = get_track_cache()
-                info = cache.get_track_info(r.value)
-                if info and info.get("name"):
-                    success, result = asc.remove_from_library(
-                        track_name=info["name"], artist=info.get("artist") or None
-                    )
-                    _record(
-                        success,
-                        result,
-                        name=info["name"],
-                        track_artist=info.get("artist"),
-                        err_prefix=info["name"],
-                    )
-                else:
-                    errors.append(f"Library ID {r.value}: Not in cache - use track name instead")
-
-            elif r.input_type in (InputType.NAME, InputType.JSON_OBJECT):
-                success, result = asc.remove_from_library(
-                    track_name=r.value, artist=r.artist or None
-                )
-                _record(success, result, name=r.value, track_artist=r.artist, err_prefix=r.value)
-
-        # Log successful removes - this is destructive, important for audit
-        if results:
-            audit_log.log_action(
-                "remove_from_library",
-                {"tracks": results},
-                undo_info={
-                    "tracks": results,
-                    "note": "Re-add via search_catalog and add_to_library",
-                },
-            )
-
-        return _build_track_results(
-            results, errors, success_verb="removed from library", error_verb="failed to remove"
-        )
-
-    def _playlist_delete(playlist_name: str) -> str:
-        """Delete a playlist entirely (macOS). PERMANENT, cannot be undone."""
-        # Get track count before deletion for audit log
-        track_count = 0
-        track_names = []
-        tracks_success, tracks = asc.get_playlist_tracks(playlist_name)
-        if tracks_success and isinstance(tracks, list):
-            track_count = len(tracks)
-            track_names = [f"{t.get('name', '')} - {t.get('artist', '')}" for t in tracks[:20]]
-
-        success, result = asc.delete_playlist(playlist_name)
-        if success:
-            # Log deletion with undo info
-            audit_log.log_action(
-                "delete_playlist",
-                {"name": playlist_name, "track_count": track_count},
-                undo_info={
-                    "playlist_name": playlist_name,
-                    "tracks": track_names,
-                    "note": "Recreate playlist and re-add tracks",
-                },
-            )
-            return result
-        return f"Error: {result}"
-
-    def _playlist_rename(playlist_name: str, new_name: str) -> str:
-        """Rename a playlist (macOS)."""
-        if not playlist_name:
-            return "Error: playlist name required"
-        if not new_name:
-            return "Error: new_name required"
-
-        success, result = asc.rename_playlist(playlist_name, new_name)
-        if success:
-            # Log rename for audit trail
-            audit_log.log_action(
-                "rename_playlist",
-                {"old_name": playlist_name, "new_name": new_name},
-                undo_info={"note": f"Rename back to '{playlist_name}'"},
-            )
-            return result
-        return f"Error: {result}"
-
-    def _playback_reveal(track_name: str, artist: str = "") -> str:
-        """Reveal a track in the Music app window (macOS)."""
-        success, result = asc.reveal_track(track_name, artist if artist else None)
-        if success:
-            return result
-        return f"Error: {result}"
-
-    def _playback_airplay(device_name: str = "") -> str:
-        """List or switch AirPlay devices (macOS). Omit device_name to list."""
-        if device_name:
-            success, result = asc.set_airplay_device(device_name)
-            if success:
-                audit_log.log_action("airplay_switch", {"device": device_name})
-                return result
-            return f"Error: {result}"
+        On success, confirms the track is genuinely gone from the playlist —
+        same false-positive class as add (some user-created playlists
+        silently revert AppleScript edits server-side). On verify miss,
+        returns the action to errors with a clear caveat.
+        """
+        if not ok:
+            errors.append(f"{err_prefix}: {msg}")
+            return
+        if not verify or name is None:
+            results.append(msg)
+            return
+        if _verify_track_not_in_playlist(resolved.applescript_name, name, track_artist or ""):
+            results.append(msg)
         else:
-            success, devices = asc.get_airplay_devices()
-            if not success:
-                return f"Error: {devices}"
-            if not devices:
-                return "No AirPlay devices found"
-            return f"AirPlay devices ({len(devices)}):\n" + "\n".join(f"  - {d}" for d in devices)
+            errors.append(
+                f"{err_prefix}: AppleScript reported success but track still "
+                f"appears in '{resolved.applescript_name}'. Some user-created "
+                f"playlists silently revert AppleScript edits server-side; "
+                f"removing manually via Music.app usually works."
+            )
+
+    # Resolve track input
+    track_resolved = _resolve_track(track, artist)
+
+    for r in track_resolved:
+        if r.error:
+            errors.append(r.error)
+            continue
+
+        if r.input_type == InputType.PERSISTENT_ID:
+            # Remove by persistent ID — verify by name/artist requires a
+            # name lookup we don't have here; verify is skipped.
+            success, result = asc.remove_track_from_playlist(
+                resolved.applescript_name, track_id=r.value
+            )
+            _record(success, result, name=None, track_artist=None, err_prefix=f"ID {r.value}")
+
+        elif r.input_type == InputType.CATALOG_ID:
+            cache = get_track_cache()
+            info = cache.get_track_info(r.value)
+            if info and info.get("name"):
+                success, result = asc.remove_track_from_playlist(
+                    resolved.applescript_name,
+                    track_name=info["name"],
+                    artist=info.get("artist") or None,
+                )
+                _record(
+                    success,
+                    result,
+                    name=info["name"],
+                    track_artist=info.get("artist"),
+                    err_prefix=info["name"],
+                )
+            else:
+                errors.append(f"Catalog ID {r.value}: Not in cache - use track name instead")
+
+        elif r.input_type == InputType.LIBRARY_ID:
+            cache = get_track_cache()
+            info = cache.get_track_info(r.value)
+            if info and info.get("name"):
+                success, result = asc.remove_track_from_playlist(
+                    resolved.applescript_name,
+                    track_name=info["name"],
+                    artist=info.get("artist") or None,
+                )
+                _record(
+                    success,
+                    result,
+                    name=info["name"],
+                    track_artist=info.get("artist"),
+                    err_prefix=info["name"],
+                )
+            else:
+                errors.append(f"Library ID {r.value}: Not in cache - use track name instead")
+
+        elif r.input_type in (InputType.NAME, InputType.JSON_OBJECT):
+            success, result = asc.remove_track_from_playlist(
+                resolved.applescript_name, track_name=r.value, artist=r.artist or None
+            )
+            _record(success, result, name=r.value, track_artist=r.artist, err_prefix=r.value)
+
+    # Log successful removes
+    if results:
+        audit_log.log_action(
+            "remove_from_playlist",
+            {"playlist": resolved.applescript_name, "tracks": results},
+            undo_info={"playlist_name": resolved.applescript_name, "tracks": results},
+        )
+
+    result = _build_track_results(
+        results, errors, success_verb="removed", error_verb="failed to remove"
+    )
+    fuzzy_info = _format_fuzzy_match(resolved.fuzzy_match)
+    return result + fuzzy_info
+
+
+def _library_remove(
+    track: str = "",
+    artist: str = "",
+    verify: bool = True,
+) -> str:
+    """Remove track(s) from your library entirely (macOS). PERMANENT deletion."""
+    if not track:
+        return "Error: Provide track parameter"
+
+    results = []
+    errors = []
+
+    def _verify_gone(name: str, track_artist: Optional[str]) -> bool:
+        """Confirm a track is no longer searchable in the local library."""
+        for attempt in range(_VERIFY_ATTEMPTS):
+            if attempt > 0:
+                time.sleep(_VERIFY_DELAY_S)
+            ok, lib_results = asc.search_library(name, "songs")
+            if not ok or not lib_results:
+                return True
+            # If we got results but none match the artist filter, treat as gone
+            if track_artist:
+                matches = [
+                    t for t in lib_results if _loose_contains(track_artist, t.get("artist") or "")
+                ]
+                if not matches:
+                    return True
+        return False
+
+    def _record(
+        ok: bool, msg: str, name: Optional[str], track_artist: Optional[str], err_prefix: str
+    ):
+        """Record an asc.remove_from_library outcome with verify-after-remove."""
+        if not ok:
+            errors.append(f"{err_prefix}: {msg}")
+            return
+        if not verify or name is None:
+            results.append(msg)
+            return
+        if _verify_gone(name, track_artist):
+            results.append(msg)
+        else:
+            errors.append(
+                f"{err_prefix}: AppleScript reported success but the track "
+                f"is still in the library after retry. Some tracks resist "
+                f"library removal (iCloud Music Library re-syncs them); "
+                f"removing manually via Music.app may be required."
+            )
+
+    # Resolve track input
+    resolved = _resolve_track(track, artist)
+
+    for r in resolved:
+        if r.error:
+            errors.append(r.error)
+            continue
+
+        if r.input_type == InputType.PERSISTENT_ID:
+            success, result = asc.remove_from_library(track_id=r.value)
+            # Persistent ID removal — verify by name requires a lookup we
+            # don't have here. Skip verify (best-effort).
+            _record(success, result, name=None, track_artist=None, err_prefix=f"ID {r.value}")
+
+        elif r.input_type == InputType.CATALOG_ID:
+            cache = get_track_cache()
+            info = cache.get_track_info(r.value)
+            if info and info.get("name"):
+                success, result = asc.remove_from_library(
+                    track_name=info["name"], artist=info.get("artist") or None
+                )
+                _record(
+                    success,
+                    result,
+                    name=info["name"],
+                    track_artist=info.get("artist"),
+                    err_prefix=info["name"],
+                )
+            else:
+                errors.append(f"Catalog ID {r.value}: Not in cache - use track name instead")
+
+        elif r.input_type == InputType.LIBRARY_ID:
+            cache = get_track_cache()
+            info = cache.get_track_info(r.value)
+            if info and info.get("name"):
+                success, result = asc.remove_from_library(
+                    track_name=info["name"], artist=info.get("artist") or None
+                )
+                _record(
+                    success,
+                    result,
+                    name=info["name"],
+                    track_artist=info.get("artist"),
+                    err_prefix=info["name"],
+                )
+            else:
+                errors.append(f"Library ID {r.value}: Not in cache - use track name instead")
+
+        elif r.input_type in (InputType.NAME, InputType.JSON_OBJECT):
+            success, result = asc.remove_from_library(track_name=r.value, artist=r.artist or None)
+            _record(success, result, name=r.value, track_artist=r.artist, err_prefix=r.value)
+
+    # Log successful removes - this is destructive, important for audit
+    if results:
+        audit_log.log_action(
+            "remove_from_library",
+            {"tracks": results},
+            undo_info={
+                "tracks": results,
+                "note": "Re-add via search_catalog and add_to_library",
+            },
+        )
+
+    return _build_track_results(
+        results, errors, success_verb="removed from library", error_verb="failed to remove"
+    )
+
+
+def _playlist_delete(playlist_name: str) -> str:
+    """Delete a playlist entirely (macOS). PERMANENT, cannot be undone."""
+    # Get track count before deletion for audit log
+    track_count = 0
+    track_names = []
+    tracks_success, tracks = asc.get_playlist_tracks(playlist_name)
+    if tracks_success and isinstance(tracks, list):
+        track_count = len(tracks)
+        track_names = [f"{t.get('name', '')} - {t.get('artist', '')}" for t in tracks[:20]]
+
+    success, result = asc.delete_playlist(playlist_name)
+    if success:
+        # Log deletion with undo info
+        audit_log.log_action(
+            "delete_playlist",
+            {"name": playlist_name, "track_count": track_count},
+            undo_info={
+                "playlist_name": playlist_name,
+                "tracks": track_names,
+                "note": "Recreate playlist and re-add tracks",
+            },
+        )
+        return result
+    return f"Error: {result}"
+
+
+def _playlist_rename(playlist_name: str, new_name: str) -> str:
+    """Rename a playlist (macOS)."""
+    if not playlist_name:
+        return "Error: playlist name required"
+    if not new_name:
+        return "Error: new_name required"
+
+    success, result = asc.rename_playlist(playlist_name, new_name)
+    if success:
+        # Log rename for audit trail
+        audit_log.log_action(
+            "rename_playlist",
+            {"old_name": playlist_name, "new_name": new_name},
+            undo_info={"note": f"Rename back to '{playlist_name}'"},
+        )
+        return result
+    return f"Error: {result}"
+
+
+def _playback_reveal(track_name: str, artist: str = "") -> str:
+    """Reveal a track in the Music app window (macOS)."""
+    success, result = asc.reveal_track(track_name, artist if artist else None)
+    if success:
+        return result
+    return f"Error: {result}"
+
+
+def _playback_airplay(device_name: str = "") -> str:
+    """List or switch AirPlay devices (macOS). Omit device_name to list."""
+    if device_name:
+        success, result = asc.set_airplay_device(device_name)
+        if success:
+            audit_log.log_action("airplay_switch", {"device": device_name})
+            return result
+        return f"Error: {result}"
+    else:
+        success, devices = asc.get_airplay_devices()
+        if not success:
+            return f"Error: {devices}"
+        if not devices:
+            return "No AirPlay devices found"
+        return f"AirPlay devices ({len(devices)}):\n" + "\n".join(f"  - {d}" for d in devices)
 
 
 def main():
