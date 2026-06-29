@@ -2129,17 +2129,17 @@ class TestBrowserPlay:
     the module's attributes directly (applemusic_mcp.browser.play_url etc.)."""
 
     def test_no_input(self):
-        out = server._browser_play()
+        out = server._browser_play(_browser_module)
         assert "provide" in out.lower()
 
     def test_url_success(self):
         with patch.object(_browser_module, "play_url", return_value=(True, "Playing")):
-            out = server._browser_play(url="https://music.apple.com/song/123")
+            out = server._browser_play(_browser_module, url="https://music.apple.com/song/123")
         assert "Playing" in out
 
     def test_url_failure(self):
         with patch.object(_browser_module, "play_url", return_value=(False, "Session not ready")):
-            out = server._browser_play(url="https://music.apple.com/song/123")
+            out = server._browser_play(_browser_module, url="https://music.apple.com/song/123")
         assert "Error" in out
         assert "Session not ready" in out
 
@@ -2148,25 +2148,25 @@ class TestBrowserPlay:
         with patch.object(
             _browser_module, "play_descriptor", return_value=(True, "Playing playlist")
         ):
-            out = server._browser_play(playlist="Rock Hits")
+            out = server._browser_play(_browser_module, playlist="Rock Hits")
         assert "Playing" in out
 
     def test_playlist_not_found(self, monkeypatch):
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda n: (None, None))
         monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: None)
-        out = server._browser_play(playlist="Nonexistent Playlist")
+        out = server._browser_play(_browser_module, playlist="Nonexistent Playlist")
         assert "Error" in out
 
     def test_track_not_found(self, monkeypatch):
         monkeypatch.setattr(server, "_resolve_catalog_track_itunes", lambda n, a="": None)
-        out = server._browser_play(track="Nonexistent Song")
+        out = server._browser_play(_browser_module, track="Nonexistent Song")
         assert "Error" in out
 
     def test_album_not_found(self, monkeypatch):
         monkeypatch.setattr(
             server, "_find_matching_catalog_album", lambda n, a="": (None, "Not found", None)
         )
-        out = server._browser_play(album="Nonexistent Album")
+        out = server._browser_play(_browser_module, album="Nonexistent Album")
         assert "Error" in out
 
     def test_album_success(self, monkeypatch):
@@ -2175,7 +2175,7 @@ class TestBrowserPlay:
             server, "_find_matching_catalog_album", lambda n, a="": (mock_album, None, None)
         )
         with patch.object(_browser_module, "play_descriptor", return_value=(True, "Playing album")):
-            out = server._browser_play(album="Abbey Road")
+            out = server._browser_play(_browser_module, album="Abbey Road")
         assert "Playing" in out
 
     def test_track_success(self, monkeypatch):
@@ -2186,7 +2186,7 @@ class TestBrowserPlay:
         }
         monkeypatch.setattr(server, "_resolve_catalog_track_itunes", lambda n, a="": resolved)
         with patch.object(_browser_module, "play_url", return_value=(True, "Playing track")):
-            out = server._browser_play(track="Hey Jude", artist="The Beatles")
+            out = server._browser_play(_browser_module, track="Hey Jude", artist="The Beatles")
         assert "Playing" in out
 
 

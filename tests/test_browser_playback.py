@@ -44,7 +44,9 @@ def test_browser_play_with_url(monkeypatch):
     monkeypatch.setattr(
         browser, "play_url", lambda u, s=False: calls.update(url=u) or (True, "Playing: X")
     )
-    out = server._browser_play(track="", artist="", url="https://music.apple.com/us/song/x/1")
+    out = server._browser_play(
+        browser, track="", artist="", url="https://music.apple.com/us/song/x/1"
+    )
     assert calls["url"].endswith("/1")
     assert "Playing" in out
 
@@ -61,7 +63,7 @@ def test_browser_play_resolves_track(monkeypatch):
     monkeypatch.setattr(
         browser, "play_url", lambda u, s=False: seen.update(url=u) or (True, "Playing: T")
     )
-    out = server._browser_play(track="Strobe", artist="deadmau5")
+    out = server._browser_play(browser, track="Strobe", artist="deadmau5")
     assert "i=5" in seen["url"]
     assert "Playing" in out
 
@@ -75,7 +77,7 @@ def test_browser_play_playlist_by_name(monkeypatch):
     monkeypatch.setattr(
         browser, "play_descriptor", lambda d, s=False: seen.update(d=d, s=s) or (True, "Playing")
     )
-    out = server._browser_play(playlist="Rock Classics")
+    out = server._browser_play(browser, playlist="Rock Classics")
     assert seen["d"] == {"playlist": "p.rock"}
     assert "Playing" in out
 
@@ -92,14 +94,14 @@ def test_browser_play_album_by_name(monkeypatch):
         "play_descriptor",
         lambda d, s=False: seen.update(d=d, s=s) or (True, "Playing"),
     )
-    out = server._browser_play(album="Abbey Road", shuffle=True)
+    out = server._browser_play(browser, album="Abbey Road", shuffle=True)
     assert seen["d"] == {"album": "alb1"} and seen["s"] is True
     assert "Playing" in out
 
 
 def test_browser_play_track_not_found(monkeypatch):
     monkeypatch.setattr(server, "_resolve_catalog_track_itunes", lambda t, a="": None)
-    out = server._browser_play(track="zzznope", artist="")
+    out = server._browser_play(None, track="zzznope", artist="")
     assert "not found" in out.lower()
 
 
@@ -153,9 +155,9 @@ def test_playback_native_pin_on_non_mac_gives_clear_message(monkeypatch):
     """Non-mac with native playback pinned (no browser) returns an actionable
     message instead of a NameError on the missing AppleScript helper."""
     monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
-    monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
+    monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": "native"})
     out = server.playback(action="play", track="X")
-    assert "web" in out.lower() and "login" in out.lower()
+    assert out.startswith("Error") and "chrome" in out.lower()
 
 
 def test_playback_reveal_in_browser(monkeypatch):

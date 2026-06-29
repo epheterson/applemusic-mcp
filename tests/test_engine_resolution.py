@@ -38,8 +38,9 @@ def mode(monkeypatch):
         ("chrome", True, "chrome"),
         ("chrome", False, "chrome"),
         ("api", True, "none"),
-        ("web", True, "native"),  # legacy web → auto pick (native on mac)
+        ("web", True, "safari"),  # "web" forces the web engine → Safari on macOS
         ("web", False, "chrome"),
+        ("browser", True, "chrome"),  # legacy alias for the Chrome web player
     ],
 )
 def test_playback_engine(mode, mode_value, mac, expected):

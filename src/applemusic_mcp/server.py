@@ -1016,8 +1016,8 @@ def _playback_engine(engine_override: Optional[str] = None, for_queue: bool = Fa
     sel = (engine_override or "").strip().lower()
     if not sel:
         sel = (get_user_preferences().get("mode") or "auto").lower()
-    if sel == "web":  # legacy alias → auto's web pick
-        sel = "auto"
+    if sel == "browser":  # legacy alias for the Chrome web player
+        sel = "chrome"
     if sel == "api":
         return "none"  # api mode has no player
     if sel == "native":
@@ -1026,6 +1026,8 @@ def _playback_engine(engine_override: Optional[str] = None, for_queue: bool = Fa
         return "safari" if APPLESCRIPT_AVAILABLE else "none"  # macOS-only
     if sel == "chrome":
         return "chrome"
+    if sel == "web":  # "the web engine" — Safari on macOS, Chrome off-mac
+        return "safari" if APPLESCRIPT_AVAILABLE else "chrome"
     # auto: Up Next is web-player only (Safari on macOS, else Chrome); plain
     # playback prefers the real Music.app on macOS.
     if for_queue:
@@ -1422,6 +1424,7 @@ def _library_remove_api(track: str, artist: str = "") -> str:
 
 
 def _browser_play(
+    wp,
     track: str = "",
     artist: str = "",
     url: str = "",
@@ -1429,12 +1432,11 @@ def _browser_play(
     album: str = "",
     shuffle: bool = False,
 ) -> str:
-    """Play a track, playlist, album, or Apple Music URL in the browser web player
-    (cross-platform parity with native macOS playback)."""
-    from . import browser
-
+    """Play a track, playlist, album, or Apple Music URL in a web player. ``wp`` is
+    the resolved engine module (safari_player or browser) — cross-platform parity
+    with native macOS playback."""
     if url:
-        ok, msg = browser.play_url(url, shuffle)
+        ok, msg = wp.play_url(url, shuffle)
         return msg if ok else f"Error: {msg}"
     if playlist:
         pid, _ = _find_api_playlist_by_name(playlist)
@@ -1442,19 +1444,19 @@ def _browser_play(
             pid = amp_api.resolve_playlist_id(playlist, api_created_only=False)
         if not pid:
             return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
-        ok, msg = browser.play_descriptor({"playlist": pid}, shuffle)
+        ok, msg = wp.play_descriptor({"playlist": pid}, shuffle)
         return msg if ok else f"Error: {msg}"
     if album:
         alb, err, _ = _find_matching_catalog_album(album, artist)
         if not alb:
             return f"Error: {err or f'album {album!r} not found in catalog'}"
-        ok, msg = browser.play_descriptor({"album": alb["id"]}, shuffle)
+        ok, msg = wp.play_descriptor({"album": alb["id"]}, shuffle)
         return msg if ok else f"Error: {msg}"
     if track:
         resolved = _resolve_catalog_track_itunes(track, artist)
         if not resolved:
             return f"Error: '{track}' not found in catalog"
-        ok, msg = browser.play_url(resolved["url"], shuffle)
+        ok, msg = wp.play_url(resolved["url"], shuffle)
         return msg if ok else f"Error: {msg}"
     return "Error: provide track, playlist, album, or url"
 
@@ -7533,62 +7535,76 @@ def playback(
     Actions: play, control, now_playing, settings, reveal, airplay."""
     action = action.lower().strip().replace("-", "_")
 
-    # Per-call engine override. Empty = follow the mode preference.
-    eng = engine.lower().strip()
-    if eng in ("web", "api", "browser"):
-        use_browser = True
-    elif eng == "native":
-        use_browser = False
-    elif eng:
-        return f"Error: engine must be 'web' or 'native' (got {engine!r})"
-    else:
-        use_browser = _use_browser_playback()
+    # Resolve the engine: native | safari | chrome | none. `play` uses the play
+    # resolver; control/now_playing/settings/reveal follow the ACTIVE engine (so a
+    # Safari-queued session is the one you control) unless this call overrides it.
+    override = engine.strip()
+    if override and override.lower() not in (
+        "native",
+        "safari",
+        "chrome",
+        "web",
+        "browser",
+        "auto",
+        "api",
+    ):
+        return f"Error: engine must be one of native, safari, chrome, web, auto (got {engine!r})"
+    eng = _playback_engine(override) if (action == "play" or override) else _get_active_playback()
 
     if action == "play":
-        if use_browser:
-            return _browser_play(track, artist, url, playlist, album, shuffle)
-        if not APPLESCRIPT_AVAILABLE:
-            return _PLAYBACK_NEEDS_BROWSER
-        return _playback_play(track, playlist, album, artist, shuffle, reveal, add_to_library, url)
+        if eng == "none":
+            return "Error: " + _no_player_msg(override)
+        if eng == "native":
+            if not APPLESCRIPT_AVAILABLE:
+                return _PLAYBACK_NEEDS_BROWSER
+            res = _playback_play(
+                track, playlist, album, artist, shuffle, reveal, add_to_library, url
+            )
+            _set_active_playback("native")
+            return res
+        res = _browser_play(_web_player(eng), track, artist, url, playlist, album, shuffle)
+        if not res.startswith("Error"):
+            _set_active_playback(eng)
+        return res
     elif action == "control":
         if not control:
             return "Error: control param required. Use: play, pause, stop, next, previous, seek"
-        if use_browser:
-            from . import browser
-
-            ok, msg = browser.playback_control(control, seconds)
-            if not ok:
-                return f"Error: {msg}"
-        else:
+        if eng == "none":
+            return "Error: " + _no_player_msg(override)
+        if eng == "native":
             if not APPLESCRIPT_AVAILABLE:
                 return _PLAYBACK_NEEDS_BROWSER
             msg = _playback_control(control, seconds)
             if msg.startswith("Error"):
                 return msg
+        else:
+            ok, msg = _web_player(eng).playback_control(control, seconds)
+            if not ok:
+                return f"Error: {msg}"
         # Return the resulting now-playing so the caller doesn't need a follow-up
         # now_playing call after a play/pause/next/seek.
         return f"{msg}\n\n{playback(action='now_playing', engine=engine)}"
     elif action == "now_playing":
+        # Report the active engine, then surface a split: if the OTHER engine is
+        # already alive and playing a DIFFERENT track, say so. The other engine is
+        # only peeked when already running — never launched just to check.
         from . import browser
 
-        # Report the selected engine, then surface a split: if the OTHER engine is
-        # already alive and playing a DIFFERENT track, say so. The web Up Next and
-        # the native app keep independent playback state, so this is the only way a
-        # mismatch (queue in web, transport in native) becomes visible. The other
-        # engine is only peeked when already running — never launched just to check.
-        if use_browser:
-            np = browser.now_playing()
+        if eng in ("safari", "chrome"):
+            wp = _web_player(eng)
+            label = "Safari" if eng == "safari" else "web player"
+            np = wp.now_playing()
             if np:
                 st = f" [{np.get('state')}]" if np.get("state") else ""
                 primary = (
-                    f"Now playing — web player{st}: "
+                    f"Now playing — {label}{st}: "
                     f"{np.get('name')} — {np.get('artist')} ({np.get('album')})"
                 )
             else:
-                primary = "Nothing playing (web player)"
+                primary = f"Nothing playing ({label})"
             primary_track = (np or {}).get("name", "")
             other = asc.now_playing_if_running() if APPLESCRIPT_AVAILABLE else None
-            primary_label, other_label, other_value = "web player", "native (Music.app)", "native"
+            primary_label, other_label, other_value = label, "native (Music.app)", "native"
         else:
             if not APPLESCRIPT_AVAILABLE:
                 return _PLAYBACK_NEEDS_BROWSER
@@ -7600,10 +7616,7 @@ def playback(
         other_track = (other or {}).get("name", "")
         other_state = (other or {}).get("state") or ""
         # Only nag about a split when the other engine might actually be making sound.
-        # A track that's loaded-but-paused isn't competing for audio, so suppress it
-        # (this is why pausing native used to keep flagging — it stayed "loaded").
-        # We only know native's state reliably; web reports none, so treat unknown as
-        # "could be playing" and still warn.
+        # A track that's loaded-but-paused isn't competing for audio, so suppress it.
         if (
             other_track
             and other_track != primary_track
@@ -7616,14 +7629,12 @@ def playback(
             )
         return primary
     elif action == "settings":
-        if use_browser:
-            from . import browser
-
+        if eng in ("safari", "chrome"):
             shuffle_b = (
                 {"on": True, "off": False}.get(shuffle_mode.lower()) if shuffle_mode else None
             )
             repeat_v = repeat.lower() if repeat else None
-            ok, msg = browser.browser_settings(volume, shuffle_b, repeat_v)
+            ok, msg = _web_player(eng).browser_settings(volume, shuffle_b, repeat_v)
             return msg if ok else f"Error: {msg}"
         if not APPLESCRIPT_AVAILABLE:
             return _PLAYBACK_NEEDS_BROWSER
@@ -7632,16 +7643,14 @@ def playback(
         name = track_name or track
         if not name and not url:
             return "Error: track_name, track, or url required for reveal action"
-        if use_browser:
-            from . import browser
-
+        if eng in ("safari", "chrome"):
             target = url
             if not target:
                 resolved = _resolve_catalog_track_itunes(name, artist)
                 if not resolved:
                     return f"Error: '{name}' not found in catalog"
                 target = resolved["url"]
-            ok, msg = browser.reveal_url(target)
+            ok, msg = _web_player(eng).reveal_url(target)
             return msg if ok else f"Error: {msg}"
         if err := _macos_only("reveal"):
             return err
@@ -7787,7 +7796,7 @@ def _catalog_miss_play(name: str, artist: str, url: str, reveal: bool) -> str:
     # web player is a working fallback; pinned-native opted out of it.
     pinned_native = _mode_pinned_native()
     if not pinned_native and has_user_token():
-        bmsg = _browser_play(url=url)
+        bmsg = _browser_play(_web_player(_playback_engine("web")), url=url)
         if not bmsg.startswith("Error"):
             return f"[Catalog→Browser] {bmsg}"
 
@@ -7844,7 +7853,7 @@ def _playback_play(
         # playback is pinned to native (same policy as _catalog_miss_play).
         pinned_native = _mode_pinned_native()
         if not pinned_native and has_user_token():
-            bmsg = _browser_play(url=url, shuffle=shuffle)
+            bmsg = _browser_play(_web_player(_playback_engine("web")), url=url, shuffle=shuffle)
             if not bmsg.startswith("Error"):
                 audit_log.log_action("play_url", {"url": url, "via": "browser"})
                 return f"[Browser] {bmsg}"

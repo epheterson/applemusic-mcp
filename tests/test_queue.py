@@ -8,7 +8,23 @@ verified live against MusicKit v3 before wiring).
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from applemusic_mcp import browser, server
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_queue(monkeypatch):
+    """After a mutation, queue() reads the queue back via _queue_after → the engine's
+    queue_list. Stub it to an empty default so tests never launch a real browser
+    (individual tests override it where they assert on the read-back)."""
+    monkeypatch.setattr(
+        browser,
+        "queue_list",
+        lambda: (True, {"position": -1, "autoplay": False, "items": []}),
+        raising=False,
+    )
+    yield
 
 
 def test_format_queue_marks_current():
@@ -61,7 +77,7 @@ def test_queue_list_routes_to_browser(monkeypatch):
             {"position": 0, "autoplay": False, "items": [{"index": 0, "name": "N", "artist": "A"}]},
         ),
     )
-    out = server.queue(action="list")
+    out = server.queue(action="list", engine="chrome")
     assert "N — A" in out
 
 
@@ -69,7 +85,7 @@ def test_queue_play_next_resolves_and_calls(monkeypatch):
     monkeypatch.setattr(server.amp_api, "search_catalog_songs", lambda q, n=1: [{"id": "555"}])
     spy = MagicMock(return_value=(True, "Queued to Up Next (2 in queue)"))
     monkeypatch.setattr(browser, "queue_play_next", spy)
-    out = server.queue(action="play_next", track="Strobe", artist="deadmau5")
+    out = server.queue(action="play_next", track="Strobe", artist="deadmau5", engine="chrome")
     spy.assert_called_once_with("555")
     assert "Queued" in out
 
@@ -78,7 +94,7 @@ def test_queue_play_last_uses_play_later(monkeypatch):
     monkeypatch.setattr(server.amp_api, "search_catalog_songs", lambda q, n=1: [{"id": "777"}])
     spy = MagicMock(return_value=(True, "Queued to end of Up Next (3 in queue)"))
     monkeypatch.setattr(browser, "queue_play_later", spy)
-    out = server.queue(action="play_last", track="Ghosts")
+    out = server.queue(action="play_last", track="Ghosts", engine="chrome")
     spy.assert_called_once_with("777")
     assert "end of Up Next" in out
 
@@ -96,14 +112,14 @@ def test_queue_remove_requires_index():
 def test_queue_remove_routes(monkeypatch):
     spy = MagicMock(return_value=(True, "Removed item 2 (3 left in queue)"))
     monkeypatch.setattr(browser, "queue_remove", spy)
-    out = server.queue(action="remove", index=2)
+    out = server.queue(action="remove", index=2, engine="chrome")
     spy.assert_called_once_with(2)
     assert "Removed" in out
 
 
 def test_queue_clear_routes(monkeypatch):
     monkeypatch.setattr(browser, "queue_clear", lambda: (True, "Cleared the queue"))
-    assert "Cleared" in server.queue(action="clear")
+    assert "Cleared" in server.queue(action="clear", engine="chrome")
 
 
 def test_queue_jump_requires_index():
@@ -114,7 +130,7 @@ def test_queue_jump_requires_index():
 def test_queue_jump_routes(monkeypatch):
     spy = MagicMock(return_value=(True, "Jumped to item 3"))
     monkeypatch.setattr(browser, "queue_jump", spy)
-    out = server.queue(action="jump", index=3)
+    out = server.queue(action="jump", index=3, engine="chrome")
     spy.assert_called_once_with(3)
     assert "Jumped" in out
 
@@ -122,7 +138,7 @@ def test_queue_jump_routes(monkeypatch):
 def test_queue_autoplay_routes(monkeypatch):
     spy = MagicMock(return_value=(True, "Autoplay on"))
     monkeypatch.setattr(browser, "queue_autoplay", spy)
-    out = server.queue(action="autoplay", enabled=True)
+    out = server.queue(action="autoplay", enabled=True, engine="chrome")
     spy.assert_called_once_with(True)
     assert "Autoplay on" in out
 
@@ -138,7 +154,7 @@ def test_queue_set_resolves_all_and_replaces(monkeypatch):
     )
     spy = MagicMock(return_value=(True, "Queue set (3 track(s))"))
     monkeypatch.setattr(browser, "queue_set", spy)
-    out = server.queue(action="set", track="a, b, c")
+    out = server.queue(action="set", track="a, b, c", engine="chrome")
     spy.assert_called_once_with(["1", "2", "3"])
     assert "Queue set" in out
 
@@ -149,7 +165,7 @@ def test_queue_set_reports_misses(monkeypatch):
     monkeypatch.setattr(
         browser, "queue_set", lambda ids: (True, f"Queue set ({len(ids)} track(s))")
     )
-    out = server.queue(action="set", track="a\nzzz")
+    out = server.queue(action="set", track="a\nzzz", engine="chrome")
     assert "skipped" in out.lower() and "zzz" in out
 
 
@@ -163,21 +179,23 @@ def test_queue_set_none_resolve(monkeypatch):
     assert "Error" in out and "none of those" in out.lower()
 
 
-def test_queue_warns_when_engine_native(monkeypatch):
-    """Building the web Up Next while the active engine is native must warn."""
-    monkeypatch.setattr(server, "_engine", lambda: "native")
+def test_queue_native_mode_has_no_up_next(monkeypatch):
+    """Native (Music.app) mode has no exposed Up Next — queue returns an actionable
+    error pointing at safari/chrome, instead of silently building an unreachable queue."""
+    monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": "native"})
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
     monkeypatch.setattr(server, "_queue_resolve_catalog_id", lambda t, a="": "555")
-    monkeypatch.setattr(browser, "queue_play_last", lambda c: (True, "Queued"), raising=False)
-    monkeypatch.setattr(browser, "queue_play_later", lambda c: (True, "Queued"))
     out = server.queue(action="play_last", track="X")
-    assert "won't reach it" in out and "web" in out.lower()
+    assert out.startswith("Error") and ("safari" in out.lower() or "chrome" in out.lower())
 
 
 def test_queue_no_warn_when_engine_web(monkeypatch):
-    monkeypatch.setattr(server, "_engine", lambda: "api")
     monkeypatch.setattr(server, "_queue_resolve_catalog_id", lambda t, a="": "555")
     monkeypatch.setattr(browser, "queue_play_later", lambda c: (True, "Queued"))
-    out = server.queue(action="play_last", track="X")
+    monkeypatch.setattr(
+        browser, "queue_list", lambda: (True, {"position": -1, "autoplay": False, "items": []})
+    )
+    out = server.queue(action="play_last", track="X", engine="chrome")
     assert "won't reach it" not in out
 
 
@@ -208,5 +226,5 @@ def test_queue_surfaces_browser_error(monkeypatch):
         "queue_list",
         lambda: (False, "Not signed in to Apple Music — run `applemusic-mcp signin`."),
     )
-    out = server.queue(action="list")
+    out = server.queue(action="list", engine="chrome")
     assert out.startswith("Error:") and "signin" in out

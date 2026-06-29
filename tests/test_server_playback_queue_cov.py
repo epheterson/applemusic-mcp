@@ -20,6 +20,16 @@ import responses
 from applemusic_mcp import server
 from applemusic_mcp.server import InputType, ResolvedInput, ResolvedPlaylist
 
+
+@pytest.fixture(autouse=True)
+def _reset_active_playback():
+    """The active-engine hint is a module global; reset it so play/queue tests
+    that set it don't leak into later tests that read it."""
+    server._active_playback_engine = ""
+    yield
+    server._active_playback_engine = ""
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -36,7 +46,8 @@ def _native(monkeypatch):
     from applemusic_mcp import browser
 
     monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-    monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
+    monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "native")
+    monkeypatch.setattr(server, "_get_active_playback", lambda: "native")
     monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: None)
     monkeypatch.setattr(server.asc, "get_current_track", lambda: (True, {"state": "stopped"}))
     monkeypatch.setattr(browser, "now_playing_if_running", lambda: None)
@@ -135,7 +146,8 @@ class TestPlaybackDispatcher:
 
     def test_engine_override_native_forces_native(self, monkeypatch):
         """engine='native' uses Music.app even when mode resolves to web."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        # Real resolver — engine='native' must win over a web-leaning mode.
+        monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": "chrome"})
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         monkeypatch.setattr(server, "_browser_play", lambda *a, **k: "browser played")
         monkeypatch.setattr(server, "_playback_play", lambda *a, **k: "native played")
@@ -154,7 +166,8 @@ class TestPlaybackDispatcher:
 
     def test_control_browser_success(self, monkeypatch):
         """Lines 7008-7011: control via browser, success."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "playback_control", lambda c, s: (True, "Paused"))
@@ -167,7 +180,8 @@ class TestPlaybackDispatcher:
 
     def test_control_browser_error(self, monkeypatch):
         """Line 7011: control via browser, error branch."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "playback_control", lambda c, s: (False, "offline"))
@@ -190,7 +204,8 @@ class TestPlaybackDispatcher:
 
     def test_now_playing_browser_track_found(self, monkeypatch):
         """Lines 7017-7023: now_playing via browser, something playing."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: None)
         from applemusic_mcp import browser
 
@@ -204,7 +219,8 @@ class TestPlaybackDispatcher:
 
     def test_now_playing_browser_nothing(self, monkeypatch):
         """Line 7021: browser now_playing returns None."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: None)
         from applemusic_mcp import browser
 
@@ -215,7 +231,8 @@ class TestPlaybackDispatcher:
     def test_now_playing_split_web_selected_native_alive(self, monkeypatch):
         """Web is the active engine but the native app is also playing a different
         track — the split must be surfaced (the exact audition-trace confusion)."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         from applemusic_mcp import browser
 
@@ -236,7 +253,8 @@ class TestPlaybackDispatcher:
     def test_now_playing_no_split_when_other_engine_paused(self, monkeypatch):
         """A loaded-but-PAUSED other engine isn't competing for audio — suppress the
         split nag (the 'pause native won't stick' annoyance was this firing anyway)."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         from applemusic_mcp import browser
 
@@ -255,7 +273,8 @@ class TestPlaybackDispatcher:
 
     def test_now_playing_no_split_when_same_track(self, monkeypatch):
         """Both engines on the same track → no spurious split warning."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         from applemusic_mcp import browser
 
@@ -288,7 +307,8 @@ class TestPlaybackDispatcher:
 
     def test_settings_browser_success(self, monkeypatch):
         """Lines 7028-7036: settings via browser."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "browser_settings", lambda v, s, r: (True, "Volume set to 80"))
@@ -297,7 +317,8 @@ class TestPlaybackDispatcher:
 
     def test_settings_browser_shuffle_none(self, monkeypatch):
         """Line 7031: shuffle_mode empty -> shuffle_b=None passed to browser."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         from applemusic_mcp import browser
 
         seen = {}
@@ -309,7 +330,8 @@ class TestPlaybackDispatcher:
 
     def test_settings_browser_shuffle_on(self, monkeypatch):
         """Line 7031-7033: shuffle_mode='on' -> True."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         from applemusic_mcp import browser
 
         seen = {}
@@ -321,7 +343,8 @@ class TestPlaybackDispatcher:
 
     def test_settings_browser_error(self, monkeypatch):
         """Line 7036: settings browser returns error."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "browser_settings", lambda v, s, r: (False, "oops"))
@@ -329,9 +352,9 @@ class TestPlaybackDispatcher:
         assert out.startswith("Error:")
 
     def test_settings_no_applescript(self, monkeypatch):
-        """Lines 7037-7038: settings, no AppleScript."""
+        """settings with the native engine active but no AppleScript → needs web."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "native")
         out = server.playback(action="settings", volume=50)
         assert "web" in out.lower()
 
@@ -350,14 +373,16 @@ class TestPlaybackDispatcher:
 
     def test_reveal_browser_resolve_fails(self, monkeypatch):
         """Line 7051: reveal via browser, catalog resolve returns None."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         monkeypatch.setattr(server, "_resolve_catalog_track_itunes", lambda n, a="": None)
         out = server.playback(action="reveal", track="zzznope")
         assert "not found" in out.lower()
 
     def test_reveal_browser_url_ok(self, monkeypatch):
         """Lines 7044-7054: reveal via browser with a resolved URL."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         from applemusic_mcp import browser as br
 
         monkeypatch.setattr(
@@ -371,7 +396,8 @@ class TestPlaybackDispatcher:
 
     def test_reveal_browser_url_error(self, monkeypatch):
         """Line 7054: reveal_url returns error."""
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: True)
+        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         from applemusic_mcp import browser as br
 
         monkeypatch.setattr(
