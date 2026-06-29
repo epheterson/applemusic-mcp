@@ -94,6 +94,14 @@ applemusic-mcp status           # verify
 
 This captures your session from a local signed-in Chrome profile (your password never touches this tool). Sign-in persists, and tokens re-fetch themselves before they expire, so you rarely re-authenticate. You can also sign in conversationally: just ask your assistant. Web sign-in uses Apple's web-player API, the same path used by open-source clients like [Cider](https://github.com/ciderapp/Cider-2) and [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/).
 
+**macOS: sign in via Safari (no Chrome, no ~1 GB download).** If you're already signed into Apple Music in Safari, the tool can read your session directly — skipping the Chrome/Playwright install entirely:
+
+```bash
+applemusic-mcp login --safari    # reads the session from your signed-in Safari
+```
+
+One-time prerequisite (it's a Safari security setting — enable it yourself, the tool never flips it): **Safari → Settings → Advanced → "Show features for web developers"**, then the **Develop** menu → **"Allow JavaScript from Apple Events."** Then sign into Apple Music at [music.apple.com](https://music.apple.com) in Safari. If the setting is off or Safari isn't signed in, the tool tells you exactly what to fix and you can fall back to the Chrome flow above. Combined with native Music.app playback, a Mac needs no Chrome at all.
+
 <details>
 <summary>Config locations, mode, and source install</summary>
 

@@ -30,9 +30,12 @@ from .auth import (
 def cmd_login(args):
     """Sign in. Web flow by default (captures a media-user-token, no developer
     account); `--dev` runs the Apple Developer token flow (.p8 → token →
-    authorize)."""
+    authorize); `--safari` reads the token from a signed-in Safari (macOS,
+    no Chrome)."""
     if args.dev:
         return _login_dev(args)
+    if getattr(args, "safari", False):
+        return _login_safari()
     from .browser import _cli_signin, _profile_in_use
 
     # Fail fast rather than fighting a running MCP server for the Chrome profile
@@ -47,6 +50,29 @@ def cmd_login(args):
         )
         return 1
     return _cli_signin()
+
+
+def _login_safari():
+    """macOS opt-in: harvest the media-user-token from a signed-in Safari (no
+    Chrome). The developer token is fetched tokenlessly on demand, so this alone
+    is a complete, Chrome-free sign-in on a Mac."""
+    import platform
+
+    if platform.system() != "Darwin":
+        print("--safari is macOS-only. Use `applemusic-mcp login` (Chrome) instead.")
+        return 1
+    from . import safari
+    from .auth import save_user_token
+
+    print("Reading your Apple Music session from Safari…")
+    ok, res = safari.media_user_token()
+    if not ok:
+        print(res)
+        return 1
+    save_user_token(res)
+    print("Signed in via Safari — no Chrome needed (the developer token is fetched")
+    print("automatically). Playback uses Music.app on macOS.")
+    return 0
 
 
 def _login_dev(args):
@@ -197,6 +223,11 @@ def main():
 
     login = sub.add_parser("login", help="Sign in (web flow; --dev for an Apple Developer token)")
     login.add_argument("--dev", action="store_true", help="Apple Developer token flow (.p8)")
+    login.add_argument(
+        "--safari",
+        action="store_true",
+        help="macOS: read the session from a signed-in Safari (no Chrome/Playwright)",
+    )
     login.add_argument("--team-id", dest="team_id", help="Apple Developer Team ID (with --dev)")
     login.add_argument("--key-id", dest="key_id", help="MusicKit Key ID (with --dev)")
     login.add_argument("--key-path", dest="key_path", help="Path to the .p8 key (with --dev)")

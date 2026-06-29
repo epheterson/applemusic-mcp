@@ -12,6 +12,15 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Added
 
+- **macOS: sign in via Safari — no Chrome, no ~1 GB Playwright download.**
+  `applemusic-mcp login --safari` reads your `media-user-token` directly from a
+  signed-in Safari (it's not httpOnly) via one AppleScript `do JavaScript
+  "document.cookie"`, and the developer token is already a tokenless fetch — so a
+  Mac user signed into Apple Music in Safari needs no Chrome, no Playwright, and no
+  fresh sign-in (playback uses Music.app). Opt-in; Chrome stays the default and the
+  cross-platform path. Requires the one-time Safari setting "Allow JavaScript from
+  Apple Events" (Develop menu); if it's off or Safari isn't signed in, the tool
+  says exactly what to fix and you can fall back to the Chrome flow.
 - **Drift-proof queue jump.** The web Up Next auto-advances in real time, so an
   index captured a moment ago lands on the wrong track. `queue jump` now accepts
   `track` (name or catalog id) and targets that track regardless of drift; the
