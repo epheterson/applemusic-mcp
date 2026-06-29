@@ -120,3 +120,94 @@ def test_is_available_darwin_probe_ok(monkeypatch):
     monkeypatch.setattr(sp.platform, "system", lambda: "Darwin")
     _mock(monkeypatch, True, '{"ok":1,"v":true}'.replace("true", '"object"'))
     assert sp.is_available() is True
+
+
+# -- completed surface ------------------------------------------------------
+
+
+def test_browser_settings(monkeypatch):
+    _mock(monkeypatch, True, json.dumps({"ok": 1, "v": {"volume": 50, "shuffle": 1, "repeat": 0}}))
+    ok, msg = sp.browser_settings(volume=50)
+    assert ok and "volume=50" in msg and "shuffle=on" in msg and "repeat=none" in msg
+
+
+def test_now_playing(monkeypatch):
+    _mock(
+        monkeypatch,
+        True,
+        json.dumps({"ok": 1, "v": {"name": "X", "artist": "Y", "state": "playing"}}),
+    )
+    np = sp.now_playing()
+    assert np and np["name"] == "X"
+
+
+def test_now_playing_none_on_error(monkeypatch):
+    _mock(monkeypatch, True, '{"ok":0,"e":"not-authorized"}')
+    assert sp.now_playing() is None
+
+
+def test_play_url_valid(monkeypatch):
+    _mock(monkeypatch, True, '{"ok":1,"v":"Abbey Road"}')
+    ok, msg = sp.play_url("https://music.apple.com/us/album/abbey-road/401")
+    assert ok and "Abbey Road" in msg
+
+
+def test_play_url_rejects_foreign_host():
+    ok, msg = sp.play_url("https://music.apple.com.evil.tld/x/1")
+    assert not ok and "Not an Apple Music URL" in msg
+
+
+def test_queue_play_next(monkeypatch):
+    _mock(monkeypatch, True, '{"ok":1,"v":4}')
+    ok, msg = sp.queue_play_next("123")
+    assert ok and "Up Next" in msg and "4 in queue" in msg
+
+
+def test_queue_play_later(monkeypatch):
+    _mock(monkeypatch, True, '{"ok":1,"v":5}')
+    ok, msg = sp.queue_play_later("123")
+    assert ok and "end of Up Next" in msg
+
+
+def test_queue_remove_playing(monkeypatch):
+    _mock(monkeypatch, True, '{"ok":1,"v":-2}')
+    ok, msg = sp.queue_remove(0)
+    assert not ok and "currently-playing" in msg
+
+
+def test_queue_remove_ok(monkeypatch):
+    _mock(monkeypatch, True, '{"ok":1,"v":2}')
+    ok, msg = sp.queue_remove(1)
+    assert ok and "Removed item 1" in msg
+
+
+def test_queue_jump(monkeypatch):
+    _mock(monkeypatch, True, '{"ok":1,"v":2}')
+    ok, msg = sp.queue_jump(2)
+    assert ok and "Jumped to item 2" in msg
+
+
+def test_queue_jump_id_missing(monkeypatch):
+    _mock(monkeypatch, True, '{"ok":1,"v":-1}')
+    ok, msg = sp.queue_jump_id("999")
+    assert not ok and "999" in msg
+
+
+def test_queue_clear(monkeypatch):
+    _mock(monkeypatch, True, '{"ok":1,"v":0}')
+    ok, msg = sp.queue_clear()
+    assert ok and "Cleared" in msg
+
+
+def test_queue_autoplay_on(monkeypatch):
+    _mock(monkeypatch, True, '{"ok":1,"v":1}')
+    ok, msg = sp.queue_autoplay(True)
+    assert ok and "Autoplay on" in msg
+
+
+def test_reveal_url(monkeypatch):
+    cap = {}
+    _mock(monkeypatch, True, "ok", cap)
+    ok, msg = sp.reveal_url("https://music.apple.com/us/album/x/1")
+    assert ok and "Showing in Safari" in msg
+    assert "set URL of theTab" in cap["script"]

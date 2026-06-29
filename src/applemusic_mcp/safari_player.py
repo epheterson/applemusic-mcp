@@ -28,7 +28,23 @@ import platform
 
 from . import safari
 from .applescript import run_applescript
-from .musickit_js import _CONTROL_JS, _PLAY_SONG_JS, _QUEUE_LIST_JS, _QUEUE_SET_JS
+from .browser import _parse_music_url  # reuse the URL → MusicKit descriptor parser
+from .musickit_js import (
+    _CONTROL_JS,
+    _NOW_PLAYING_JS,
+    _PLAY_QUEUE_JS,
+    _PLAY_SONG_JS,
+    _QUEUE_AUTOPLAY_JS,
+    _QUEUE_CLEAR_JS,
+    _QUEUE_JUMP_BY_ID_JS,
+    _QUEUE_JUMP_JS,
+    _QUEUE_LIST_JS,
+    _QUEUE_PLAY_LATER_JS,
+    _QUEUE_PLAY_NEXT_JS,
+    _QUEUE_REMOVE_JS,
+    _QUEUE_SET_JS,
+    _SETTINGS_JS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +84,9 @@ def _build_kick(js_fn: str, arg=None) -> str:
     )
 
 
-def _applescript(kick: str, attempts: int, delay: float) -> str:
-    """Find (or open) a music.apple.com Safari tab, kick the JS, poll the result."""
-    js_expr = " & linefeed & ".join(_as_applescript_string(ln) for ln in kick.split("\n"))
-    return f"""tell application "Safari"
-    set theTab to missing value
+# Locate a signed-in music.apple.com tab without disturbing it (no navigation) —
+# shared by the kick/poll runner and reveal. Sets `theTab` (or `missing value`).
+_FIND_MUSIC_TAB = """    set theTab to missing value
     repeat with w in windows
         repeat with t in tabs of w
             if (URL of t) starts with "https://music.apple.com" then
@@ -81,7 +95,14 @@ def _applescript(kick: str, attempts: int, delay: float) -> str:
             end if
         end repeat
         if theTab is not missing value then exit repeat
-    end repeat
+    end repeat"""
+
+
+def _applescript(kick: str, attempts: int, delay: float) -> str:
+    """Find (or open) a music.apple.com Safari tab, kick the JS, poll the result."""
+    js_expr = " & linefeed & ".join(_as_applescript_string(ln) for ln in kick.split("\n"))
+    return f"""tell application "Safari"
+{_FIND_MUSIC_TAB}
     if theTab is missing value then
         make new document with properties {{URL:"https://music.apple.com"}}
         delay 5
@@ -162,6 +183,135 @@ def playback_control(action: str, seconds: float = 0) -> tuple[bool, str]:
     if not ok:
         return False, v
     return (v == "ok"), v
+
+
+def play_descriptor(descriptor: dict, shuffle: bool = False) -> tuple[bool, str]:
+    """Play a MusicKit queue descriptor — {song|album|playlist|songs}."""
+    payload = dict(descriptor)
+    payload["__shuffle"] = bool(shuffle)
+    ok, v = _run_musickit(_PLAY_QUEUE_JS, payload)
+    return (True, f"Playing: {v}") if ok else (False, v)
+
+
+def play_url(music_url: str, shuffle: bool = False) -> tuple[bool, str]:
+    """Play an Apple Music URL (song / album / playlist) in Safari's MusicKit."""
+    from urllib.parse import urlparse
+
+    if not (music_url or "").strip():
+        return False, "Empty URL"
+    host = (urlparse(music_url).hostname or "").lower()
+    if host != "music.apple.com" and not host.endswith(".music.apple.com"):
+        return False, f"Not an Apple Music URL: {music_url}"
+    descriptor = _parse_music_url(music_url)
+    if descriptor is None:
+        return False, f"Unrecognized Apple Music URL shape: {music_url}"
+    return play_descriptor(descriptor, shuffle)
+
+
+def reveal_url(music_url: str) -> tuple[bool, str]:
+    """Open an Apple Music URL in Safari so the user can see it (no playback)."""
+    from urllib.parse import urlparse
+
+    host = (urlparse(music_url or "").hostname or "").lower()
+    if host != "music.apple.com" and not host.endswith(".music.apple.com"):
+        return False, f"Not an Apple Music URL: {music_url}"
+    u = _as_applescript_string(music_url)
+    script = f"""tell application "Safari"
+{_FIND_MUSIC_TAB}
+    if theTab is missing value then
+        make new document with properties {{URL:{u}}}
+    else
+        set URL of theTab to {u}
+    end if
+    return "ok"
+end tell"""
+    ok, out = run_applescript(script)
+    return (
+        (True, f"Showing in Safari: {music_url}") if ok else (False, f"Safari reveal failed: {out}")
+    )
+
+
+def browser_settings(volume: int = -1, shuffle=None, repeat=None) -> tuple[bool, str]:
+    """Set volume (0-100, -1 = leave), shuffle, repeat (none/off/one/all); report state."""
+    ok, state = _run_musickit(
+        _SETTINGS_JS, {"volume": volume, "shuffle": shuffle, "repeat": repeat}
+    )
+    if not ok:
+        return False, state
+    return True, (
+        f"volume={state['volume']} shuffle={'on' if state['shuffle'] else 'off'} "
+        f"repeat={['none', 'one', 'all'][state['repeat']]}"
+    )
+
+
+def now_playing():
+    """Current Safari-player track dict, or None."""
+    ok, v = _run_musickit(_NOW_PLAYING_JS)
+    return v if ok else None
+
+
+def _queue_insert(catalog_id: str, later: bool) -> tuple[bool, str]:
+    js = _QUEUE_PLAY_LATER_JS if later else _QUEUE_PLAY_NEXT_JS
+    where = "end of Up Next" if later else "Up Next"
+    ok, n = _run_musickit(js, str(catalog_id))
+    return (True, f"Queued to {where} ({n} in queue)") if ok else (False, n)
+
+
+def queue_play_next(catalog_id: str) -> tuple[bool, str]:
+    """Insert a catalog song right after the current track (Play Next)."""
+    return _queue_insert(catalog_id, later=False)
+
+
+def queue_play_later(catalog_id: str) -> tuple[bool, str]:
+    """Append a catalog song to the end of Up Next (Play Last)."""
+    return _queue_insert(catalog_id, later=True)
+
+
+def queue_remove(index: int) -> tuple[bool, str]:
+    """Remove the Up Next item at ``index`` (0-based)."""
+    ok, n = _run_musickit(_QUEUE_REMOVE_JS, int(index))
+    if not ok:
+        return False, n
+    if n == -2:
+        return False, (
+            "Can't remove the currently-playing item — jump to another track first "
+            "(queue jump), then remove it."
+        )
+    if n < 0:
+        return False, f"No queue item at index {index}"
+    return True, f"Removed item {index} ({n} left in queue)"
+
+
+def queue_jump(index: int) -> tuple[bool, str]:
+    """Jump playback to the Up Next item at ``index`` (0-based)."""
+    ok, pos = _run_musickit(_QUEUE_JUMP_JS, int(index))
+    if not ok:
+        return False, pos
+    if pos < 0:
+        return False, f"No queue item at index {index}"
+    return True, f"Jumped to item {pos}"
+
+
+def queue_jump_id(catalog_id: str) -> tuple[bool, str]:
+    """Jump to the Up Next item with the given catalog id (drift-proof)."""
+    ok, pos = _run_musickit(_QUEUE_JUMP_BY_ID_JS, str(catalog_id))
+    if not ok:
+        return False, pos
+    if pos < 0:
+        return False, f"No queue item with catalog id {catalog_id}"
+    return True, f"Jumped to item {pos}"
+
+
+def queue_clear() -> tuple[bool, str]:
+    """Clear the entire Up Next queue."""
+    ok, v = _run_musickit(_QUEUE_CLEAR_JS)
+    return (True, "Cleared the queue") if ok else (False, v)
+
+
+def queue_autoplay(enabled: bool) -> tuple[bool, str]:
+    """Toggle Autoplay (keep playing similar music when the queue runs out)."""
+    ok, state = _run_musickit(_QUEUE_AUTOPLAY_JS, bool(enabled))
+    return (True, f"Autoplay {'on' if state else 'off'}") if ok else (False, state)
 
 
 def is_available() -> bool:
