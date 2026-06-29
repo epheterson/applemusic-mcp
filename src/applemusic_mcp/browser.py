@@ -162,6 +162,14 @@ class _BrowserEngine:
             self._ctx = self._launch_context()
             self._page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
         except BaseException as exc:  # noqa: BLE001 - report any launch failure to caller
+            # Stop the Playwright driver we started, else each failed-launch retry
+            # leaks another node/driver process.
+            try:
+                if self._pw is not None:
+                    self._pw.stop()
+                    self._pw = None
+            except Exception:
+                pass
             self._start_error = BrowserUnavailable(f"Could not launch browser: {exc}")
             self._ready.set()
             return
@@ -583,7 +591,12 @@ def play_url(music_url: str, shuffle: bool = False) -> tuple[bool, str]:
     — cross-platform parity for the native macOS play-from-URL."""
     if not music_url.strip():
         return False, "Empty URL"
-    if "music.apple.com" not in music_url:
+    from urllib.parse import urlparse
+
+    host = (urlparse(music_url).hostname or "").lower()
+    # Exact host match (parity with reveal_url) — a substring check would pass
+    # music.apple.com.evil.tld and navigate the user's window to an attacker page.
+    if host != "music.apple.com" and not host.endswith(".music.apple.com"):
         return False, f"Not an Apple Music URL: {music_url}"
     descriptor = _parse_music_url(music_url)
     if descriptor is None:
