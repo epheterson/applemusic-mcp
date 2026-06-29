@@ -325,9 +325,18 @@ def _check_signed_in(page) -> bool:
     than scraping a "Sign In" element out of the Ember SPA.) Falls back to
     MusicKit's ``isAuthorized`` if cookies can't be read.
     """
-    page.goto(BROWSE_URL, wait_until="domcontentloaded")
-    page.wait_for_timeout(1500)
+    # Try the cookie WITHOUT navigating first — the persistent profile's cookie jar
+    # has media-user-token from the prior sign-in, and navigating would clobber any
+    # active playback/queue. Only goto as a fallback when the cookie isn't present.
     try:
+        cookies = page.context.cookies("https://music.apple.com")
+        if any(c.get("name") == "media-user-token" and c.get("value") for c in cookies):
+            return True
+    except Exception:
+        pass
+    try:
+        page.goto(BROWSE_URL, wait_until="domcontentloaded")
+        page.wait_for_timeout(1500)
         cookies = page.context.cookies("https://music.apple.com")
         if any(c.get("name") == "media-user-token" and c.get("value") for c in cookies):
             return True

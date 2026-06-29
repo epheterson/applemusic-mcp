@@ -1,6 +1,7 @@
 """Authentication and token management for Apple Music API."""
 
 import json
+import logging
 import os
 import re
 import sys
@@ -15,6 +16,8 @@ import jwt
 import requests
 
 from . import paths
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_DIR = paths.config_dir()
 
@@ -258,7 +261,10 @@ def has_any_developer_token() -> bool:
     try:
         resolve_developer_token()
         return True
-    except Exception:
+    except Exception as exc:
+        # Don't let a network blip during harvest look identical to "no credentials":
+        # log it so a silently-downgraded write rail is at least visible in the logs.
+        logger.warning("has_any_developer_token: couldn't obtain a developer token: %s", exc)
         return False
 
 

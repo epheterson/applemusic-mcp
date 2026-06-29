@@ -254,7 +254,17 @@ def test_signed_in_cookie_present(monkeypatch):
     page = FakePage(cookies=[{"name": "media-user-token", "value": "x"}])
     set_engine(monkeypatch, page=page)
     assert browser.open_and_check_signin() is True
-    # navigated to browse as a side effect
+    # cookie is already in the jar → DON'T navigate (navigating would clobber any
+    # active playback/queue). The non-navigating cookie read is the whole point.
+    assert page.goto_calls == []
+
+
+def test_signed_in_navigates_only_when_cookie_absent(monkeypatch):
+    # No cookie up front → it must navigate to load the session, then re-check.
+    page = FakePage(cookies=[])
+    page.returns["authorized"] = True
+    set_engine(monkeypatch, page=page)
+    assert browser.signed_in() is True
     assert page.goto_calls and "browse" in page.goto_calls[0][0]
 
 
