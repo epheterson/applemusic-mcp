@@ -32,11 +32,14 @@ is only a fallback.
 
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 MUSIC_URL = "https://music.apple.com"
 BROWSE_URL = f"{MUSIC_URL}/us/browse"
@@ -1014,7 +1017,13 @@ def capture_and_save_user_token() -> bool:
         return False
     from .auth import save_user_token
 
-    save_user_token(token)
+    try:
+        save_user_token(token)
+    except Exception as exc:
+        # Captured but couldn't persist (locked keychain, unwritable config dir).
+        # Don't let it vanish into a poll's `except: pass` and time out silently.
+        logger.warning("Captured the Apple Music token but failed to save it: %s", exc)
+        return False
     return True
 
 
