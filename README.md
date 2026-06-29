@@ -57,7 +57,9 @@ claude mcp add "Apple Music" -- uvx applemusic-mcp serve
 
 ```bash
 pipx install applemusic-mcp        # or: pip install applemusic-mcp
-playwright install chromium        # browser engine for sign-in, playback, and queue
+# Off macOS, also fetch the browser engine:  playwright install chromium
+# macOS needs neither (Safari sign-in + Music.app). For the Chrome web player on a
+# Mac:  pipx install 'applemusic-mcp[browser]'  then  playwright install chromium
 ```
 
 ```json
@@ -129,13 +131,13 @@ With a developer token, writes go through the sanctioned API; the web path is us
 | Add to library | ✓ | ✓ | ✓ |
 | Create playlist | ✓ | ✓ | ✓ |
 | Add tracks (API-made playlist) | ✓ | ✓ | ✓ |
-| Add tracks (Music.app-made playlist) | ✗ | ✓ | ✓ |
+| Add tracks (Music.app-made playlist) | ✗ | ✗ | ✓ |
 | Rate 1 to 5 | ✓ | ✗ | ✓ |
 | Love / dislike | ✓ | ✓ | ✓ |
 | Delete playlist | ✗ | ✓ | ✓ |
 | Rename / move into folder | partial | ✓ | ✓ |
 
-The `✗` cells are operations Apple's public API doesn't offer, so they route to the web player or Music.app.
+The `✗` cells are operations the column's path can't do, so they route elsewhere. One Apple constraint to know: **only the client that created a playlist can edit it**, so a playlist made in Music.app can't be written by *either* the dev-token API or the web player — on macOS those adds go through Music.app locally; off macOS, add to an API/web-created playlist instead.
 
 ## Usage
 
@@ -155,7 +157,7 @@ Seven action-based tools keep the MCP context small. Each takes an `action` and 
 
 | Tool | Actions |
 |---|---|
-| `playlist` | list, tracks, search, create, add, copy, move, remove, delete, rename, path (playlists and folders) |
+| `playlist` | list, folders, tracks, search, create, add, copy, move, remove, delete, rename, path (playlists and folders) |
 | `library` | search, add, browse, favorites, recently_played, recently_added, rate, remove, snapshot |
 | `catalog` | search, album_tracks, album_details, song_details, artist_details, song_station, genres |
 | `discover` | recommendations, heavy_rotation, charts, top_songs, similar_artists, search_suggestions, personal_station |
@@ -178,11 +180,13 @@ Seven action-based tools keep the MCP context small. Each takes an `action` and 
 
 ```bash
 applemusic-mcp serve            # run the MCP server (your client calls this)
-applemusic-mcp login            # web sign-in (no developer account)
+applemusic-mcp login            # web sign-in (macOS: Safari; Windows/Linux: Chrome)
+applemusic-mcp login --chrome   # force the Chrome web player (macOS opt-in)
 applemusic-mcp login --dev      # Apple Developer token flow (.p8)
 applemusic-mcp logout           # sign out (switch accounts)
 applemusic-mcp status           # show auth status
-applemusic-mcp reset --force    # wipe all credentials (keeps your .p8 key file)
+applemusic-mcp reset --force    # wipe credentials (keeps your .p8 key file)
+applemusic-mcp reset --all --force   # full uninstall: also removes the .p8, profile, and cache
 ```
 
 ## Good to know
