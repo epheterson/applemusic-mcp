@@ -834,6 +834,12 @@ _LIBRARY_SYNC_DEADLINE_S = 18.0  # max wait for API add-to-library to show up in
 _LIBRARY_SYNC_TICK_S = 0.5  # poll interval while waiting for sync
 _VERIFY_ATTEMPTS = 3  # retries for post-add playlist verification
 _VERIFY_DELAY_S = 1.0  # sleep between verification retries
+# Catalog→Music.app-playlist add: how long to wait for the cloud→local iCloud sync
+# before deferring (cap the caller's hold), how fast to poll, and when to fire the
+# last-resort Update Cloud Library nudge if the natural fast sync hasn't landed.
+_SYNC_POLL_BUDGET_S = 30.0
+_SYNC_POLL_INTERVAL_S = 1.5
+_SYNC_NUDGE_AFTER_S = 20.0
 
 
 def get_storefront() -> str:
@@ -2537,9 +2543,9 @@ def _auto_search_and_add_to_playlist(
                 steps,
             )
 
-        # kind == "user": this path is macOS-only (off-mac never reaches here), so
-        # attach via AppleScript. The catalog track was just library-added in the
-        # cloud; nudge iCloud and poll until it syncs into the local Music.app.
+        # kind == "user": macOS-only (off-mac never reaches here). The catalog track
+        # was just library-added in the cloud; wait for it to sync down to the LOCAL
+        # Music.app, then attach via AppleScript.
         if not APPLESCRIPT_AVAILABLE:  # pragma: no cover  # off-mac uses _playlist_add_api
             return (
                 False,
@@ -2547,44 +2553,36 @@ def _auto_search_and_add_to_playlist(
                 "it. Adding to it currently requires macOS.",
                 steps,
             )
-        # Self-healing nudge cycles with backoff (~75s total): some tracks take a
-        # while to sync cloud->local, and we'd rather retry internally than hand the
-        # caller a "re-run it" error. Each cycle re-nudges (rate-limited to ≤once/4s,
-        # so a batch of adds won't re-foreground Music every time) and waits a
-        # growing window for the track to surface before trying the attach again.
-        last = ""
-        attached = False  # latch: do the AppleScript add AT MOST ONCE, then only
-        # poll-verify. Re-running the add on every tick (when it succeeds but verify
-        # lags/mismatches) would write duplicate copies into the playlist.
-        nudge_worked = False  # did "Update Cloud Library" actually fire even once?
-        for window in (8.0, 8.0, 12.0, 16.0, 16.0, 16.0):
-            # Only nudge while still waiting for the track to sync locally.
-            if not attached:
-                n_ok, n_msg = asc.update_cloud_library()
-                # Throttled means a recent nudge already fired (a batch add) — still
-                # counts as "the sync is being triggered".
-                if n_ok or "throttled" in n_msg:
-                    nudge_worked = True
-                if n_ok:
+        # Don't nudge "Update Cloud Library" UP FRONT: measured A/B, nudging at t=0
+        # didn't speed the cloud→local sync — a sample synced ~11s WITHOUT it vs ~90s
+        # WITH (activating Music likely interrupts the in-flight sync), and it steals
+        # focus + needs a menu item that's absent when Sync Library is off. So let the
+        # natural (usually fast) sync run, polling the LOCAL library; only as a LAST
+        # RESORT — if it still hasn't landed after _SYNC_NUDGE_AFTER_S — nudge once to
+        # kick a stuck sync. Capped so we never hold the caller past ~30s.
+        synced = False
+        nudged = False
+        start = time.monotonic()
+        while time.monotonic() - start < _SYNC_POLL_BUDGET_S:
+            if asc.find_library_track(found_name, found_artist or "")[0]:
+                synced = True
+                break
+            if not nudged and time.monotonic() - start >= _SYNC_NUDGE_AFTER_S:
+                nudged = True
+                if asc.update_cloud_library()[0]:
                     steps.append(
-                        "Briefly brought Music.app to the foreground to trigger an iCloud "
-                        "sync (File > Library > Update Cloud Library) so the new track lands "
-                        "locally and can be attached — this is why the app flashed forward"
+                        "Sync was slow, so I triggered Music's Update Cloud Library as a "
+                        "last resort (brief Music.app flash) to kick the iCloud sync"
                     )
-            waited = 0.0
-            while waited < window:
-                if not attached:
-                    ok2, res2, _split = _smart_as_add_track_to_playlist(
-                        playlist_name, found_name, found_artist or None, None
-                    )
-                    last = res2
-                    if ok2:
-                        attached = True  # added — from here on, only confirm
-                    elif "Track not found" not in res2:
-                        return False, _attach_error(found_name, res2), steps
-                if attached and _verify_track_in_playlist(
-                    playlist_name, found_name, found_artist or ""
-                ):
+            time.sleep(_SYNC_POLL_INTERVAL_S)
+        if synced:
+            # Synced locally — attach ONCE (a short retry absorbs attach/verify lag;
+            # never re-add in a way that could duplicate).
+            for _ in range(4):
+                ok2, res2, _split = _smart_as_add_track_to_playlist(
+                    playlist_name, found_name, found_artist or None, None
+                )
+                if ok2 and _verify_track_in_playlist(playlist_name, found_name, found_artist or ""):
                     steps.append("Attached via Music.app (native)")
                     return (
                         True,
@@ -2593,26 +2591,18 @@ def _auto_search_and_add_to_playlist(
                         "attached to playlist via Music.app)",
                         steps,
                     )
+                if not ok2 and "Track not found" not in res2:
+                    return False, _attach_error(found_name, res2), steps
                 time.sleep(_VERIFY_DELAY_S)
-                waited += _VERIFY_DELAY_S
-        # Timed out. Be honest about WHY: if the sync nudge never fired, the track
-        # likely won't sync at all (Sync Library off, or a Music build without the
-        # "Update Cloud Library" menu item) — don't blame "a slow sync".
-        if not nudge_worked:
-            return (
-                False,
-                f"Added '{found_name}' to your library, but couldn't attach it to "
-                f"'{playlist_name}': it hasn't synced to this Mac and I couldn't trigger "
-                "an iCloud sync (the 'Update Cloud Library' menu item wasn't available). "
-                "Turn on Music → Settings → General → Sync Library, then re-run the add.",
-                steps,
-            )
+        # Not synced within the budget (Apple's iCloud sync is variable — usually
+        # seconds, occasionally a minute+). The library-add succeeded; tell the model
+        # exactly that and the one-step fix so the experience stays smooth.
         return (
             False,
-            f"Added '{found_name}' to your library and nudged the iCloud sync repeatedly "
-            f"for over a minute, but Music.app still hasn't received it to attach to "
-            f"'{playlist_name}'. This is an unusually slow Apple sync — the track is in "
-            f"your library, so re-running the add shortly will attach it. ({last})",
+            f"Added '{found_name}' to your library — but it hasn't finished syncing to "
+            f"this Mac yet, so it's not in '{playlist_name}' yet. This is Apple's iCloud "
+            f"sync (usually seconds, sometimes up to a minute). The track is safely in "
+            f"your library; re-run this exact add in a moment and it'll attach instantly.",
             steps,
         )
 

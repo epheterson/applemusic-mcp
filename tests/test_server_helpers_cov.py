@@ -1825,6 +1825,8 @@ class TestAutoSearchAndAddToPlaylist:
             },
         )
         monkeypatch.setattr(server.asc, "update_cloud_library", lambda: (True, "ok"))
+        # the catalog track is "synced locally" so the poll breaks and we attach
+        monkeypatch.setattr(server.asc, "find_library_track", lambda n, a: (True, f"{n}|||{a}"))
         # the web rail must NOT be called for a user-made playlist
         monkeypatch.setattr(
             server.amp_api,
