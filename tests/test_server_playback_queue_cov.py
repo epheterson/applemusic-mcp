@@ -26,9 +26,20 @@ from applemusic_mcp.server import InputType, ResolvedInput, ResolvedPlaylist
 
 
 def _native(monkeypatch):
-    """Route playback() to the native (AppleScript) path."""
+    """Route playback() to the native (AppleScript) path.
+
+    Also stubs the cross-engine now-playing peek (``asc.now_playing_if_running``
+    and ``browser.now_playing_if_running``) to a quiet None default so the
+    ``control`` action's now-playing tail and the ``now_playing`` action don't
+    fall through to real AppleScript. Tests that need a specific peek value
+    override these after calling ``_native`` (monkeypatch is last-wins)."""
+    from applemusic_mcp import browser
+
     monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
     monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
+    monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: None)
+    monkeypatch.setattr(server.asc, "get_current_track", lambda: (True, {"state": "stopped"}))
+    monkeypatch.setattr(browser, "now_playing_if_running", lambda: None)
 
 
 def _mock_headers(monkeypatch):
@@ -147,6 +158,10 @@ class TestPlaybackDispatcher:
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "playback_control", lambda c, s: (True, "Paused"))
+        # The control tail re-renders now_playing; stub both engines' peeks so it
+        # stays offline (web peek + native peek at the dispatcher).
+        monkeypatch.setattr(browser, "now_playing", lambda: None)
+        monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: None)
         out = server.playback(action="control", control="pause")
         assert "Paused" in out
 

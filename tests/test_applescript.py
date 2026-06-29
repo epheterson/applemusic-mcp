@@ -21,6 +21,77 @@ pytestmark = pytest.mark.skipif(
 
 from applemusic_mcp import applescript as asc
 
+# Captured at import time (before conftest's function-scoped _block_live_applescript
+# guard replaces asc.run_applescript). Tests that genuinely exercise
+# run_applescript's own logic restore this real implementation and mock the
+# subprocess boundary instead, so they stay hermetic without hitting osascript.
+_REAL_RUN_APPLESCRIPT = asc.run_applescript
+
+
+class _FakeProc:
+    """Minimal stand-in for subprocess.CompletedProcess used to drive
+    run_applescript offline."""
+
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _sample_library(n=30):
+    """A deterministic fake library: distinct ids per row so offset paging is
+    observable."""
+    return [
+        {
+            "name": f"Song {i}",
+            "artist": f"Artist {i}",
+            "album": f"Album {i}",
+            "duration": 180 + i,
+            "genre": "Pop",
+            "year": 2000 + (i % 25),
+            "id": f"PID{i:04d}",
+            "explicit": False,
+        }
+        for i in range(n)
+    ]
+
+
+def _fake_library_run(library):
+    """Return a run_applescript stand-in that emulates Music.app's response to
+    get_library_songs_page's script against ``library`` — honoring the offset/
+    limit range encoded in the script so paging behavior stays real, offline."""
+
+    def run(script):
+        total = len(library)
+        out = f"total:{total}\n"
+        m_start = re.search(r"items (\d+) through endPos", script)
+        m_end = re.search(r"set endPos to (\d+)", script)
+        if not m_start or not m_end:
+            return True, out
+        offset = int(m_start.group(1)) - 1  # script uses 1-based start
+        if total == 0 or offset >= total:
+            return True, out
+        end = min(int(m_end.group(1)), total)
+        for t in library[offset:end]:
+            out += (
+                "|||".join(
+                    [
+                        t["name"],
+                        t["artist"],
+                        t["album"],
+                        str(t["duration"]),
+                        t.get("genre", ""),
+                        str(t.get("year", "")),
+                        t["id"],
+                        "true" if t.get("explicit") else "false",
+                    ]
+                )
+                + "\n"
+            )
+        return True, out
+
+    return run
+
 
 class TestAppleScriptAvailability:
     """Test AppleScript availability detection."""
@@ -29,20 +100,40 @@ class TestAppleScriptAvailability:
         """Should return True on macOS."""
         assert asc.is_available() is True
 
-    def test_run_applescript_simple(self):
+    def test_run_applescript_simple(self, monkeypatch):
         """Should run simple AppleScript."""
+        import subprocess
+
+        monkeypatch.setattr(asc, "run_applescript", _REAL_RUN_APPLESCRIPT)
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _FakeProc(returncode=0, stdout="hello\n")
+        )
         success, output = asc.run_applescript('return "hello"')
         assert success is True
         assert output == "hello"
 
-    def test_run_applescript_math(self):
+    def test_run_applescript_math(self, monkeypatch):
         """Should handle AppleScript expressions."""
+        import subprocess
+
+        monkeypatch.setattr(asc, "run_applescript", _REAL_RUN_APPLESCRIPT)
+        monkeypatch.setattr(
+            subprocess, "run", lambda *a, **k: _FakeProc(returncode=0, stdout="4\n")
+        )
         success, output = asc.run_applescript("return 2 + 2")
         assert success is True
         assert output == "4"
 
-    def test_run_applescript_error(self):
+    def test_run_applescript_error(self, monkeypatch):
         """Should handle AppleScript errors gracefully."""
+        import subprocess
+
+        monkeypatch.setattr(asc, "run_applescript", _REAL_RUN_APPLESCRIPT)
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *a, **k: _FakeProc(returncode=1, stderr="syntax error: expected end of line"),
+        )
         success, output = asc.run_applescript("this is not valid applescript")
         assert success is False
         assert len(output) > 0  # Should have error message
@@ -51,33 +142,38 @@ class TestAppleScriptAvailability:
 class TestPlaybackControl:
     """Test playback control functions."""
 
-    def test_get_player_state(self):
+    def test_get_player_state(self, monkeypatch):
         """Should get player state."""
+        monkeypatch.setattr(asc, "run_applescript", lambda script: (True, "playing"))
         success, state = asc.get_player_state()
         assert success is True
         assert state in ("stopped", "playing", "paused")
 
-    def test_get_volume(self):
+    def test_get_volume(self, monkeypatch):
         """Should get volume level."""
+        monkeypatch.setattr(asc, "run_applescript", lambda script: (True, "50"))
         success, volume = asc.get_volume()
         assert success is True
         assert isinstance(volume, int)
         assert 0 <= volume <= 100
 
-    def test_get_shuffle(self):
+    def test_get_shuffle(self, monkeypatch):
         """Should get shuffle state."""
+        monkeypatch.setattr(asc, "run_applescript", lambda script: (True, "false"))
         success, shuffle = asc.get_shuffle()
         assert success is True
         assert isinstance(shuffle, bool)
 
-    def test_get_repeat(self):
+    def test_get_repeat(self, monkeypatch):
         """Should get repeat mode."""
+        monkeypatch.setattr(asc, "run_applescript", lambda script: (True, "off"))
         success, repeat = asc.get_repeat()
         assert success is True
         assert repeat in ("off", "one", "all")
 
-    def test_get_current_track_when_stopped(self):
+    def test_get_current_track_when_stopped(self, monkeypatch):
         """Should handle stopped state gracefully."""
+        monkeypatch.setattr(asc, "run_applescript", lambda script: (True, "STOPPED"))
         success, info = asc.get_current_track()
         assert success is True
         # Either has track info or shows stopped
@@ -390,32 +486,37 @@ class TestGenreSearch:
 class TestGetLibrarySongsPage:
     """Integration tests for get_library_songs_page (O(limit) range access)."""
 
-    def test_returns_correct_shape(self):
+    def test_returns_correct_shape(self, monkeypatch):
+        monkeypatch.setattr(asc, "run_applescript", _fake_library_run(_sample_library()))
         success, tracks, total, error = asc.get_library_songs_page(offset=0, limit=5)
         assert success is True
         assert isinstance(tracks, list)
         assert isinstance(total, int)
         assert error == ""
 
-    def test_total_reflects_full_library(self):
+    def test_total_reflects_full_library(self, monkeypatch):
+        monkeypatch.setattr(asc, "run_applescript", _fake_library_run(_sample_library()))
         _, _, total_page, _ = asc.get_library_songs_page(offset=0, limit=5)
         _, _, total_all, _ = asc.get_library_songs_page(offset=0, limit=1)
         assert total_page == total_all
 
-    def test_offset_returns_different_tracks(self):
+    def test_offset_returns_different_tracks(self, monkeypatch):
+        monkeypatch.setattr(asc, "run_applescript", _fake_library_run(_sample_library()))
         _, page0, _, _ = asc.get_library_songs_page(offset=0, limit=5)
         _, page1, _, _ = asc.get_library_songs_page(offset=5, limit=5)
         if page0 and page1:
             assert page0[0]["id"] != page1[0]["id"]
 
-    def test_offset_beyond_total_returns_empty(self):
+    def test_offset_beyond_total_returns_empty(self, monkeypatch):
+        monkeypatch.setattr(asc, "run_applescript", _fake_library_run(_sample_library()))
         success, tracks, total, error = asc.get_library_songs_page(offset=999999, limit=10)
         assert success is True
         assert tracks == []
         assert total >= 0
         assert error == ""
 
-    def test_track_fields_present(self):
+    def test_track_fields_present(self, monkeypatch):
+        monkeypatch.setattr(asc, "run_applescript", _fake_library_run(_sample_library()))
         success, tracks, _, _ = asc.get_library_songs_page(offset=0, limit=3)
         assert success is True
         if tracks:
@@ -449,8 +550,11 @@ class TestLibraryStats:
 class TestAirPlay:
     """Test AirPlay functions."""
 
-    def test_get_airplay_devices(self):
+    def test_get_airplay_devices(self, monkeypatch):
         """Should get AirPlay devices list."""
+        monkeypatch.setattr(
+            asc, "run_applescript", lambda script: (True, "Computer\nLiving Room\n")
+        )
         success, devices = asc.get_airplay_devices()
         assert success is True
         assert isinstance(devices, list)
@@ -470,8 +574,11 @@ class TestTrackMetadata:
 class TestInputSanitization:
     """Test that user input is properly sanitized to prevent injection."""
 
-    def test_quote_escaping_in_playlist_name(self):
+    def test_quote_escaping_in_playlist_name(self, monkeypatch):
         """Should properly escape quotes in playlist names."""
+        # Mock the AppleScript boundary so create/delete run offline; the quote
+        # escaping under test happens in create_playlist before run_applescript.
+        monkeypatch.setattr(asc, "run_applescript", lambda script: (True, "PID_TEST_01"))
         # Attempt to create a playlist with quotes in the name
         # This would break the AppleScript if not properly escaped
         test_name = '_TEST_QUOTES_"escape"_test_'
@@ -488,8 +595,11 @@ class TestInputSanitization:
         assert isinstance(success, bool)
         assert isinstance(result, str)
 
-    def test_special_characters_in_search(self):
+    def test_special_characters_in_search(self, monkeypatch):
         """Should handle special characters in search queries."""
+        # Mock the AppleScript boundary (empty result set); the escaping under
+        # test runs in search_library before the run_applescript call.
+        monkeypatch.setattr(asc, "run_applescript", lambda script: (True, ""))
         # These characters should not cause AppleScript errors
         special_queries = [
             "test'quote",

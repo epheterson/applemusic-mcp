@@ -37,6 +37,34 @@ def _block_external_network(request):
 
 
 @pytest.fixture(autouse=True)
+def _block_live_applescript(request, monkeypatch):
+    """Hard guarantee: no non-live test runs real AppleScript against the user's
+    Music.app. Every AppleScript call funnels through ``asc.run_applescript``;
+    replace it with a guard that raises, so an un-mocked ``asc.*`` call (e.g.
+    ``create_folder``) fails loudly in the test instead of silently mutating the
+    live library. This is the AppleScript analogue of ``_block_external_network``
+    and closes the leak that filled the library with ``My Folder`` / ``Summer
+    Folder`` debris (un-prefixed names the session sweep never matched).
+
+    Tests that exercise AppleScript must mock ``asc.run_applescript`` (or the
+    higher-level ``asc.*`` function) — a per-test ``monkeypatch.setattr`` overrides
+    this guard. Genuine live AppleScript belongs in the ``ui`` / ``ui_live`` gates.
+    The session-scoped debris sweep runs outside this function-scoped guard, so it
+    still cleans up."""
+    if request.node.get_closest_marker("ui") or request.node.get_closest_marker("ui_live"):
+        return
+
+    def _guard(script, *args, **kwargs):
+        raise RuntimeError(
+            "Blocked real AppleScript in a non-live test — mock asc.run_applescript "
+            "(or the asc.* helper) instead of hitting Music.app. Live AppleScript "
+            "belongs in the ui / ui_live gates."
+        )
+
+    monkeypatch.setattr(asc, "run_applescript", _guard)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_browser_profile(request, tmp_path, monkeypatch):
     """Never let a non-live test touch the real Chrome profile. `clear_session`
     (hit by logout/reset on both the CLI and the `config` tool) rmtree's

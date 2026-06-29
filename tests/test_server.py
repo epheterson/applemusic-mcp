@@ -1263,6 +1263,12 @@ class TestPaginationWithFetchExplicit:
         mock_cache = MagicMock()
         mock_cache.get_explicit.return_value = "Clean"  # All tracks have cached explicit status
 
+        # Resolution falls through to asc.get_playlists() when the name isn't in
+        # the API; stub it so "Test Playlist" resolves natively, offline.
+        monkeypatch.setattr(
+            server.asc, "get_playlists", lambda: (True, [{"name": "Test Playlist", "id": "PLID"}])
+        )
+
         with patch.object(server.asc, "get_playlist_tracks", side_effect=mock_asc_get_tracks):
             with patch.object(server, "get_track_cache", return_value=mock_cache):
                 # Call with playlist name and fetch_explicit=True
@@ -1534,9 +1540,12 @@ class TestResolvePlaylistApiLookup:
 
     @responses.activate
     def test_falls_back_to_name_when_not_in_api(
-        self, mock_config_dir, mock_developer_token, mock_user_token
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
     ):
         """Should fall back to playlist name when not found in API."""
+        # API miss → resolution tries native fuzzy match; an empty playlist list
+        # means no match, so it falls back to the raw name (offline).
+        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, []))
         dev_token_file = mock_config_dir / "developer_token.json"
         with open(dev_token_file, "w") as f:
             json.dump({"token": mock_developer_token, "expires": time.time() + 86400 * 60}, f)
@@ -1559,10 +1568,12 @@ class TestResolvePlaylistApiLookup:
         assert resolved.applescript_name == "Local Only Playlist"
         assert resolved.error is None
 
-    def test_handles_ps_i_love_you_as_name(self):
+    def test_handles_ps_i_love_you_as_name(self, monkeypatch):
         """Should treat 'p.s. I love you' as a name, not an ID."""
         # This tests the edge case where a playlist name starts with "p."
         # but isn't an ID (has spaces/punctuation after p.)
+        # Empty native playlist list → raw-name fallback, offline.
+        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, []))
         with patch.object(server, "_find_api_playlist_by_name", return_value=(None, None)):
             resolved = server._resolve_playlist("p.s. I love you")
 

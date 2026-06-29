@@ -583,8 +583,12 @@ class TestResolvePlaylist:
         assert resolved.api_id == "p.abc123xyz"
         assert resolved.error is None
 
-    def test_name_not_id(self):
+    def test_name_not_id(self, monkeypatch):
         # "p.s. I love you" is a name, not an ID (has spaces)
+        # Stub the lookups the name path consults so resolution stays offline:
+        # no API match, and an empty native playlist list → raw-name fallback.
+        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
+        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, []))
         resolved = server._resolve_playlist("p.s. I love you")
         # Should NOT be treated as an ID
         assert resolved.api_id != "p.s. I love you" or resolved.api_id is None
@@ -1960,6 +1964,10 @@ class TestPlaylistDispatcher:
         monkeypatch.setattr(
             server.amp_api, "create_folder", lambda name, parent_id=None: (True, "f.fld1")
         )
+        # On macOS _playlist_create_folder branches on APPLESCRIPT_AVAILABLE, so it
+        # calls asc.create_folder regardless of engine; stub it so this stays
+        # offline instead of creating a real "My Folder" in the library.
+        monkeypatch.setattr(server.asc, "create_folder", lambda name: (True, "f.fld1"))
         result = server.playlist(action="create", folder="My Folder")
         assert "Created" in result
         assert "My Folder" in result
@@ -2157,6 +2165,8 @@ class TestPlaylistDispatcher:
     def test_action_delete_native_success(self, monkeypatch):
         monkeypatch.setattr(server, "_engine", lambda: "native")
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        # _playlist_delete reads tracks first (for the undo log); stub it offline.
+        monkeypatch.setattr(server.asc, "get_playlist_tracks", lambda name: (True, []))
         monkeypatch.setattr(server.asc, "delete_playlist", lambda name: (True, "Deleted"))
         result = server.playlist(action="delete", name="Old PL")
         assert "Deleted" in result
@@ -2228,6 +2238,9 @@ class TestPlaylistDispatcher:
         monkeypatch.setattr(
             server.amp_api, "create_folder", lambda name, parent_id=None: (True, "f.fld1")
         )
+        # See test_action_create_folder_only_api: on macOS the folder create path
+        # runs asc.create_folder, so stub it to keep the test offline.
+        monkeypatch.setattr(server.asc, "create_folder", lambda name: (True, "f.fld1"))
         result = server.playlist(action="create_folder", name="Summer Folder")
         assert "Created" in result
         assert "Summer Folder" in result
