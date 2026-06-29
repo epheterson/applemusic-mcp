@@ -997,11 +997,77 @@ def _engine() -> str:
     if os.environ.get("APPLEMUSIC_FORCE_API_MODE") == "1":
         return "api"
     mode = (get_user_preferences().get("mode") or "auto").lower()
-    if mode in ("web", "api"):
+    # safari/chrome are PLAYBACK engines — their data still comes from the REST API.
+    if mode in ("web", "api", "safari", "chrome"):
         return "api"
     # native or auto: native only when AppleScript is available; otherwise fall
     # back to the web engine so a non-macOS host never hits AppleScript.
     return "native" if APPLESCRIPT_AVAILABLE else "api"
+
+
+def _playback_engine(engine_override: Optional[str] = None, for_queue: bool = False) -> str:
+    """Resolve the playback engine: 'native' | 'safari' | 'chrome' | 'none'.
+
+    Priority: per-call ``engine=`` override → ``mode`` pref → ``auto`` routing.
+    'none' means no player is available for this selection (the caller turns that
+    into an actionable error). ``for_queue`` distinguishes Up Next (web-player only:
+    Safari on macOS, Chrome off-mac) from plain playback (native on macOS).
+    AppleScript availability is the macOS proxy (native + Safari both need it)."""
+    sel = (engine_override or "").strip().lower()
+    if not sel:
+        sel = (get_user_preferences().get("mode") or "auto").lower()
+    if sel == "web":  # legacy alias → auto's web pick
+        sel = "auto"
+    if sel == "api":
+        return "none"  # api mode has no player
+    if sel == "native":
+        return "native" if APPLESCRIPT_AVAILABLE else "none"
+    if sel == "safari":
+        return "safari" if APPLESCRIPT_AVAILABLE else "none"  # macOS-only
+    if sel == "chrome":
+        return "chrome"
+    # auto: Up Next is web-player only (Safari on macOS, else Chrome); plain
+    # playback prefers the real Music.app on macOS.
+    if for_queue:
+        return "safari" if APPLESCRIPT_AVAILABLE else "chrome"
+    return "native" if APPLESCRIPT_AVAILABLE else "chrome"
+
+
+def _queue_engine(engine_override: Optional[str] = None) -> str:
+    """Resolve the engine for Up Next ops. Native Music.app has no exposed queue,
+    so a 'native' resolution collapses to 'none' (caller guides to safari/chrome)."""
+    eng = _playback_engine(engine_override, for_queue=True)
+    return "none" if eng == "native" else eng
+
+
+def _web_player(engine: str):
+    """Return the module that drives the given web engine ('safari' | 'chrome')."""
+    if engine == "safari":
+        from . import safari_player
+
+        return safari_player
+    from . import browser
+
+    return browser
+
+
+def _no_player_msg(engine_override: Optional[str] = None, for_queue: bool = False) -> str:
+    """Actionable error when no playback/queue engine is available."""
+    mode = (engine_override or get_user_preferences().get("mode") or "auto").lower()
+    if for_queue and mode == "native":
+        return (
+            "Up Next isn't available in native (Music.app) mode — it's a web-player "
+            "feature. Set mode to safari or chrome (or pass engine='safari')."
+        )
+    if mode == "api":
+        return (
+            "API mode has no player. Set mode to native, safari, or chrome (or pass "
+            "engine=) to play or queue."
+        )
+    return (
+        "No playback engine is available here. On macOS use native or safari; "
+        "elsewhere use chrome (pip install 'applemusic-mcp[browser]')."
+    )
 
 
 def _mode_pinned_native() -> bool:
