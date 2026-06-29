@@ -701,6 +701,7 @@ _QUEUE_LIST_JS = """
 _QUEUE_PLAY_NEXT_JS = """
 async (id) => {
   const mk = window.MusicKit.getInstance();
+  mk.autoplayEnabled = false;  // don't let a curated audition queue balloon into a station
   await mk.playNext({ song: id });
   return mk.queue.items.length;
 }
@@ -709,6 +710,7 @@ async (id) => {
 _QUEUE_PLAY_LATER_JS = """
 async (id) => {
   const mk = window.MusicKit.getInstance();
+  mk.autoplayEnabled = false;  // don't let a curated audition queue balloon into a station
   await mk.playLater({ song: id });
   return mk.queue.items.length;
 }
@@ -717,6 +719,7 @@ async (id) => {
 _QUEUE_SET_JS = """
 async (ids) => {
   const mk = window.MusicKit.getInstance();
+  mk.autoplayEnabled = false;  // a hand-set queue is curated — don't append a station
   await mk.setQueue({ songs: ids });
   return mk.queue.items.length;
 }
@@ -743,6 +746,7 @@ async (i) => {
 _QUEUE_JUMP_BY_ID_JS = """
 async (id) => {
   const mk = window.MusicKit.getInstance();
+  mk.autoplayEnabled = false;  // jumping near the end shouldn't spawn an autoplay station
   const idx = mk.queue.items.findIndex(it => it && it.id === id);
   if (idx < 0) return -1;
   await mk.changeToMediaAtIndex(idx);
@@ -761,6 +765,7 @@ async () => {
 _QUEUE_JUMP_JS = """
 async (i) => {
   const mk = window.MusicKit.getInstance();
+  mk.autoplayEnabled = false;  // jumping near the end shouldn't spawn an autoplay station
   if (i < 0 || i >= mk.queue.items.length) return -1;
   await mk.changeToMediaAtIndex(i);
   return mk.queue.position;

@@ -7907,6 +7907,7 @@ if APPLESCRIPT_AVAILABLE:
                             add_ok, add_msg = _add_songs_to_library([catalog_id])
                             if add_ok:
                                 time.sleep(PLAY_TRACK_INITIAL_DELAY)
+                                result = ""  # bound even if no attempt runs
                                 for attempt in range(PLAY_TRACK_MAX_ATTEMPTS):
                                     if attempt > 0:
                                         time.sleep(PLAY_TRACK_RETRY_DELAY)
@@ -7993,6 +7994,7 @@ if APPLESCRIPT_AVAILABLE:
                 if add_ok:
                     # Wait for iCloud sync, then play
                     time.sleep(PLAY_TRACK_INITIAL_DELAY)
+                    result = ""  # bound even if no attempt runs
                     for attempt in range(PLAY_TRACK_MAX_ATTEMPTS):
                         if attempt > 0:
                             time.sleep(PLAY_TRACK_RETRY_DELAY)
