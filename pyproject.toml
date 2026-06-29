@@ -34,11 +34,13 @@ dependencies = [
     "pyjwt[crypto]>=2.8.0",
     "requests>=2.31.0",
     "cryptography>=41.0.0",
-    # Browser engine for the sign-in / token-capture flow (drives a local Chrome
-    # against music.apple.com). Included by default so the no-Apple-Developer-account
-    # path works out of the box — the sign-in is offered automatically when a token
-    # is needed and none is configured. Uses system Chrome when present.
-    "playwright>=1.44.0",
+    # Browser engine for sign-in / token capture / web playback (drives a local
+    # Chrome against music.apple.com). REQUIRED off macOS — it's the only path there
+    # (no Music.app, no Safari harvest). On macOS it's OPTIONAL: Safari sign-in
+    # (`login --safari`), native Music.app playback, and the API cover everything, so
+    # the default Mac install skips the ~500 MB Playwright download. Mac users who
+    # want the Chrome web player install the `browser` extra (see optional-deps).
+    "playwright>=1.44.0; sys_platform != 'darwin'",
     # OS keychain for token storage (macOS Keychain / Windows Credential Locker /
     # Linux Secret Service). Falls back to a 0600 file when no backend is available
     # (e.g. headless servers), so this never blocks the API path.
@@ -51,6 +53,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# macOS users who want the Chrome web player (instead of Safari sign-in + native
+# Music.app playback) install this: `pip install 'applemusic-mcp[browser]'`.
+# Off macOS, Playwright is a hard dependency (above) and this extra is redundant.
+browser = ["playwright>=1.44.0"]
 dev = [
     "pytest>=7.0.0",
     "pytest-mock>=3.0.0",

@@ -45,7 +45,7 @@ Everything in the **API** column runs anywhere, no browser and no Music app. Bro
 
 ## Setup
 
-**Requirements:** Python 3.10+ and an Apple Music subscription. Playback and the Up Next queue also need [Google Chrome](https://www.google.com/chrome/) (macOS can use the Music app instead).
+**Requirements:** Python 3.10+ and an Apple Music subscription. The Chrome web player (cross-platform playback + Up Next queue) needs [Google Chrome](https://www.google.com/chrome/) + Playwright. **On macOS you can skip both** — sign in via Safari and play through the Music app — so the default macOS install is lightweight (no ~500 MB Playwright). Windows/Linux include Playwright automatically (it's the only path there).
 
 **Claude Code**, one line:
 
@@ -85,22 +85,22 @@ applemusic-mcp login --dev      # prompts for Team ID, Key ID, and .p8 path
 
 See the [appendix](#appendix-developer-token) for getting the MusicKit key.
 
-**Web sign-in (no developer account).** The quick path, available on any OS:
+**Web sign-in (no developer account).** The quick path, and what plain `applemusic-mcp login` does. Your password never touches this tool, sign-in persists, and tokens re-fetch before they expire. You can also sign in conversationally — just ask your assistant. (Web sign-in uses Apple's web-player API, the same path as open-source clients like [Cider](https://github.com/ciderapp/Cider-2) and [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/).)
 
-```bash
-applemusic-mcp login            # opens Chrome to music.apple.com; sign in once
-applemusic-mcp status           # verify
-```
+- **macOS — reads from a signed-in Safari (no Chrome, no ~500 MB Playwright):**
 
-This captures your session from a local signed-in Chrome profile (your password never touches this tool). Sign-in persists, and tokens re-fetch themselves before they expire, so you rarely re-authenticate. You can also sign in conversationally: just ask your assistant. Web sign-in uses Apple's web-player API, the same path used by open-source clients like [Cider](https://github.com/ciderapp/Cider-2) and [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/).
+  ```bash
+  applemusic-mcp login            # macOS default: harvests from Safari
+  applemusic-mcp status           # verify
+  ```
 
-**macOS: sign in via Safari (no Chrome, no ~1 GB download).** If you're already signed into Apple Music in Safari, the tool can read your session directly — skipping the Chrome/Playwright install entirely:
+  One-time Safari setting (a security toggle — *you* enable it, the tool never flips it): **Safari → Settings → Advanced → "Show features for web developers"**, then the **Develop** menu → **"Allow JavaScript from Apple Events."** Sign into Apple Music at [music.apple.com](https://music.apple.com) in Safari first. That setting only lets the tool read **one cookie** — your Apple Music token — from your own signed-in Safari, and you can switch it back off afterward. If it's off or you're not signed in, `login` prints exactly how to fix it (or use `--dev`, or `--chrome`). Prefer Chrome on a Mac? `pip install 'applemusic-mcp[browser]'`, then `applemusic-mcp login --chrome`. Combined with native Music.app playback, a Mac needs no Chrome at all.
 
-```bash
-applemusic-mcp login --safari    # reads the session from your signed-in Safari
-```
+- **Windows / Linux — opens a local Chrome** (Playwright ships by default there; it's the only path):
 
-One-time prerequisite (it's a Safari security setting — enable it yourself, the tool never flips it): **Safari → Settings → Advanced → "Show features for web developers"**, then the **Develop** menu → **"Allow JavaScript from Apple Events."** Then sign into Apple Music at [music.apple.com](https://music.apple.com) in Safari. If the setting is off or Safari isn't signed in, the tool tells you exactly what to fix and you can fall back to the Chrome flow above. Combined with native Music.app playback, a Mac needs no Chrome at all.
+  ```bash
+  applemusic-mcp login            # opens Chrome to music.apple.com; sign in once
+  ```
 
 <details>
 <summary>Config locations, mode, and source install</summary>
@@ -109,7 +109,7 @@ One-time prerequisite (it's a Safari security setting — enable it yourself, th
 
 **`mode` preference** (engine for data and playback): `auto` (default; native Music.app on macOS, web API + Chrome web player elsewhere), `native` (local Music.app, no account), or `web` (web API + web player, any OS). Set it conversationally: `config(action="set-pref", preference="mode", string_value="web")`. Playback always follows the engine.
 
-**Browser features** (playback, queue, sign-in) need Google Chrome plus the one-time `playwright install chromium`. The bundled Chromium can't decode Apple's DRM, so a real Chrome install is required, and these features open a local Chrome window (not for headless servers). With `uvx`, run the browser install as `uvx --from applemusic-mcp playwright install chromium`.
+**Browser (Chrome web player) features** — cross-platform playback + the Up Next queue — need Google Chrome plus Playwright. Off macOS, Playwright is installed by default; **on macOS it's an opt-in extra** (`pip install 'applemusic-mcp[browser]'`) since Safari sign-in + native Music.app playback already cover the Mac. After installing, run the one-time browser download (`playwright install chromium`, or `uvx --from applemusic-mcp playwright install chromium`). The bundled Chromium can't decode Apple's DRM, so a real Chrome install is required, and these features open a local Chrome window (not for headless servers).
 
 **From source:** `git clone … && pip install -e .`, then point the config `command` at `<repo>/venv/bin/applemusic-mcp` or use `python -m applemusic_mcp`.
 </details>

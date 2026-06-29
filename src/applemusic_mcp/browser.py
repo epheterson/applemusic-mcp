@@ -145,7 +145,10 @@ class _BrowserEngine:
             from playwright.sync_api import sync_playwright
         except ImportError:
             self._start_error = BrowserUnavailable(
-                "Playwright (a core dependency) failed to import — reinstall the package."
+                "The Chrome web player needs Playwright, which isn't installed. On macOS "
+                "install it with:  pip install 'applemusic-mcp[browser]'  — or skip Chrome "
+                "entirely: sign in with `applemusic-mcp login --safari` and use Music.app "
+                "for playback. (Off macOS Playwright ships by default; reinstall the package.)"
             )
             self._ready.set()
             return

@@ -47,18 +47,12 @@ tell application "Safari"
 end tell
 """
 
+# Concise reasons only — the CLI (cmd_login) owns the full guidance menu.
 _SETTING_OFF_MSG = (
-    "Safari blocked reading the session: enable Safari → Settings → Advanced → "
-    '"Show features for web developers", then the Develop menu → "Allow JavaScript '
-    'from Apple Events", and retry. (Or use the default browser sign-in: '
-    "`applemusic-mcp login`.)"
+    'Safari blocked reading the session — "Allow JavaScript from Apple Events" is off.'
 )
 
-_NOT_SIGNED_IN_MSG = (
-    "No Apple Music session found in Safari — open music.apple.com in Safari and "
-    "sign in, then retry `applemusic-mcp login --safari`. (Or use the default "
-    "browser sign-in: `applemusic-mcp login`.)"
-)
+_NOT_SIGNED_IN_MSG = "No Apple Music session found in Safari — sign in at music.apple.com first."
 
 
 def _parse_media_user_token(cookie_str: str) -> str:

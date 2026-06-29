@@ -347,12 +347,13 @@ osascript stderr messages map to a small set of environmental states. When Apple
 > (developer token generated **or** sourced from Apple's public web player, plus a
 > `media-user-token`). The old UI add path was version-fragile (it broke across
 > macOS/Music.app releases, #37). To enable the API path without an Apple Developer
-> account: `applemusic-mcp login` (one-time browser login captures the
-> media-user-token). On macOS, `applemusic-mcp login --safari` reads the
-> media-user-token from a signed-in Safari instead — no Chrome/Playwright —
-> provided Safari → Settings → Advanced → Develop → "Allow JavaScript from Apple
-> Events" is enabled. The UI primitives below remain only for **playback /
-> play-from-URL** and catalog *search*, not for adding.
+> account: `applemusic-mcp login`. On **macOS** this defaults to reading the
+> media-user-token from a signed-in **Safari** — no Chrome/Playwright — provided
+> Safari → Settings → Advanced → Develop → "Allow JavaScript from Apple Events" is
+> enabled; `login --chrome` uses the Chrome web player instead (needs
+> `pip install 'applemusic-mcp[browser]'`). **Off macOS**, `login` opens Chrome
+> (Playwright ships by default there). The UI primitives below remain only for
+> **playback / play-from-URL** and catalog *search*, not for adding.
 
 The remaining UI automation controls Music.app through System Events (Accessibility API) and CoreGraphics (mouse events).
 

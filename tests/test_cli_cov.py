@@ -26,19 +26,50 @@ def _args(**kw):
 
 
 def test_login_web_delegates_to_browser(monkeypatch):
+    """Off macOS, plain `login` uses the Chrome web flow."""
     called = {}
 
     def fake_signin():
         called["signin"] = True
         return 0
 
+    monkeypatch.setattr("platform.system", lambda: "Linux")
     monkeypatch.setitem(
         sys.modules,
         "applemusic_mcp.browser",
-        types.SimpleNamespace(_cli_signin=fake_signin, _profile_in_use=lambda: False),
+        types.SimpleNamespace(
+            _cli_signin=fake_signin, _profile_in_use=lambda: False, is_available=lambda: True
+        ),
     )
     assert cli.cmd_login(_args(dev=False)) == 0
     assert called["signin"] is True
+
+
+def test_login_macos_defaults_to_safari(monkeypatch):
+    """On macOS, plain `login` (no --chrome) harvests from Safari — no Chrome."""
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    from applemusic_mcp import auth, safari as safari_mod
+
+    saved = {}
+    monkeypatch.setattr(safari_mod, "media_user_token", lambda: (True, "TOK"))
+    monkeypatch.setattr(auth, "save_user_token", lambda t: saved.setdefault("t", t))
+    assert cli.cmd_login(_args(dev=False)) == 0
+    assert saved["t"] == "TOK"
+
+
+def test_login_macos_chrome_needs_browser_extra(monkeypatch, capsys):
+    """macOS --chrome with Playwright absent guides to the extra / Safari, no crash."""
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    monkeypatch.setitem(
+        sys.modules,
+        "applemusic_mcp.browser",
+        types.SimpleNamespace(
+            _cli_signin=lambda: 0, _profile_in_use=lambda: False, is_available=lambda: False
+        ),
+    )
+    assert cli.cmd_login(_args(dev=False, chrome=True)) == 1
+    out = capsys.readouterr().out.lower()
+    assert "browser" in out and ("safari" in out or "playwright" in out)
 
 
 # --- login --dev -----------------------------------------------------------
