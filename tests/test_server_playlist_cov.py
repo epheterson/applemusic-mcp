@@ -5699,3 +5699,15 @@ class TestPlaylistAddRemainingCoverage:
 #   which is only called in AppleScript mode (auto_add=True with a name playlist).
 #   In API mode (playlist ID like p.xxx), that function is never called, so
 #   ui_successes is always empty and line 3653 is never reached.
+
+
+def test_action_folders_shows_tree(monkeypatch):
+    """`playlist(action='folders')` exposes the folder tree (folders aren't in list)."""
+    from applemusic_mcp import server
+
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+    monkeypatch.setattr(server.asc, "get_folder_tree", lambda: (True, "[My Folder]\n  Boom Boom"))
+    out = server.playlist(action="folders")
+    assert "[My Folder]" in out and "Boom Boom" in out
+    # `tree` is an accepted alias
+    assert "[My Folder]" in server.playlist(action="tree")

@@ -4234,7 +4234,7 @@ def playlist(
     verify: bool = True,
     auto_add: Optional[bool] = None,
 ) -> str:
-    """Playlist and folder operations. Actions: list, tracks, search, create, add, copy, move (macOS), path (macOS), remove (macOS), delete (macOS), rename (macOS). To find a playlist by name, use action='list' with filter='jack' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', `track` accepts a song NAME, a catalog song id (a numeric id like '1440857781' — pins the EXACT edition, avoiding name/album version mismatches), or a library id; set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own. Note: on macOS, adding a not-yet-owned catalog track to a Music.app-made playlist briefly brings Music.app to the foreground — the tool clicks File > Library > Update Cloud Library to force the iCloud sync so the track lands locally and can be attached. This flash is expected, not a glitch."""
+    """Playlist and folder operations. Actions: list, folders (macOS — show the folder tree; folders are NOT in `list`), tracks, search, create, add, copy, move (macOS), path (macOS), remove (macOS), delete (macOS), rename (macOS). To find a playlist by name, use action='list' with filter='jack' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', `track` accepts a song NAME, a catalog song id (a numeric id like '1440857781' — pins the EXACT edition, avoiding name/album version mismatches), or a library id; set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own. Note: on macOS, adding a not-yet-owned catalog track to a Music.app-made playlist briefly brings Music.app to the foreground — the tool clicks File > Library > Update Cloud Library to force the iCloud sync so the track lands locally and can be attached. This flash is expected, not a glitch."""
     action = action.lower().strip().replace("-", "_")
 
     if action == "list":
@@ -4353,6 +4353,10 @@ def playlist(
                 "with the same tracks, but the playlist ID will change."
             )
         return _playlist_move(playlist, folder_target)
+    elif action in ("folders", "tree"):
+        # Explicit, discoverable folder view (macOS). Folders are otherwise invisible
+        # to `list` (playlists only) — this is how you find folder clutter.
+        return _playlist_tree()
     elif action == "path":
         target = playlist or folder
         if target:
@@ -4360,7 +4364,7 @@ def playlist(
         else:
             return _playlist_tree()
     else:
-        return f"Unknown action: {action}. Use: list, tracks, search, create, add, copy, move, path, remove (macOS), delete (macOS), rename (macOS)"
+        return f"Unknown action: {action}. Use: list, folders, tracks, search, create, add, copy, move, path, remove (macOS), delete (macOS), rename (macOS)"
 
 
 # ============ LIBRARY MANAGEMENT ============
