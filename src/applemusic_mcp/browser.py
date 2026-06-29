@@ -319,6 +319,46 @@ def drm_capable() -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _ensure_session_cookie(page) -> None:
+    """Bridge a saved media-user-token into the Chrome profile's cookie jar.
+
+    If the profile has no media-user-token cookie but we have one saved (harvested
+    from Safari via `login --safari`, or captured from a prior Chrome login), inject
+    it so the web player authorizes off that SAME sign-in. This is what lets a macOS
+    user who signed in via Safari also use the Chrome web player + Up Next queue
+    without a separate Chrome login. No-op if a cookie is already present or no token
+    is saved."""
+    try:
+        cookies = page.context.cookies("https://music.apple.com")
+        if any(c.get("name") == "media-user-token" and c.get("value") for c in cookies):
+            return
+    except Exception:
+        return
+    try:
+        from .auth import get_user_token
+
+        tok = get_user_token()
+    except Exception:
+        return  # no saved token (FileNotFoundError) or read error
+    if not tok:
+        return
+    try:
+        page.context.add_cookies(
+            [
+                {
+                    "name": "media-user-token",
+                    "value": tok,
+                    "domain": ".apple.com",
+                    "path": "/",
+                    "secure": True,
+                }
+            ]
+        )
+        logger.info("Bridged a saved media-user-token into the web-player profile.")
+    except Exception as exc:
+        logger.warning("Couldn't inject the saved token cookie: %s", exc)
+
+
 def _check_signed_in(page) -> bool:
     """True if the persistent session is authenticated.
 
@@ -328,6 +368,9 @@ def _check_signed_in(page) -> bool:
     than scraping a "Sign In" element out of the Ember SPA.) Falls back to
     MusicKit's ``isAuthorized`` if cookies can't be read.
     """
+    # Bridge a saved (e.g. Safari-harvested) token into the profile first, so a
+    # macOS Safari sign-in also authorizes the web player.
+    _ensure_session_cookie(page)
     # Try the cookie WITHOUT navigating first — the persistent profile's cookie jar
     # has media-user-token from the prior sign-in, and navigating would clobber any
     # active playback/queue. Only goto as a fallback when the cookie isn't present.
@@ -503,6 +546,7 @@ def _ensure_player_ready(page) -> None:
     state, so once we're on a MusicKit-ready music.apple.com page we reuse it
     (this is what lets pause/skip/seek/volume act on the *currently playing*
     track instead of a freshly reloaded, empty player)."""
+    _ensure_session_cookie(page)  # bridge a Safari/saved token so the web player authorizes
     if "music.apple.com" in (page.url or ""):
         try:
             if page.evaluate(_MUSICKIT_READY):

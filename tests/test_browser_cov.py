@@ -1038,3 +1038,40 @@ def test_engine_chromium_fallback_and_new_page(monkeypatch, tmp_path):
 def test_engine_shutdown_when_not_started():
     eng = browser._BrowserEngine()
     eng.shutdown()  # no thread -> no-op, must not raise
+
+
+def test_ensure_session_cookie_injects_saved_token(monkeypatch):
+    """A saved (e.g. Safari-harvested) token is bridged into the profile so the web
+    player authorizes off the same sign-in."""
+    import applemusic_mcp.auth as real_auth
+
+    page = FakePage(cookies=[])  # profile has no cookie yet
+    added = []
+    page.context.add_cookies = lambda c: added.append(c)
+    monkeypatch.setattr(real_auth, "get_user_token", lambda: "SAVEDTOK")
+    browser._ensure_session_cookie(page)
+    assert added and added[0][0]["name"] == "media-user-token"
+    assert added[0][0]["value"] == "SAVEDTOK"
+
+
+def test_ensure_session_cookie_noop_when_cookie_present(monkeypatch):
+    page = FakePage(cookies=[{"name": "media-user-token", "value": "x"}])
+    added = []
+    page.context.add_cookies = lambda c: added.append(c)
+    browser._ensure_session_cookie(page)
+    assert added == []  # already signed in → don't inject
+
+
+def test_ensure_session_cookie_noop_when_no_saved_token(monkeypatch):
+    import applemusic_mcp.auth as real_auth
+
+    page = FakePage(cookies=[])
+    added = []
+    page.context.add_cookies = lambda c: added.append(c)
+
+    def _none():
+        raise FileNotFoundError("no token")
+
+    monkeypatch.setattr(real_auth, "get_user_token", _none)
+    browser._ensure_session_cookie(page)
+    assert added == []  # nothing to bridge
