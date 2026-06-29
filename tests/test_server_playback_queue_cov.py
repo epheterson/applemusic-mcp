@@ -189,9 +189,9 @@ class TestPlaybackDispatcher:
         assert out.startswith("Error:")
 
     def test_control_no_applescript_needs_browser(self, monkeypatch):
-        """Lines 7013-7014: control, no AppleScript, no browser."""
+        """control with the native engine active but no AppleScript → needs web."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "native")
         out = server.playback(action="control", control="play")
         assert "web" in out.lower() or "login" in out.lower()
 
