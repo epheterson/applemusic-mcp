@@ -77,3 +77,69 @@ def test_signin_safari_fail_no_playwright_guides_to_safari(monkeypatch):
     monkeypatch.setattr(browser, "is_available", lambda: False)  # no Playwright
     out = server._auth_action("signin")
     assert "Apple Events" in out and "browser" in out.lower()  # Safari fix + [browser] option
+
+
+# -- MEDIUM: off-macOS playlist add must de-dup + honor auto_add -------------
+
+import types  # noqa: E402
+
+
+def _ri(input_type, value, artist="", error=None):
+    return types.SimpleNamespace(input_type=input_type, value=value, artist=artist, error=error)
+
+
+def test_playlist_add_api_dedup(monkeypatch):
+    monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda n: ("p.1", None))
+    monkeypatch.setattr(
+        server.amp_api,
+        "get_tracks",
+        lambda pid: [{"catalog_id": "123", "name": "Africa", "artist": "Toto"}],
+    )
+    monkeypatch.setattr(
+        server, "_resolve_track", lambda t, a="": [_ri(server.InputType.CATALOG_ID, "123")]
+    )
+    calls = {}
+    monkeypatch.setattr(
+        server.amp_api, "add_tracks", lambda pid, items: calls.update(items=items) or (True, "")
+    )
+    out = server._playlist_add_api("Mix", "123")  # already present
+    assert "items" not in calls  # add_tracks NOT called — de-duped
+    assert "already in the playlist" in out.lower()
+
+
+def test_playlist_add_api_auto_add_off_skips_catalog(monkeypatch):
+    monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda n: ("p.1", None))
+    monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+    monkeypatch.setattr(
+        server, "_resolve_track", lambda t, a="": [_ri(server.InputType.NAME, "New Song")]
+    )
+    monkeypatch.setattr(server.amp_api, "search_library_songs", lambda q, n=1: [])  # not in library
+    searched = {}
+    monkeypatch.setattr(
+        server.amp_api,
+        "search_catalog_songs",
+        lambda q, n=1: searched.update(hit=1) or [{"id": "999", "name": "New Song", "artist": "X"}],
+    )
+    monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, ""))
+    out = server._playlist_add_api("Mix", "New Song", auto_add=False)
+    assert "hit" not in searched  # did NOT catalog-search when opted out
+    assert "auto_add=True" in out
+
+
+def test_playlist_add_api_auto_add_on_searches_catalog(monkeypatch):
+    monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda n: ("p.1", None))
+    monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+    monkeypatch.setattr(
+        server, "_resolve_track", lambda t, a="": [_ri(server.InputType.NAME, "New Song")]
+    )
+    monkeypatch.setattr(
+        server.amp_api,
+        "search_catalog_songs",
+        lambda q, n=1: [{"id": "999", "name": "New Song", "artist": "X"}],
+    )
+    added = {}
+    monkeypatch.setattr(
+        server.amp_api, "add_tracks", lambda pid, items: added.update(items=items) or (True, "")
+    )
+    out = server._playlist_add_api("Mix", "New Song", auto_add=True)
+    assert added["items"] == ["999"] and "New Song" in out

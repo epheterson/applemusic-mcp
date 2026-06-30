@@ -1346,7 +1346,13 @@ def _playlist_move_api(playlist: str, folder: str) -> str:
     return f"Error: {msg}"
 
 
-def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
+def _playlist_add_api(
+    playlist: str,
+    track: str,
+    artist: str = "",
+    allow_duplicates: bool = False,
+    auto_add: Optional[bool] = None,
+) -> str:
     """Add track(s) to a playlist entirely over the API (cross-platform): resolve
     the playlist's library id, resolve each track to a catalog id (direct id, or
     catalog search by name), and POST them. Adds to the library implicitly."""
@@ -1361,31 +1367,86 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
             pid = amp_api.resolve_playlist_id(playlist, api_created_only=False)
     if not pid:
         return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
+    # Honor the auto_add preference (parity with the native path): when off, a bare
+    # NAME isn't catalog-searched + added — the user opted out of that.
+    if auto_add is None:
+        auto_add = bool(get_user_preferences().get("auto_add"))
+    # De-dup against what's already in the playlist (unless allow_duplicates), so a
+    # repeated add doesn't silently stack copies — the native path does this too.
+    existing_ids: set = set()
+    existing_names: set = set()
+    if not allow_duplicates:
+        for t in amp_api.get_tracks(pid):
+            if t.get("catalog_id"):
+                existing_ids.add(str(t["catalog_id"]))
+            if t.get("name"):
+                existing_names.add(t["name"].strip().lower())
+
     items: list = []  # str catalog id, or (id, "library-songs") for a library song
     added_names: list[str] = []
     errors: list[str] = []
+    skipped: list[str] = []
+
+    def _dup(cid: str = "", nm: str = "") -> bool:
+        return bool(
+            (cid and str(cid) in existing_ids) or (nm and nm.strip().lower() in existing_names)
+        )
+
     for r in _resolve_track(track, artist):
         if r.error:
             errors.append(r.error)
         elif r.input_type == InputType.CATALOG_ID:
+            if _dup(cid=r.value):
+                skipped.append(f"track {r.value}")
+                continue
             items.append(r.value)
             added_names.append(f"track {r.value}")
+            existing_ids.add(str(r.value))
         elif r.input_type == InputType.LIBRARY_ID:
-            # Already in the library — add it by its library id (type library-songs).
             items.append((r.value, "library-songs"))
             added_names.append(f"library track {r.value}")
         elif r.input_type in (InputType.NAME, InputType.JSON_OBJECT):
             q = f"{r.value} {r.artist or artist}".strip()
-            songs = amp_api.search_catalog_songs(q, 1)
-            if songs:
-                items.append(songs[0]["id"])
-                added_names.append(f"{songs[0]['name']} - {songs[0]['artist']}")
+            # auto_add controls whether a name NOT already in your library is pulled
+            # from the catalog (parity with native): off → only add it if it's already
+            # in your library; on → search the catalog. Either way, de-dup.
+            hit = None
+            if auto_add:
+                songs = amp_api.search_catalog_songs(q, 1)
+                hit = {"id": songs[0]["id"], **songs[0]} if songs else None
             else:
-                errors.append(f"{r.value}: not found in catalog")
+                libs = amp_api.search_library_songs(q, 1)
+                if libs:
+                    hit = {"id": libs[0].get("catalog_id"), **libs[0]}
+                else:
+                    skipped.append(
+                        f"{r.value} (not in your library — set auto_add=True to add it from the catalog)"
+                    )
+            if hit is None:
+                if auto_add:
+                    errors.append(f"{r.value}: not found in catalog")
+            elif _dup(cid=hit.get("id"), nm=hit.get("name")):
+                skipped.append(f"{hit.get('name')} - {hit.get('artist')}")
+            else:
+                cid = hit.get("id")
+                items.append(cid if cid else (hit["id"], "library-songs"))
+                added_names.append(f"{hit.get('name')} - {hit.get('artist')}")
+                if cid:
+                    existing_ids.add(str(cid))
+                existing_names.add((hit.get("name") or "").strip().lower())
         else:
             errors.append(f"{r.value}: unsupported id type for add")
     if not items:
-        return "Error: nothing to add\n" + "\n".join(errors)
+        if skipped and not errors:
+            return "Nothing added — all already in the playlist or skipped:\n  - " + "\n  - ".join(
+                skipped
+            )
+        msg = "Error: nothing to add"
+        if skipped:
+            msg += "\nSkipped: " + ", ".join(skipped)
+        if errors:
+            msg += "\n" + "\n".join(errors)
+        return msg
     ok, msg = amp_api.add_tracks(pid, items)
     if not ok:
         # A 401/403 is ambiguous: either the web session expired, OR the playlist
@@ -1421,6 +1482,8 @@ def _playlist_add_api(playlist: str, track: str, artist: str = "") -> str:
     )
     if fuzzy:
         out += f"\n{_format_fuzzy_match(fuzzy)}"
+    if skipped:
+        out += "\n" + "\n".join(f"  ~ skipped (already in playlist): {s}" for s in skipped)
     if errors:
         out += "\n" + "\n".join(f"  - {e}" for e in errors)
     return out
@@ -4407,7 +4470,7 @@ def playlist(
         # playlists too and attempts the write; if the web token can't edit one it
         # surfaces the real error instead of a bogus "not found."
         if track and not album:
-            return _playlist_add_api(playlist, track, artist)
+            return _playlist_add_api(playlist, track, artist, allow_duplicates, auto_add)
         return _playlist_add(playlist, track, album, artist, allow_duplicates, verify, auto_add)
     elif action == "copy":
         return _playlist_copy(source, new_name)

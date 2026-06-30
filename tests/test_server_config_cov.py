@@ -21,6 +21,20 @@ import pytest
 
 from applemusic_mcp import server
 
+
+@pytest.fixture(autouse=True)
+def _no_real_safari_signin(monkeypatch):
+    """signin now tries the Safari harvest first on macOS — stub it to 'no session'
+    so config signin tests deterministically exercise the Chrome path regardless of
+    the host's real Safari state (tests that want Safari success override this)."""
+    from applemusic_mcp import safari
+
+    monkeypatch.setattr(
+        safari, "media_user_token", lambda: (False, "no safari session"), raising=False
+    )
+    yield
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1022,9 +1036,13 @@ class TestAuthActionGaps:
         assert "Error" in out and "no chrome" in out
 
     def test_signin_generic_error_message(self, monkeypatch):
-        """signin_interactive returns (False, non-waiting msg) → browser error text."""
+        """signin_interactive returns (False, non-waiting msg) → browser error text.
+        Force the Chrome fallback: Safari harvest fails + Playwright present."""
         import applemusic_mcp.browser as browser
+        from applemusic_mcp import safari
 
+        monkeypatch.setattr(safari, "media_user_token", lambda: (False, "no safari session"))
+        monkeypatch.setattr(browser, "is_available", lambda: True)
         monkeypatch.setattr(browser, "signin_interactive", lambda: (False, "playwright not found"))
         out = server._auth_action("signin")
         assert "playwright not found" in out

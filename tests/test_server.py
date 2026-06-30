@@ -635,7 +635,12 @@ class TestAuthTool:
 
     def test_signin_still_waiting(self, monkeypatch):
         import applemusic_mcp.browser as browser
+        from applemusic_mcp import safari
 
+        # Force the Chrome path: Safari harvest fails + Playwright present (signin now
+        # tries Safari first on macOS).
+        monkeypatch.setattr(safari, "media_user_token", lambda: (False, "no safari session"))
+        monkeypatch.setattr(browser, "is_available", lambda: True)
         monkeypatch.setattr(browser, "signin_interactive", lambda *a, **k: (False, "still-waiting"))
         out = server.config(action="signin")
         assert "finish signing in" in out.lower()

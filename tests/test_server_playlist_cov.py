@@ -378,7 +378,7 @@ class TestPlaylistAddApi:
             lambda q, n: [{"id": "1234567890", "name": "Hey Jude", "artist": "Beatles"}],
         )
         monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
-        result = server._playlist_add_api("p.abc123", "Hey Jude")
+        result = server._playlist_add_api("p.abc123", "Hey Jude", auto_add=True)
         assert "Added" in result
         assert "Hey Jude" in result
 
@@ -390,7 +390,7 @@ class TestPlaylistAddApi:
     def test_name_search_not_found(self, monkeypatch):
         """Track name search returns nothing -> included in errors, but nothing added."""
         monkeypatch.setattr(server.amp_api, "search_catalog_songs", lambda q, n: [])
-        result = server._playlist_add_api("p.abc123", "NonExistentSong12345")
+        result = server._playlist_add_api("p.abc123", "NonExistentSong12345", auto_add=True)
         assert "Error" in result
 
     def test_with_playlist_name_uses_fuzzy(self, monkeypatch):
@@ -2409,7 +2409,7 @@ class TestPlaylistAddApiEdgeCases:
 
         monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
         monkeypatch.setattr(server.amp_api, "search_catalog_songs", mock_search)
-        result = server._playlist_add_api("p.abc123", "Hey Jude", "Beatles")
+        result = server._playlist_add_api("p.abc123", "Hey Jude", "Beatles", auto_add=True)
         assert "Added" in result
         assert len(catalog_called) == 1
         assert "Beatles" in catalog_called[0]
@@ -2588,7 +2588,7 @@ class TestPlaylistAddApiErrorHandling:
     def test_empty_items_after_all_errors(self, monkeypatch):
         """All tracks error-out -> 'Error: nothing to add'."""
         monkeypatch.setattr(server.amp_api, "search_catalog_songs", lambda q, n: [])
-        result = server._playlist_add_api("p.abc123", "UnknownSong1, UnknownSong2")
+        result = server._playlist_add_api("p.abc123", "UnknownSong1, UnknownSong2", auto_add=True)
         assert "Error" in result
         assert "nothing" in result.lower() or "not found" in result.lower()
 
