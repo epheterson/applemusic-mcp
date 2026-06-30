@@ -977,7 +977,9 @@ def test_engine_import_error(monkeypatch):
     monkeypatch.delattr("playwright.sync_api.sync_playwright", raising=True)
     with pytest.raises(BrowserUnavailable) as e:
         eng._ensure_thread()
-    assert "reinstall" in str(e.value)
+    # Platform-aware message: macOS points at the [browser] extra / Safari; off-mac
+    # at reinstalling Playwright. Both name Playwright.
+    assert "Playwright" in str(e.value)
 
 
 def test_engine_launch_failure(monkeypatch, tmp_path):

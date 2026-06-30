@@ -92,6 +92,15 @@ def secret_set(key: str, value: str) -> None:
             _keyring.delete_password(_KEYRING_SERVICE, key)
         except Exception:  # pragma: no cover
             pass
+    # On Windows the secret SHOULD live in the Credential Locker; if we're here, that
+    # backend was unavailable and we're writing a plain file — say so, don't hide it.
+    if sys.platform == "win32":
+        logger.warning(
+            "Windows Credential Locker unavailable — storing %r in a local file "
+            "(%s) instead of the OS keychain.",
+            key,
+            _secret_file(key),
+        )
     _write_private(_secret_file(key), value)
 
 

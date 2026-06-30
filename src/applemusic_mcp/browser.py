@@ -165,12 +165,22 @@ class _BrowserEngine:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError:
-            self._start_error = BrowserUnavailable(
-                "The Chrome web player needs Playwright, which isn't installed. On macOS "
-                "install it with:  pip install 'applemusic-mcp[browser]'  — or skip Chrome "
-                "entirely: sign in with `applemusic-mcp login --safari` and use Music.app "
-                "for playback. (Off macOS Playwright ships by default; reinstall the package.)"
-            )
+            import sys as _sys
+
+            if _sys.platform == "darwin":
+                msg = (
+                    "The Chrome web player needs Playwright, which macOS doesn't install "
+                    "by default. Install it with:  pip install 'applemusic-mcp[browser]'  "
+                    "— or skip Chrome entirely: sign in with `applemusic-mcp login --safari` "
+                    "and use Safari/Music.app for playback."
+                )
+            else:
+                msg = (
+                    "The Chrome web player needs Playwright, which should ship with this "
+                    "package off macOS. Reinstall it, then run:  pip install playwright  "
+                    "&&  playwright install chromium"
+                )
+            self._start_error = BrowserUnavailable(msg)
             self._ready.set()
             return
 
