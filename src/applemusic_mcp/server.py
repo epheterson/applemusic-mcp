@@ -2788,13 +2788,18 @@ def _auto_search_and_add_to_playlist(
                     )
                 time.sleep(_VERIFY_DELAY_S)
             if added:
-                # The add landed but verify never confirmed within the budget — report
-                # honestly (it likely attached); do NOT re-add and risk a duplicate.
+                # The `duplicate` ran but native verify never confirmed it — treat as
+                # NOT landed (no optimistic "likely landed"; that's exactly what misled
+                # us when Music.app silently reverted the edit). This is the server-side
+                # rollback state — the real fix is to relaunch Music.app.
+                steps.append("Attach did not persist on native verify (likely a Music.app revert)")
                 return (
                     False,
-                    f"Added '{found_name}' to '{playlist_name}' but couldn't confirm it "
-                    "within a few seconds (iCloud propagation lag) — it likely landed; "
-                    "check the playlist before re-adding so you don't get a duplicate.",
+                    f"Added '{found_name}' to your library, but attaching it to "
+                    f"'{playlist_name}' did not persist — Music.app silently reverted the "
+                    "edit (an Apple bug; even a manual add fails in this state). Quit and "
+                    "reopen Music.app, then re-run this add. (Re-adding without relaunching "
+                    "won't stick.)",
                     steps,
                 )
         # Not synced within the budget (Apple's iCloud sync is variable — usually
@@ -3355,10 +3360,13 @@ def _playlist_search(
 
     matches = []
 
-    # Use AppleScript (only if we don't have API ID)
-    if use_applescript and not use_api:
-        if not APPLESCRIPT_AVAILABLE:
-            return "Error: playlist_name requires macOS"
+    if use_applescript and not use_api and not APPLESCRIPT_AVAILABLE:
+        return "Error: playlist_name requires macOS"
+
+    # Prefer native AppleScript on macOS — it's the GROUND TRUTH. The API/cache path
+    # lags native writes by minutes (showed just-removed tracks as present and new
+    # ones as absent right after edits), so on a Mac read Music.app directly.
+    if use_applescript and APPLESCRIPT_AVAILABLE:
         # Use native AppleScript search (fast, same as Music app search field)
         success, result = asc.search_playlist(resolved.applescript_name, query)
         if not success:
@@ -3366,8 +3374,8 @@ def _playlist_search(
         for t in result:
             track_id = t.get("id", "")
             matches.append({"name": t["name"], "artist": t["artist"], "id": track_id})
-    else:
-        # API path: manually filter tracks (cross-platform)
+    elif use_api:
+        # API path: manually filter tracks (cross-platform; off-mac, or no native).
         success, tracks = _get_playlist_track_names(resolved.api_id)
         if not success:
             return f"Error: {tracks}"
@@ -3889,9 +3897,10 @@ def _playlist_add(
                         result = (
                             f"AppleScript reported success but the track did not "
                             f"persist in '{resolved.applescript_name}' after retry. "
-                            f"Some user-created playlists silently revert "
-                            f"AppleScript edits server-side; adding manually via "
-                            f"Music.app's right-click → Add to Playlist usually works."
+                            f"Music.app silently reverted the edit server-side (an Apple "
+                            f"bug — a manual right-click add fails the same way). Quit and "
+                            f"reopen Music.app, then retry; re-adding without relaunching "
+                            f"won't stick."
                         )
             if success:
                 if split_match:
@@ -4047,11 +4056,10 @@ def _playlist_add(
                         )
                     else:
                         errors.append(
-                            f"{name}: AppleScript reported success but track did not "
-                            f"persist in playlist after retry. Some user-created "
-                            f"playlists silently revert AppleScript edits server-side; "
-                            f"adding manually via Music.app's right-click → Add to "
-                            f"Playlist usually works. "
+                            f"{name}: AppleScript reported success but the track did not "
+                            f"persist after retry — Music.app silently reverted the edit "
+                            f"server-side (an Apple bug; a manual add fails the same way). "
+                            f"Quit and reopen Music.app, then retry. "
                             f"Detail: {result2 if not success2 else 'verify failed'}"
                         )
 
@@ -4422,6 +4430,64 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
         return str(e)
 
 
+def _add_landed(result: str) -> bool:
+    """Conservatively decide whether a playlist-add RESULT means the track is now
+    really in the playlist. Used to gate a transactional swap's destructive remove:
+    any doubt → False (keep the old track). The add helpers already verify against
+    native AppleScript truth and emit honest failure strings; we read them strictly."""
+    low = result.lower()
+    fail_markers = (
+        "error",
+        "did not persist",
+        "couldn't confirm",
+        "could not confirm",
+        "re-run",
+        "syncing",
+        "nothing added",
+        "not found",
+        "relaunch",
+        "revert",
+        "skipped",
+    )
+    if any(m in low for m in fail_markers):
+        return False
+    return result.startswith("Added") or ("added" in low and "playlist" in low)
+
+
+def _playlist_swap(
+    playlist: str,
+    track: str,
+    album: str,
+    artist: str,
+    replace: str,
+    allow_duplicates: bool,
+    auto_add: Optional[bool],
+) -> str:
+    """Transactional swap: add ``track``, CONFIRM it persisted (native truth, via the
+    add helpers' own verify), and only THEN remove ``replace``. If the add can't be
+    confirmed — e.g. Music.app's silent server-side revert — the old track is KEPT,
+    so a swap never silently loses an artist (the Coltrane bug)."""
+    if not track or not replace:
+        return "Error: swap needs both `track` (new) and `replace` (old to remove)"
+    if APPLESCRIPT_AVAILABLE:
+        add_result = _playlist_add(playlist, track, album, artist, allow_duplicates, True, auto_add)
+    elif track and not album:
+        add_result = _playlist_add_api(playlist, track, artist, allow_duplicates, auto_add)
+    else:
+        add_result = _playlist_add(playlist, track, album, artist, allow_duplicates, True, auto_add)
+    if not _add_landed(add_result):
+        return (
+            f"⚠️ Swap aborted — couldn't confirm '{track}' landed in '{playlist}', so "
+            f"'{replace}' was NOT removed (nothing lost). Fix the add first, then retry.\n\n"
+            f"{add_result}"
+        )
+    if APPLESCRIPT_AVAILABLE:
+        rm = _playlist_remove(playlist, replace, "")
+    else:
+        rm = _playlist_remove_api(playlist, replace, "")
+    return f"Swapped in '{playlist}': added '{track}', removed '{replace}'.\n\n{add_result}\n\n{rm}"
+
+
 @mcp.tool(
     annotations=ToolAnnotations(
         title="Playlists & folders", readOnlyHint=False, destructiveHint=True, openWorldHint=True
@@ -4449,8 +4515,9 @@ def playlist(
     allow_duplicates: bool = False,
     verify: bool = True,
     auto_add: Optional[bool] = None,
+    replace: str = "",
 ) -> str:
-    """Playlist and folder operations. Actions: list, folders (macOS — show the folder tree; folders are NOT in `list`), tracks, search, create, add, copy, move (macOS), path (macOS), remove (macOS), delete (macOS), rename (macOS). To find a playlist by name, use action='list' with filter='jack' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', `track` accepts a song NAME, a catalog song id (a numeric id like '1440857781' — pins the EXACT edition, avoiding name/album version mismatches), or a library id; set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own. Note: adding a not-yet-owned catalog track to a Music.app-made playlist is two-step — it's added to the library over the API, then attached locally once iCloud syncs it down (usually seconds). If the sync is slow it may return "added to your library — re-run to attach"; just re-run the same add. Rarely, if the sync stalls past ~20s, Music.app briefly flashes to the foreground as a last-resort sync nudge — expected, not a glitch."""
+    """Playlist and folder operations. Actions: list, folders (macOS — show the folder tree; folders are NOT in `list`), tracks, search, create, add, copy, move (macOS), path (macOS), remove (macOS), delete (macOS), rename (macOS). To find a playlist by name, use action='list' with filter='jack' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', `track` accepts a song NAME, a catalog song id (a numeric id like '1440857781' — pins the EXACT edition, avoiding name/album version mismatches), or a library id; set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own. Note: adding a not-yet-owned catalog track to a Music.app-made playlist is two-step — it's added to the library over the API, then attached locally once iCloud syncs it down (usually seconds). If the sync is slow it may return "added to your library — re-run to attach"; just re-run the same add. Rarely, if the sync stalls past ~20s, Music.app briefly flashes to the foreground as a last-resort sync nudge — expected, not a glitch. To SWAP one track for another, use action='add' with `replace`=<the old track to remove>: it adds the new track, confirms it actually persisted, and only THEN removes the old one — so if the add silently reverts (a Music.app bug), the old track is kept rather than lost."""
     action = action.lower().strip().replace("-", "_")
 
     if action == "list":
@@ -4479,6 +4546,12 @@ def playlist(
         else:
             return "Error: name and/or folder required for create"
     elif action == "add":
+        # Transactional swap: add the new track, confirm it persisted, and only then
+        # remove the old one — so a silently-reverted add never costs you the old track.
+        if replace:
+            return _playlist_swap(
+                playlist, track, album, artist, replace, allow_duplicates, auto_add
+            )
         # macOS: the native path attaches via AppleScript, which edits ANY playlist
         # — including Music.app-made ones the dev-token API can't (it library-adds
         # catalog tracks over the API first, then attaches). So prefer it on a Mac.
@@ -7760,7 +7833,11 @@ def playback(
             st = f" [{np.get('state')}]" if np.get("state") else ""
             artist = f" — {np.get('artist')}" if np.get("artist") else ""
             album = f" ({np.get('album')})" if np.get("album") else ""
-            return f"{label}{st}: {np.get('name')}{artist}{album}"
+            pos, dur = np.get("position"), np.get("duration")
+            prog = ""
+            if isinstance(pos, (int, float)) and isinstance(dur, (int, float)) and dur:
+                prog = f" {int(pos) // 60}:{int(pos) % 60:02d}/{int(dur) // 60}:{int(dur) % 60:02d}"
+            return f"{label}{st}: {np.get('name')}{artist}{album}{prog}"
 
         # Primary line for the active engine.
         if eng == "native":
@@ -8475,10 +8552,10 @@ def _playlist_remove(
             results.append(msg)
         else:
             errors.append(
-                f"{err_prefix}: AppleScript reported success but track still "
-                f"appears in '{resolved.applescript_name}'. Some user-created "
-                f"playlists silently revert AppleScript edits server-side; "
-                f"removing manually via Music.app usually works."
+                f"{err_prefix}: AppleScript reported success but the track still "
+                f"appears in '{resolved.applescript_name}' — Music.app silently reverted "
+                f"the edit server-side (an Apple bug; a manual remove fails the same way). "
+                f"Quit and reopen Music.app, then retry."
             )
 
     # Resolve track input

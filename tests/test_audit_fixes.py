@@ -201,7 +201,7 @@ def test_native_attach_adds_once_when_verify_never_confirms(monkeypatch):
     _stub_attach(monkeypatch, add_calls, lambda *a, **k: False)  # verify never confirms
     ok, msg, _steps = server._auto_search_and_add_to_playlist("Africa", "Toto", "My User PL")
     assert len(add_calls) == 1  # added EXACTLY once (old loop added up to 4x)
-    assert not ok and "duplicate" in msg.lower()
+    assert not ok and ("did not persist" in msg.lower() or "reopen music" in msg.lower())
 
 
 def test_native_attach_adds_once_then_verify_lag_succeeds(monkeypatch):
@@ -234,3 +234,41 @@ def test_pause_that_sticks_reports_paused(monkeypatch):
     monkeypatch.setattr(server.asc, "get_current_track", lambda: (True, {"state": "paused"}))
     out = server._playback_control("pause")
     assert "Playback: pause" in out and "paused" in out
+
+
+# -- dev-session: transactional swap never loses the old track --------------
+
+
+def test_swap_aborts_when_add_not_confirmed(monkeypatch):
+    """If the new track's add can't be confirmed (Music.app revert), the OLD track is
+    NOT removed — the Coltrane data-loss case."""
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+    monkeypatch.setattr(server, "_playlist_add", lambda *a, **k: "Error: did not persist (revert)")
+    removed = []
+    monkeypatch.setattr(server, "_playlist_remove", lambda p, t, ar: removed.append(t) or "removed")
+    out = server.playlist(action="add", playlist="Jazz", track="Coltrane", replace="Old Song")
+    assert "aborted" in out.lower() and removed == []  # old track kept
+
+
+def test_swap_removes_old_only_after_add_confirms(monkeypatch):
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+    monkeypatch.setattr(
+        server, "_playlist_add", lambda *a, **k: "Added Coltrane to Jazz (via Music.app)"
+    )
+    removed = []
+    monkeypatch.setattr(server, "_playlist_remove", lambda p, t, ar: removed.append(t) or "Removed")
+    out = server.playlist(action="add", playlist="Jazz", track="Coltrane", replace="Old Song")
+    assert "Swapped" in out and removed == ["Old Song"]
+
+
+def test_add_landed_is_conservative():
+    assert server._add_landed("Added X to Y (via Music.app)") is True
+    for bad in [
+        "Error: nope",
+        "Added but did not persist after retry",
+        "couldn't confirm",
+        "re-run this add",
+        "relaunch Music.app",
+        "Nothing added",
+    ]:
+        assert server._add_landed(bad) is False, bad
