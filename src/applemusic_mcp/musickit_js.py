@@ -45,7 +45,10 @@ async (songId) => {
   const mk = window.MusicKit.getInstance();
   await mk.setQueue({ song: songId, startPlaying: true });
   await mk.play();
-  return mk.nowPlayingItem ? mk.nowPlayingItem.attributes.name : 'playing';
+  const nm = mk.nowPlayingItem ? mk.nowPlayingItem.attributes.name : 'playing';
+  // play() can resolve without audio actually starting (autoplay-blocked, etc.) —
+  // don't claim "Playing" if the player isn't playing.
+  return mk.isPlaying ? nm : (nm + ' [no audio — the player did not start]');
 }
 """
 

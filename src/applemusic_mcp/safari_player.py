@@ -22,6 +22,7 @@ JavaScript from Apple Events", and be signed into Apple Music at music.apple.com
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import platform
@@ -68,23 +69,36 @@ def _as_applescript_string(s: str) -> str:
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _build_kick(js_fn: str, arg=None) -> str:
+# Monotonic per-call id → a unique result sentinel per call, so a slow op that
+# already timed out can't poison the NEXT op's poll when its promise lands late.
+_COUNTER = itertools.count(1)
+
+# True once MusicKit is constructed on the page (used to wait out a just-opened or
+# still-loading tab instead of a blind fixed delay).
+_READY_JS = (
+    "(function(){try{return !!(window.MusicKit && MusicKit.getInstance "
+    "&& MusicKit.getInstance())}catch(e){return false}})()"
+)
+
+
+def _build_kick(js_fn: str, arg, sentinel: str) -> str:
     """Wrap a MusicKit arrow-fn expression in an async IIFE that stores a JSON
-    result on window.__amR. Gates on MusicKit being present + authorized so the
+    result on window[sentinel]. Gates on MusicKit being present + authorized so the
     caller gets a clear reason instead of an opaque throw."""
     arg_js = "" if arg is None else json.dumps(arg)
+    w = f'window["{sentinel}"]'
     return (
-        "window.__amR='';\n"
+        f"{w}='';\n"
         "(async () => {\n"
         "  try {\n"
         "    var mk = (window.MusicKit && MusicKit.getInstance && MusicKit.getInstance());\n"
-        "    if (!mk) { window.__amR = JSON.stringify({ok:0,e:'musickit-not-ready'}); return; }\n"
-        "    if (!mk.isAuthorized) { window.__amR = JSON.stringify({ok:0,e:'not-authorized'}); return; }\n"
+        f"    if (!mk) {{ {w} = JSON.stringify({{ok:0,e:'musickit-not-ready'}}); return; }}\n"
+        f"    if (!mk.isAuthorized) {{ {w} = JSON.stringify({{ok:0,e:'not-authorized'}}); return; }}\n"
         "    var __f = (" + js_fn.strip() + ");\n"
         "    var __v = await __f(" + arg_js + ");\n"
-        "    window.__amR = JSON.stringify({ok:1, v:(__v===undefined?null:__v)});\n"
+        f"    {w} = JSON.stringify({{ok:1, v:(__v===undefined?null:__v)}});\n"
         "  } catch (e) {\n"
-        "    window.__amR = JSON.stringify({ok:0, e:String((e&&e.message)||e)});\n"
+        f"    {w} = JSON.stringify({{ok:0, e:String((e&&e.message)||e)}});\n"
         "  }\n"
         "})();"
     )
@@ -104,22 +118,30 @@ _FIND_MUSIC_TAB = """    set theTab to missing value
     end repeat"""
 
 
-def _applescript(kick: str, attempts: int, delay: float) -> str:
-    """Find (or open) a music.apple.com Safari tab, kick the JS, poll the result."""
+def _applescript(
+    kick: str, sentinel: str, ready_attempts: int, poll_attempts: int, delay: float
+) -> str:
+    """Find (or open) a music.apple.com Safari tab, WAIT for MusicKit to load (no
+    blind fixed delay), kick the JS, then poll the per-call sentinel for the result."""
     js_expr = " & linefeed & ".join(_as_applescript_string(ln) for ln in kick.split("\n"))
     return f"""tell application "Safari"
 {_FIND_MUSIC_TAB}
     if theTab is missing value then
         make new document with properties {{URL:"https://music.apple.com"}}
-        delay 5
         set theTab to front document
     end if
+    repeat {ready_attempts} times
+        try
+            if (do JavaScript "{_READY_JS}" in theTab) is "true" then exit repeat
+        end try
+        delay {delay}
+    end repeat
     set jsText to {js_expr}
     do JavaScript jsText in theTab
     set theResult to "pending"
-    repeat {attempts} times
+    repeat {poll_attempts} times
         delay {delay}
-        set r to (do JavaScript "window.__amR" in theTab)
+        set r to (do JavaScript "window[\\"{sentinel}\\"] || \\"\\"" in theTab)
         if r is not missing value and r is not "" then
             set theResult to r
             exit repeat
@@ -129,9 +151,15 @@ def _applescript(kick: str, attempts: int, delay: float) -> str:
 end tell"""
 
 
-def _run_musickit(js_fn: str, arg=None, attempts: int = 24, delay: float = 0.4):
-    """Run a MusicKit command in Safari; return (ok, value) or (False, message)."""
-    script = _applescript(_build_kick(js_fn, arg), attempts, delay)
+def _run_musickit(
+    js_fn: str, arg=None, poll_attempts: int = 30, delay: float = 0.4, ready_attempts: int = 12
+):
+    """Run a MusicKit command in Safari; return (ok, value) or (False, message).
+    ``poll_attempts``×``delay`` bounds the op (bump it for slow ops like queue set)."""
+    sentinel = f"__amR_{next(_COUNTER)}"
+    script = _applescript(
+        _build_kick(js_fn, arg, sentinel), sentinel, ready_attempts, poll_attempts, delay
+    )
     with _LOCK:
         ok, out = run_applescript(script)
     if not ok:
@@ -163,14 +191,14 @@ def play_catalog_track(catalog_id: str) -> tuple[bool, str]:
     """Play a catalog song in Safari's MusicKit (macOS, DRM-native)."""
     if not str(catalog_id).strip():
         return False, "Empty catalog id"
-    ok, v = _run_musickit(_PLAY_SONG_JS, str(catalog_id))
+    ok, v = _run_musickit(_PLAY_SONG_JS, str(catalog_id), poll_attempts=60)
     return (True, f"Playing: {v}") if ok else (False, v)
 
 
 def queue_set(catalog_ids: list) -> tuple[bool, str]:
     """Replace Up Next with ``catalog_ids`` in order (one MusicKit setQueue)."""
     ids = [str(i) for i in catalog_ids]
-    ok, n = _run_musickit(_QUEUE_SET_JS, ids)
+    ok, n = _run_musickit(_QUEUE_SET_JS, ids, poll_attempts=60)
     if not ok:
         return False, n
     msg = f"Queue set ({n} track(s))"
@@ -196,7 +224,7 @@ def play_descriptor(descriptor: dict, shuffle: bool = False) -> tuple[bool, str]
     """Play a MusicKit queue descriptor — {song|album|playlist|songs}."""
     payload = dict(descriptor)
     payload["__shuffle"] = bool(shuffle)
-    ok, v = _run_musickit(_PLAY_QUEUE_JS, payload)
+    ok, v = _run_musickit(_PLAY_QUEUE_JS, payload, poll_attempts=60)
     return (True, f"Playing: {v}") if ok else (False, v)
 
 
@@ -223,14 +251,27 @@ def reveal_url(music_url: str) -> tuple[bool, str]:
     if host != "music.apple.com" and not host.endswith(".music.apple.com"):
         return False, f"Not an Apple Music URL: {music_url}"
     u = _as_applescript_string(music_url)
-    # Reuse the consistent music.apple.com tab (open one only if none exists) — same
-    # tab the player uses, so we don't spawn duplicates.
+    # Reuse the consistent music.apple.com tab (don't spawn duplicates) — UNLESS that
+    # tab is actively playing, in which case navigating would stop playback, so open a
+    # new tab instead.
+    playing_js = (
+        "(function(){try{var mk=MusicKit.getInstance();"
+        "return !!(mk&&mk.isPlaying)}catch(e){return false}})()"
+    )
     script = f"""tell application "Safari"
 {_FIND_MUSIC_TAB}
     if theTab is missing value then
         make new document with properties {{URL:{u}}}
     else
-        set URL of theTab to {u}
+        set isPlaying to false
+        try
+            if (do JavaScript "{playing_js}" in theTab) is "true" then set isPlaying to true
+        end try
+        if isPlaying then
+            tell window 1 to set current tab to (make new tab with properties {{URL:{u}}})
+        else
+            set URL of theTab to {u}
+        end if
     end if
     return "ok"
 end tell"""
@@ -363,8 +404,12 @@ def queue_autoplay(enabled: bool) -> tuple[bool, str]:
 
 
 def is_available() -> bool:
-    """True if Safari can be driven (macOS + JS-from-Apple-Events on + signed in)."""
+    """True if Safari can be driven (macOS + a usable Apple Music tab). Never opens
+    a window as a side effect — if there's no music.apple.com tab to probe, assume
+    usable (an actual op will open one and surface any real setting/sign-in error)."""
     if platform.system() != "Darwin":
         return False
-    ok, _ = _run_musickit("() => true", attempts=6, delay=0.3)
+    if music_tab_count() < 1:
+        return True  # nothing to probe without opening a tab; don't open just to check
+    ok, _ = _run_musickit("() => true", poll_attempts=6, ready_attempts=6, delay=0.3)
     return ok
