@@ -43,7 +43,6 @@ async (songId) => {
 _PLAY_SONG_JS = """
 async (songId) => {
   const mk = window.MusicKit.getInstance();
-  mk.autoplayEnabled = false;  // curated by default — don't balloon into an autoplay station
   await mk.setQueue({ song: songId, startPlaying: true });
   await mk.play();
   const nm = mk.nowPlayingItem ? mk.nowPlayingItem.attributes.name : 'playing';
@@ -56,7 +55,6 @@ async (songId) => {
 _PLAY_QUEUE_JS = """
 async (q) => {
   const mk = window.MusicKit.getInstance();
-  mk.autoplayEnabled = false;  // curated by default — don't balloon into an autoplay station
   const shuffle = !!q.__shuffle; delete q.__shuffle;
   await mk.setQueue(Object.assign({ startPlaying: false }, q));
   mk.shuffleMode = shuffle ? 1 : 0;

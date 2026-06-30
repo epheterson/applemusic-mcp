@@ -1089,6 +1089,22 @@ def _get_active_playback() -> str:
     return _active_playback_engine or _playback_engine()
 
 
+def _set_pref(preference: str, value) -> None:
+    """Persist a single preference to config.json (atomic temp+replace)."""
+    import copy
+
+    from .auth import get_config_dir as _cfgdir
+    from .auth import load_config
+
+    config = copy.deepcopy(load_config())
+    config.setdefault("preferences", {})[preference] = value
+    config_file = _cfgdir() / "config.json"
+    tmp = config_file.with_suffix(".json.tmp")
+    with open(tmp, "w") as f:
+        json.dump(config, f, indent=2)
+    os.replace(tmp, config_file)
+
+
 def _mode_pinned_native() -> bool:
     """True when the user explicitly pinned ``mode=native`` (so playback must
     stay in Music.app and never fall back to the browser). ``auto`` is NOT
@@ -6659,7 +6675,7 @@ def config(
 
         # === SET PREFERENCE ===
         if action == "set-pref":
-            bool_prefs = ["fetch_explicit", "clean_only", "auto_add"]
+            bool_prefs = ["fetch_explicit", "clean_only", "auto_add", "autoplay"]
             string_prefs = ["storefront", "mode"]
             # Enum string prefs: only these values are accepted. `mode` is the
             # single engine knob (playback follows it): auto (best-of mix), native
@@ -7698,6 +7714,13 @@ def queue(
         if enabled is None:
             return "Error: autoplay needs enabled=true or enabled=false"
         ok, msg = wp.queue_autoplay(enabled)
+        if ok:
+            # Persist as a sticky preference so it holds across later play/queue ops
+            # (which otherwise default autoplay off for curated queues).
+            try:
+                _set_pref("autoplay", bool(enabled))
+            except Exception:
+                pass
         return _queue_after(wp, msg) if ok else f"Error: {msg}"
     return (
         f"Unknown action: {action}. Use: list, set, play_next, play_last, remove, clear, jump, "
