@@ -810,7 +810,7 @@ On macOS, most features work immediately. For catalog features or Windows/Linux,
 |--------|----------------|
 | 4 API calls to add song | `playlist(action="add", auto_add=True)` |
 | Copy URL + open in Music | `playback(action="play", url="...")` |
-| UI hover + click to add to library | `library(action="add")` with UI fallback |
+| Add a catalog song to your library | `library(action="add")` (unified API — dev or web token) |
 | Track library changes manually | `library(action="snapshot")` |
 | AppleScript escaping | Automatic |
 | Token management | Automatic with warnings |

@@ -41,7 +41,7 @@ Four engines back the server. **Native** drives the local Music.app on macOS via
 |**Works with no Apple account**|✓|✗|✗|
 |**Cross-platform (Win/Linux)**|✗|✓|✓|
 
-Everything in the **API** column runs anywhere, no browser and no Music app. Browser playback and the queue need Google Chrome and a desktop session. Full per-capability reasoning: [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
+Everything in the **API** column runs anywhere, no browser and no Music app. Browser playback and the queue need a desktop session and a web player — **Safari on macOS** (no install) or **Google Chrome** elsewhere. Full per-capability reasoning: [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
 
 ## Setup
 
@@ -132,7 +132,7 @@ With a developer token, writes go through the sanctioned API; the web path is us
 | Create playlist | ✓ | ✓ | ✓ |
 | Add tracks (API-made playlist) | ✓ | ✓ | ✓ |
 | Add tracks (Music.app-made playlist) | ✗ | ✗ | ✓ |
-| Rate 1 to 5 | ✓ | ✗ | ✓ |
+| Rate 1 to 5 | ✗ | ✗ | ✓ |
 | Love / dislike | ✓ | ✓ | ✓ |
 | Delete playlist | ✗ | ✓ | ✓ |
 | Rename / move into folder | partial | ✓ | ✓ |
@@ -159,11 +159,11 @@ Seven action-based tools keep the MCP context small. Each takes an `action` and 
 |---|---|
 | `playlist` | list, folders, tracks, search, create, add, copy, move, remove, delete, rename, path (playlists and folders) |
 | `library` | search, add, browse, favorites, recently_played, recently_added, rate, remove, snapshot |
-| `catalog` | search, album_tracks, album_details, song_details, artist_details, song_station, genres |
-| `discover` | recommendations, heavy_rotation, charts, top_songs, similar_artists, search_suggestions, personal_station |
+| `catalog` | search, album_tracks, album_details, song_details, artist_details, genres, suggestions |
+| `discover` | recommendations, heavy_rotation, charts, top_songs, similar_artists, personal_station, song_station |
 | `playback` | play (track / album / playlist / URL), control, now_playing, settings, reveal, airplay |
-| `queue` | list, play_next, play_last, remove, jump, clear, autoplay (Up Next — Safari on macOS, Chrome elsewhere; `engine=` to pick) |
-| `config` | status, signin, logout, reset, set-pref, audit-log, cache, storefronts |
+| `queue` | list, set, play_next, play_last, remove, jump, clear, autoplay (Up Next — Safari on macOS, Chrome elsewhere; `engine=` to pick) |
+| `config` | status, signin, logout, reset, set-pref, audit-log, clear-audit-log, list-storefronts |
 
 <details>
 <summary>Common patterns</summary>
@@ -191,7 +191,7 @@ applemusic-mcp reset --all --force   # full uninstall: also removes the .p8, pro
 
 ## Good to know
 
-- **macOS playback needs an unlocked screen and Accessibility permission.** Native catalog playback drives Music.app via System Events and moves the cursor to click Play. Grant it under System Settings → Privacy & Security → Accessibility, or set `mode="web"` to play in Chrome instead.
+- **macOS playback needs an unlocked screen and Accessibility permission.** Native catalog playback drives Music.app via System Events and moves the cursor to click Play. Grant it under System Settings → Privacy & Security → Accessibility, or set `mode="safari"` to play in the Safari web player instead (no Accessibility, no Chrome).
 - **Brand-new playlists take a moment** to be addable over the API (cloud propagation). Existing ones are immediate.
 - **A few macOS-only features** have no Apple Music API equivalent: 1 to 5 star ratings, favorites, library snapshots, AirPlay, and nested folder paths.
 - **If catalog actions start failing**, re-run `applemusic-mcp login`. A handful of user playlists silently revert AppleScript edits ([known Music.app bug](https://www.macscripter.net/t/add-current-track-from-apple-music-to-playlist/72058)); the server detects and surfaces the rollback.
