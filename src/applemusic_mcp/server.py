@@ -1175,23 +1175,57 @@ def _playlist_create_api(name: str, description: str = "") -> str:
     return f"Error: {res}"
 
 
-def _playlist_delete_api(name: str) -> str:
+def _resolve_playlist_for_write(name: str):
+    """Resolve a playlist for a DESTRUCTIVE web op (delete/rename). Exact
+    (case-insensitive) match wins; a SINGLE substring match is allowed; MULTIPLE
+    substring matches are refused — never silently destroy the wrong playlist on a
+    short/common name. Returns ``(pl_or_None, error_or_None)``; callers must echo
+    ``pl['name']`` (the resolved name), not the requested one."""
+    try:
+        pls = amp_api.list_playlists()
+    except Exception:
+        pls = []
+    if pls:
+        tl = name.strip().lower()
+        exact = [p for p in pls if p.get("name", "").strip().lower() == tl]
+        if exact:
+            return exact[0], None
+        loose = [p for p in pls if tl in p.get("name", "").strip().lower()]
+        if len(loose) == 1:
+            return loose[0], None
+        if len(loose) > 1:
+            names = ", ".join(repr(p.get("name", "")) for p in loose[:6])
+            return None, (
+                f"Error: '{name}' matches multiple playlists ({names}) — "
+                "use the exact name so the right one is affected."
+            )
+        return None, None  # genuinely not found — caller renders _resolve_failure_msg
+    # No library listing available (offline / empty) — fall back to id resolution.
     pid = amp_api.resolve_playlist_id(name, api_created_only=False)
-    if not pid:
+    return ({"id": pid, "name": name} if pid else None), None
+
+
+def _playlist_delete_api(name: str) -> str:
+    pl, err = _resolve_playlist_for_write(name)
+    if err:
+        return err
+    if not pl:
         return _resolve_failure_msg(f"playlist {name!r} not found in your library")
-    ok, msg = amp_api.delete_playlist(pid)
+    ok, msg = amp_api.delete_playlist(pl["id"])
     if ok:
-        audit_log.log_action("delete_playlist", {"name": name, "via": "api"})
-        return f"Deleted playlist: {name}"
+        audit_log.log_action("delete_playlist", {"name": pl["name"], "via": "api"})
+        return f"Deleted playlist: {pl['name']}"
     return f"Error: {msg}"
 
 
 def _playlist_rename_api(name: str, new_name: str) -> str:
-    pid = amp_api.resolve_playlist_id(name, api_created_only=False)
-    if not pid:
+    pl, err = _resolve_playlist_for_write(name)
+    if err:
+        return err
+    if not pl:
         return _resolve_failure_msg(f"playlist {name!r} not found in your library")
-    ok, msg = amp_api.rename_playlist(pid, new_name)
-    return f"Renamed '{name}' to '{new_name}'" if ok else f"Error: {msg}"
+    ok, msg = amp_api.rename_playlist(pl["id"], new_name)
+    return f"Renamed '{pl['name']}' to '{new_name}'" if ok else f"Error: {msg}"
 
 
 _SESSION_EXPIRED_MSG = (
@@ -7232,6 +7266,36 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
         return f"{body}\nMode: {mode}\n{engines}\nWrites: {write_rail}\n\n{nxt}"
 
     if action in ("signin", "login"):
+        # macOS default: harvest the token from a signed-in Safari (zero-install) —
+        # the same default as the CLI `login`. Only fall back to Chrome (with
+        # guidance), and only try Chrome at all when Playwright is actually present.
+        if APPLESCRIPT_AVAILABLE:
+            from . import safari
+            from .auth import save_user_token
+
+            try:
+                ok, res = safari.media_user_token()
+            except Exception as exc:  # noqa: BLE001
+                ok, res = False, str(exc)
+            if ok:
+                save_user_token(res)
+                return (
+                    "✓ Signed in via Safari — no Chrome needed. Playback uses Music.app; "
+                    "for the cross-platform Chrome web player, "
+                    "`pip install 'applemusic-mcp[browser]'`."
+                )
+            from . import browser
+
+            if not browser.is_available():
+                return (
+                    f"{res}\n\nTo finish on macOS without Chrome: enable Safari → Settings → "
+                    'Advanced → "Show features for web developers", then Develop → "Allow '
+                    'JavaScript from Apple Events", sign into Apple Music at music.apple.com '
+                    "in Safari, and ask me to sign in again. Or install the Chrome web "
+                    "player: `pip install 'applemusic-mcp[browser]'`, then ask again."
+                )
+            # Chrome/Playwright is installed — fall through to the Chrome flow.
+
         from . import browser
 
         try:
