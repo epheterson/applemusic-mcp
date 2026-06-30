@@ -235,12 +235,21 @@ class _BrowserEngine:
             "--use-mock-keychain",
             "--password-store=basic",
             "--disable-extensions",
-            "--no-sandbox",  # run sandboxed like real Chrome (security + no warning)
         ]
-        # Keep Chrome's sandbox ON. Playwright defaults chromium_sandbox=False,
-        # which injects --no-sandbox → a scary "Stability and security will suffer"
-        # banner and a real security downgrade. This is a normal desktop user
-        # session, so run sandboxed like real Chrome.
+        # Keep Chrome's sandbox ON by default. Playwright defaults chromium_sandbox=
+        # False, which injects --no-sandbox → a scary "Stability and security will
+        # suffer" banner and a real security downgrade. A normal desktop session runs
+        # sandboxed like real Chrome, so we strip --no-sandbox.
+        #
+        # EXCEPTION — containers/CI: Chrome can't use its sandbox as root inside a
+        # container, so APPLEMUSIC_BROWSER_NO_SANDBOX=1 turns the sandbox back off (and
+        # keeps --no-sandbox). Only for headless/containerized testing, never the
+        # desktop default.
+        sandbox = os.environ.get("APPLEMUSIC_BROWSER_NO_SANDBOX") != "1"
+        if sandbox:
+            ignore_defaults.append("--no-sandbox")
+        else:
+            args.append("--no-sandbox")
         try:
             ctx = launch(
                 user_data_dir,
@@ -248,7 +257,7 @@ class _BrowserEngine:
                 headless=False,
                 args=args,
                 ignore_default_args=ignore_defaults,
-                chromium_sandbox=True,
+                chromium_sandbox=sandbox,
             )
             self._using_chrome = True
             return ctx
@@ -268,7 +277,7 @@ class _BrowserEngine:
                     headless=False,
                     args=args,
                     ignore_default_args=ignore_defaults,
-                    chromium_sandbox=True,
+                    chromium_sandbox=sandbox,
                 )
                 self._using_chrome = False
                 return ctx
@@ -300,7 +309,7 @@ class _BrowserEngine:
                     headless=False,
                     args=args,
                     ignore_default_args=ignore_defaults,
-                    chromium_sandbox=True,
+                    chromium_sandbox=sandbox,
                 )
                 self._using_chrome = False
                 return ctx

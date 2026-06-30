@@ -1,0 +1,32 @@
+============================================================================
+  Apple Music MCP — Linux try-out  (the Windows/Linux path)
+============================================================================
+A real Debian box with Google Chrome. Off-mac there is no Music.app and no
+Safari: data goes through the Apple Music web API, playback through the Chrome
+web player. This is exactly what a Windows/Linux user gets.
+
+------------------------------------------------------------ 1. SIGN IN ----
+    applemusic-mcp login
+
+A Chrome window opens on music.apple.com. Sign in with your Apple ID +
+password, then enter the 6-digit two-factor code from your iPhone/Mac.
+
+  >> A trusted-device 2FA code is all you need — NOT a passkey or YubiKey. <<
+
+(USB security keys can't pass through Docker on a Mac. If your Apple ID is
+ set to *require* a security key, sign in on your Mac instead and inject the
+ token — see docker/linux-tryout/README.md.)
+
+------------------------------------------------------------ 2. CHECK -------
+    applemusic-mcp status        # should show: User token present, API ok
+
+------------------------------------------------------------ 3. TRY IT ------
+    python ~/smoke.py            # search + play + queue, end to end
+
+Notes
+  - No audio is routed out of the container (by design). We confirm playback
+    STARTS and the queue works — not that you can hear it.
+  - Your sign-in persists in a docker volume across restarts.
+  - Full-length playback needs Google Chrome (installed here) for Widevine;
+    that's why this box uses Chrome, not bundled Chromium.
+============================================================================

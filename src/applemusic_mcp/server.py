@@ -1053,23 +1053,36 @@ def _web_player(engine: str):
     return browser
 
 
+def _platform_players() -> str:
+    """The playback engines that actually exist on THIS machine — so guidance names
+    only options the user can use (native/safari are macOS-only; chrome is anywhere)."""
+    return "native, safari, or chrome" if APPLESCRIPT_AVAILABLE else "chrome"
+
+
 def _no_player_msg(engine_override: Optional[str] = None, for_queue: bool = False) -> str:
-    """Actionable error when no playback/queue engine is available."""
+    """Actionable error when no playback/queue engine is available. System-aware: it
+    names only the engines available on this platform."""
     mode = (engine_override or get_user_preferences().get("mode") or "auto").lower()
     if for_queue and mode == "native":
+        # Only reachable on macOS (native needs AppleScript), so the macOS advice fits.
         return (
             "Up Next isn't available in native (Music.app) mode — it's a web-player "
             "feature. Set mode to safari or chrome (or pass engine='safari')."
         )
     if mode == "api":
         return (
-            "API mode has no player. Set mode to native, safari, or chrome (or pass "
+            f"API mode has no player. Set mode to {_platform_players()} (or pass "
             "engine=) to play or queue."
         )
+    if APPLESCRIPT_AVAILABLE:
+        return (
+            "No playback engine is available. Use native (Music.app) or safari — or "
+            "install Google Chrome for the cross-platform web player."
+        )
     return (
-        "No playback engine is available here. On macOS use native or safari; on "
-        "Windows/Linux use chrome — it's the default there, just run `applemusic-mcp "
-        "login` once to set it up."
+        "No playback engine is available. On Windows/Linux playback uses Google Chrome "
+        "(the web player) — install Chrome and run `applemusic-mcp login` once to set "
+        "it up."
     )
 
 
