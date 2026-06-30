@@ -8822,9 +8822,32 @@ def _playback_airplay(device_name: str = "") -> str:
         return f"AirPlay devices ({len(devices)}):\n" + "\n".join(f"  - {d}" for d in devices)
 
 
+def _shutdown_browser_engine():  # pragma: no cover - lifecycle, not exercised under test
+    """Close the Chrome engine's persistent context cleanly so its profile is flushed
+    and not left locked/corrupted. Playwright only persists reliably on a graceful
+    ctx.close(); an abrupt kill is a known cause of the 'signed-out next launch' bug."""
+    try:
+        from . import browser
+
+        browser._engine.shutdown(timeout=5.0)
+    except Exception:
+        pass
+
+
 def main():
     """Run the MCP server."""
-    mcp.run()  # pragma: no cover  # entrypoint: starts the MCP server, not exercised under test
+    # pragma: no cover  # entrypoint: starts the MCP server, not exercised under test
+    import atexit
+    import signal
+
+    atexit.register(_shutdown_browser_engine)
+    # MCP clients usually stop the server with SIGTERM, which by default skips atexit —
+    # turn it into a normal exit so the Chrome profile flushes before we die.
+    try:
+        signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    except (ValueError, OSError):
+        pass  # not the main thread / unsupported platform — atexit still covers normal exit
+    mcp.run()
 
 
 if __name__ == "__main__":

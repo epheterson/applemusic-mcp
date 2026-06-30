@@ -1056,12 +1056,29 @@ def test_ensure_session_cookie_injects_saved_token(monkeypatch):
     assert added[0][0]["value"] == "SAVEDTOK"
 
 
-def test_ensure_session_cookie_noop_when_cookie_present(monkeypatch):
-    page = FakePage(cookies=[{"name": "media-user-token", "value": "x"}])
+def test_ensure_session_cookie_noop_when_cookie_already_current(monkeypatch):
+    """If the profile's cookie already equals our saved token, do nothing."""
+    import applemusic_mcp.auth as real_auth
+
+    page = FakePage(cookies=[{"name": "media-user-token", "value": "SAVEDTOK"}])
     added = []
     page.context.add_cookies = lambda c: added.append(c)
+    monkeypatch.setattr(real_auth, "get_user_token", lambda: "SAVEDTOK")
     browser._ensure_session_cookie(page)
-    assert added == []  # already signed in → don't inject
+    assert added == []  # already current → don't re-set
+
+
+def test_ensure_session_cookie_replaces_stale_cookie(monkeypatch):
+    """A stale profile cookie (≠ our saved token, e.g. left by a corrupt/ungraceful
+    profile) is REPLACED with the saved token — the fix for 'signed-out every launch'."""
+    import applemusic_mcp.auth as real_auth
+
+    page = FakePage(cookies=[{"name": "media-user-token", "value": "STALE"}])
+    added = []
+    page.context.add_cookies = lambda c: added.append(c)
+    monkeypatch.setattr(real_auth, "get_user_token", lambda: "FRESHTOK")
+    browser._ensure_session_cookie(page)
+    assert added and added[0][0]["value"] == "FRESHTOK"
 
 
 def test_ensure_session_cookie_noop_when_no_saved_token(monkeypatch):

@@ -357,29 +357,36 @@ def drm_capable() -> bool:
 
 
 def _ensure_session_cookie(page) -> None:
-    """Bridge a saved media-user-token into the Chrome profile's cookie jar.
+    """Make our saved media-user-token the AUTHORITATIVE web-player cookie.
 
-    If the profile has no media-user-token cookie but we have one saved (harvested
-    from Safari via `login --safari`, or captured from a prior Chrome login), inject
-    it so the web player authorizes off that SAME sign-in. This is what lets a macOS
-    user who signed in via Safari also use the Chrome web player + Up Next queue
-    without a separate Chrome login. No-op if a cookie is already present or no token
-    is saved."""
-    try:
-        cookies = page.context.cookies("https://music.apple.com")
-        if any(c.get("name") == "media-user-token" and c.get("value") for c in cookies):
-            return
-    except Exception:
-        return
+    Playwright's persistent profile does NOT reliably persist session cookies, and an
+    ungraceful exit can leave a stale or undecryptable one behind (known upstream bugs:
+    playwright #36139 / #35466) — which is what makes the web player look signed-out on
+    a later launch. So we don't trust the profile: if we have a saved token (harvested
+    from Safari via `login --safari`, or captured from a prior Chrome login), we set it
+    as the cookie on every readiness check, REPLACING any stale value. This keeps the
+    web player signed in regardless of the profile's state (and means we don't rely on
+    Chrome being able to decrypt its own cookie store across launches).
+
+    No-op if nothing is saved (leave whatever the profile has) or the cookie is already
+    current. This is also what lets a macOS Safari sign-in drive the Chrome web player
+    without a separate Chrome login."""
     try:
         from .auth import get_user_token
 
         tok = get_user_token()
     except Exception:
-        return  # no saved token (FileNotFoundError) or read error
+        tok = None  # no saved token (FileNotFoundError) or read error
     if not tok:
-        return
+        return  # nothing saved → leave whatever the profile already has
     try:
+        cookies = page.context.cookies("https://music.apple.com")
+        current = next(
+            (c.get("value") for c in cookies if c.get("name") == "media-user-token"), None
+        )
+        if current == tok:
+            return  # already current — nothing to do
+        # add_cookies upserts by (name, domain, path), so this REPLACES a stale value.
         page.context.add_cookies(
             [
                 {
@@ -391,9 +398,9 @@ def _ensure_session_cookie(page) -> None:
                 }
             ]
         )
-        logger.info("Bridged a saved media-user-token into the web-player profile.")
+        logger.info("Set the saved media-user-token as the web-player cookie (authoritative).")
     except Exception as exc:
-        logger.warning("Couldn't inject the saved token cookie: %s", exc)
+        logger.warning("Couldn't set the saved token cookie: %s", exc)
 
 
 def _check_signed_in(page) -> bool:
