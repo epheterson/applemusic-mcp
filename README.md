@@ -13,7 +13,7 @@ MCP server for Apple Music. It gives any [MCP client](https://modelcontextprotoc
 
 Four engines back the server. **Native** drives the local Music.app on macOS via AppleScript. **API** uses Apple Music's web API (`amp-api.music.apple.com`) on any OS. **Safari** drives your signed-in Safari's MusicKit on macOS (DRM-native, zero install). **Chrome** runs a local Google Chrome window with MusicKit for DRM audio on any OS. One `mode` preference picks the engine — `auto` (default) mixes the best of each: native Music.app for playback on macOS, Safari for the Up Next queue, the API for data, Chrome off-mac. Pin one with `native` / `safari` / `chrome` / `api`, or override a single playback/queue call with `engine=`. In the table below, the **Browser** column covers both the Safari and Chrome web players. `✓` supported, `✗` not possible on that engine, `—` not applicable there.
 
-|Capability|Native (Music.app) macOS|API (amp-api) any OS|Browser (Chrome) any OS|
+|Capability|Native (Music.app) macOS|API (amp-api) any OS|Browser (Safari macOS / Chrome any OS)|
 |---|:---:|:---:|:---:|
 |**Catalog search / browse**|✓|✓ (+ tokenless resolve)|—|
 |Recommendations / charts / suggestions|✗|✓|—|

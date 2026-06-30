@@ -210,4 +210,5 @@ def test_reveal_url(monkeypatch):
     _mock(monkeypatch, True, "ok", cap)
     ok, msg = sp.reveal_url("https://music.apple.com/us/album/x/1")
     assert ok and "Showing in Safari" in msg
-    assert "set URL of theTab" in cap["script"]
+    # Opens a NEW tab (doesn't hijack/stop a playing music.apple.com tab).
+    assert "make new tab" in cap["script"]

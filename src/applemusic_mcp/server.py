@@ -7529,14 +7529,15 @@ def playback(
     # engine override (one call only)
     engine: str = "",
 ) -> str:
-    """Playback transport. play/control/now_playing/settings work cross-platform
-    via the browser web player, or natively through Music.app on macOS. The engine
-    follows the `mode` preference by default; pass engine='web' or engine='native'
-    to override it for ONE call (e.g. queue in the web player, then
-    playback(action='play', engine='web') so transport reaches that queue — no
-    global pref flip). Browser playback needs a signed-in Chrome
-    (`applemusic-mcp login`) + a desktop session. reveal and airplay are
-    macOS-only. For the Up Next queue, use the separate `queue` tool.
+    """Playback transport. play/control/now_playing/settings run on the engine the
+    `mode` preference resolves to — native Music.app (macOS), the Safari web player
+    (macOS), or the Chrome web player (any OS). Override it for ONE call with
+    `engine=`: 'native', 'safari', 'chrome', 'web' (the web engine — Safari on macOS,
+    Chrome off-mac), or 'auto'. control/now_playing follow whichever engine is
+    actively playing (so after a Safari queue, pause/next reach Safari). Safari needs
+    a signed-in Safari + "Allow JavaScript from Apple Events"; Chrome needs a
+    signed-in Chrome (`applemusic-mcp login`) + a desktop session. reveal and airplay
+    are macOS-only. For the Up Next queue, use the separate `queue` tool.
     Actions: play, control, now_playing, settings, reveal, airplay."""
     action = action.lower().strip().replace("-", "_")
 

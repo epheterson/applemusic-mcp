@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import platform
+import threading
 
 from . import safari
 from .applescript import run_applescript
@@ -47,6 +48,11 @@ from .musickit_js import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The kick/poll uses a `window.__amR` sentinel on the page, so two overlapping
+# MusicKit ops would stomp each other. Serialize them (no-op for the usual
+# sequential stdio request flow; correctness if a client ever calls concurrently).
+_LOCK = threading.Lock()
 
 _NOT_AUTH_MSG = (
     "Not signed into Apple Music in Safari — open music.apple.com in Safari and sign in."
@@ -126,7 +132,8 @@ end tell"""
 def _run_musickit(js_fn: str, arg=None, attempts: int = 24, delay: float = 0.4):
     """Run a MusicKit command in Safari; return (ok, value) or (False, message)."""
     script = _applescript(_build_kick(js_fn, arg), attempts, delay)
-    ok, out = run_applescript(script)
+    with _LOCK:
+        ok, out = run_applescript(script)
     if not ok:
         if safari._looks_like_js_blocked(out):
             return False, safari._SETTING_OFF_MSG
@@ -216,12 +223,13 @@ def reveal_url(music_url: str) -> tuple[bool, str]:
     if host != "music.apple.com" and not host.endswith(".music.apple.com"):
         return False, f"Not an Apple Music URL: {music_url}"
     u = _as_applescript_string(music_url)
+    # Open in a NEW tab — navigating an existing music.apple.com tab would yank the
+    # user off what they're viewing and stop playback if that tab is the player.
     script = f"""tell application "Safari"
-{_FIND_MUSIC_TAB}
-    if theTab is missing value then
+    if (count of windows) is 0 then
         make new document with properties {{URL:{u}}}
     else
-        set URL of theTab to {u}
+        tell window 1 to set current tab to (make new tab with properties {{URL:{u}}})
     end if
     return "ok"
 end tell"""
