@@ -8327,10 +8327,22 @@ def _playback_control(action: str, seconds: float = 0) -> str:
         return f"Invalid action: {action}. Use: play, pause, playpause, stop, next, previous, seek"
 
     success, result = action_map[action]()
-    if success:
-        audit_log.log_action("playback_control", {"control": action, "seconds": None})
-        return f"Playback: {action}"
-    return f"Error: {result}"
+    if not success:
+        return f"Error: {result}"
+    audit_log.log_action("playback_control", {"control": action, "seconds": None})
+    # Confirm the action actually took by re-reading player state — never claim a
+    # pause/stop that didn't stick. The classic "won't stay paused" symptom is
+    # another engine still making sound; point the user at the all-engines view.
+    ok, info = asc.get_current_track()
+    state = (info.get("state") if ok else "") or ""
+    if action in ("pause", "stop") and state == "playing":
+        return (
+            f"Asked Music.app to {action}, but its player is still playing. If you still "
+            "hear audio, another engine (Safari/Chrome web player) is likely the one "
+            "playing — run playback(action='now_playing') to see every engine, then pass "
+            "engine= to control the right one."
+        )
+    return f"Playback: {action}" + (f" (Music.app: {state})" if state else "")
 
 
 def _playback_now_playing() -> str:

@@ -215,3 +215,22 @@ def test_native_attach_adds_once_then_verify_lag_succeeds(monkeypatch):
     _stub_attach(monkeypatch, add_calls, verify)
     ok, msg, _steps = server._auto_search_and_add_to_playlist("Africa", "Toto", "My User PL")
     assert len(add_calls) == 1 and ok  # added once, then verified on retry
+
+
+# -- task #6: native control confirms real state (no false "paused") --------
+
+
+def test_pause_that_doesnt_stick_is_honest(monkeypatch):
+    """If Music is still 'playing' after a pause, say so + point at the all-engines
+    view — don't claim 'Playback: pause' (the old false-success / 'won't stay paused')."""
+    monkeypatch.setattr(server.asc, "pause", lambda: (True, ""))
+    monkeypatch.setattr(server.asc, "get_current_track", lambda: (True, {"state": "playing"}))
+    out = server._playback_control("pause")
+    assert "still playing" in out.lower() and "now_playing" in out
+
+
+def test_pause_that_sticks_reports_paused(monkeypatch):
+    monkeypatch.setattr(server.asc, "pause", lambda: (True, ""))
+    monkeypatch.setattr(server.asc, "get_current_track", lambda: (True, {"state": "paused"}))
+    out = server._playback_control("pause")
+    assert "Playback: pause" in out and "paused" in out
