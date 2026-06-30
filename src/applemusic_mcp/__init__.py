@@ -1,6 +1,7 @@
-"""MCP server for Apple Music playlist management via REST API.
+"""MCP server for Apple Music: library, playlists, search, and playback.
 
-Cross-platform with macOS AppleScript integration for playback control.
+Works on Windows, Linux, and macOS via Apple Music's web API plus a browser player
+(Chrome anywhere); on macOS it also drives Music.app and Safari directly.
 """
 
 __version__ = "1.0.0"

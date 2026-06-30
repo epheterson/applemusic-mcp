@@ -1067,8 +1067,9 @@ def _no_player_msg(engine_override: Optional[str] = None, for_queue: bool = Fals
             "engine=) to play or queue."
         )
     return (
-        "No playback engine is available here. On macOS use native or safari; "
-        "elsewhere use chrome (pip install 'applemusic-mcp[browser]')."
+        "No playback engine is available here. On macOS use native or safari; on "
+        "Windows/Linux use chrome — it's the default there, just run `applemusic-mcp "
+        "login` once to set it up."
     )
 
 
@@ -2509,6 +2510,25 @@ def _verify_track_not_in_playlist(
 _ROLLBACK_SETTLE_S = 2.0  # wait for Music.app's local reconciliation (~1s observed)
 
 
+def _verify_track_in_playlist_api(api_id: str, track_name: str, artist: str = "") -> bool:
+    """Off-mac read-back: confirm a track is really in a playlist via the API.
+
+    The native verify is AppleScript-only, so off macOS a write would otherwise be
+    trusted purely on the POST response. This re-reads the playlist over amp-api and
+    matches by name, with a short retry for read-after-write lag — so the transactional
+    swap's "never lose the old track" guarantee holds off-mac too."""
+    if not api_id or not track_name:
+        return False
+    for i in range(_VERIFY_ATTEMPTS):
+        if i > 0:
+            time.sleep(_VERIFY_DELAY_S)
+        ok, tracks = _get_playlist_track_names(api_id)
+        if ok and isinstance(tracks, list):
+            if any(_loose_contains(track_name, t.get("name", "")) for t in tracks):
+                return True
+    return False
+
+
 def _verify_track_in_playlist(
     playlist_name: str,
     track_name: str,
@@ -3844,7 +3864,13 @@ def _playlist_add(
     # === AppleScript mode (playlist by name, only if no API ID) ===
     if resolved.applescript_name and not resolved.api_id:
         if not APPLESCRIPT_AVAILABLE:
-            return "Error: Playlist name requires macOS (use playlist ID like 'p.XXX' for cross-platform)"
+            return (
+                "Error: couldn't find that playlist over the Apple Music API "
+                "(on Windows/Linux playlists are resolved via the API, not Music.app). "
+                "Check the exact name with playlist(action='list', filter='...'), or pass "
+                "its id (p.XXX). Note: adding a whole ALBUM to a playlist isn't supported "
+                "off macOS — add by track instead."
+            )
 
         # Apply auto_add preference once
         if auto_add is None:
@@ -4301,7 +4327,13 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
     # for tokenless macOS users on prior versions.
     if has_name and not has_id:
         if not APPLESCRIPT_AVAILABLE:
-            return "Error: Playlist name requires macOS (use playlist ID like 'p.XXX' for cross-platform)"
+            return (
+                "Error: couldn't find that playlist over the Apple Music API "
+                "(on Windows/Linux playlists are resolved via the API, not Music.app). "
+                "Check the exact name with playlist(action='list', filter='...'), or pass "
+                "its id (p.XXX). Note: adding a whole ALBUM to a playlist isn't supported "
+                "off macOS — add by track instead."
+            )
 
         # Get tracks from source playlist via AppleScript
         success, source_tracks = asc.get_playlist_tracks(resolved.applescript_name)
@@ -4463,10 +4495,11 @@ def _playlist_swap(
     allow_duplicates: bool,
     auto_add: Optional[bool],
 ) -> str:
-    """Transactional swap: add ``track``, CONFIRM it persisted (native truth, via the
-    add helpers' own verify), and only THEN remove ``replace``. If the add can't be
-    confirmed — e.g. Music.app's silent server-side revert — the old track is KEPT,
-    so a swap never silently loses an artist (the Coltrane bug)."""
+    """Transactional swap: add ``track``, CONFIRM it persisted, and only THEN remove
+    ``replace``. If the add can't be confirmed — e.g. Music.app's silent server-side
+    revert, or an amp-api write that didn't stick — the old track is KEPT, so a swap
+    never silently loses an artist (the Coltrane bug). On macOS the add helpers verify
+    against native truth; off-mac we re-read the playlist over the API."""
     if not track or not replace:
         return "Error: swap needs both `track` (new) and `replace` (old to remove)"
     if APPLESCRIPT_AVAILABLE:
@@ -4481,6 +4514,17 @@ def _playlist_swap(
             f"'{replace}' was NOT removed (nothing lost). Fix the add first, then retry.\n\n"
             f"{add_result}"
         )
+    # Off-mac the add helpers don't re-read (no AppleScript), so the API claimed success
+    # without proof. Re-read the playlist over the API before the destructive remove —
+    # for a track NAME (a catalog id add is precise, so trust _add_landed there).
+    if not APPLESCRIPT_AVAILABLE and track and not album and not str(track).strip().isdigit():
+        resolved = _resolve_playlist(playlist)
+        if resolved.api_id and not _verify_track_in_playlist_api(resolved.api_id, track, artist):
+            return (
+                f"⚠️ Swap aborted — added '{track}' but couldn't confirm it persisted in "
+                f"'{playlist}' (API read-back), so '{replace}' was NOT removed (nothing "
+                f"lost). Retry in a moment.\n\n{add_result}"
+            )
     if APPLESCRIPT_AVAILABLE:
         rm = _playlist_remove(playlist, replace, "")
     else:
@@ -4517,7 +4561,7 @@ def playlist(
     auto_add: Optional[bool] = None,
     replace: str = "",
 ) -> str:
-    """Playlist and folder operations. Actions: list, folders (macOS — show the folder tree; folders are NOT in `list`), tracks, search, create, add, copy, move (macOS), path (macOS), remove (macOS), delete (macOS), rename (macOS). To find a playlist by name, use action='list' with filter='jack' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', `track` accepts a song NAME, a catalog song id (a numeric id like '1440857781' — pins the EXACT edition, avoiding name/album version mismatches), or a library id; set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own. Note: adding a not-yet-owned catalog track to a Music.app-made playlist is two-step — it's added to the library over the API, then attached locally once iCloud syncs it down (usually seconds). If the sync is slow it may return "added to your library — re-run to attach"; just re-run the same add. Rarely, if the sync stalls past ~20s, Music.app briefly flashes to the foreground as a last-resort sync nudge — expected, not a glitch. To SWAP one track for another, use action='add' with `replace`=<the old track to remove>: it adds the new track, confirms it actually persisted, and only THEN removes the old one — so if the add silently reverts (a Music.app bug), the old track is kept rather than lost."""
+    """Playlist and folder operations. Actions: list, folders (macOS — show the folder tree; folders are NOT in `list`), tracks, search, create, add, copy, move, path (macOS), remove, delete, rename. (move/remove/delete/rename work on every OS — via Music.app on macOS, via the web API on Windows/Linux. Only folders/path are macOS-only.) To find a playlist by name, use action='list' with filter='jack' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', `track` accepts a song NAME, a catalog song id (a numeric id like '1440857781' — pins the EXACT edition, avoiding name/album version mismatches), or a library id; set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own. Note: adding a not-yet-owned catalog track to a Music.app-made playlist is two-step — it's added to the library over the API, then attached locally once iCloud syncs it down (usually seconds). If the sync is slow it may return "added to your library — re-run to attach"; just re-run the same add. Rarely, if the sync stalls past ~20s, Music.app briefly flashes to the foreground as a last-resort sync nudge — expected, not a glitch. To SWAP one track for another, use action='add' with `replace`=<the old track to remove>: it adds the new track, confirms it actually persisted, and only THEN removes the old one — so if the add silently reverts (a Music.app bug), the old track is kept rather than lost."""
     action = action.lower().strip().replace("-", "_")
 
     if action == "list":
@@ -4653,7 +4697,7 @@ def playlist(
         else:
             return _playlist_tree()
     else:
-        return f"Unknown action: {action}. Use: list, folders, tracks, search, create, add, copy, move, path, remove (macOS), delete (macOS), rename (macOS)"
+        return f"Unknown action: {action}. Use: list, folders (macOS), tracks, search, create, add, copy, move, path (macOS), remove, delete, rename"
 
 
 # ============ LIBRARY MANAGEMENT ============
@@ -7468,9 +7512,9 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
                 "your session."
             )
         return (
-            f"Error: {msg}\n\nBrowser sign-in needs Google Chrome installed and "
-            "`playwright install chromium` run once, plus a desktop session (not a "
-            "headless server)."
+            f"Error: {msg}\n\nBrowser sign-in needs Google Chrome installed (for "
+            "full-length playback) and a desktop session — not a headless server. "
+            "The browser engine downloads itself automatically on first use."
         )
 
     if action == "logout":

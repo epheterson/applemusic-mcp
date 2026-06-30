@@ -272,3 +272,36 @@ def test_add_landed_is_conservative():
         "Nothing added",
     ]:
         assert server._add_landed(bad) is False, bad
+
+
+# -- off-mac (Win/Linux) swap: API read-back guards the destructive remove --------
+
+
+def _fake_resolved(api_id="p.1", name="Jazz"):
+    import types as _t
+
+    return _t.SimpleNamespace(api_id=api_id, applescript_name=name, error=None, fuzzy_match=None)
+
+
+def test_offmac_swap_aborts_when_api_verify_fails(monkeypatch):
+    """Off-mac there's no native verify; if the API read-back can't confirm the add,
+    the old track is NOT removed."""
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+    monkeypatch.setattr(server, "_playlist_add_api", lambda *a, **k: "Added Coltrane to Jazz")
+    monkeypatch.setattr(server, "_resolve_playlist", lambda p: _fake_resolved())
+    monkeypatch.setattr(server, "_verify_track_in_playlist_api", lambda *a, **k: False)
+    removed = []
+    monkeypatch.setattr(server, "_playlist_remove_api", lambda p, t, ar: removed.append(t) or "rm")
+    out = server.playlist(action="add", playlist="Jazz", track="Coltrane", replace="Old Song")
+    assert "aborted" in out.lower() and removed == []
+
+
+def test_offmac_swap_removes_old_after_api_verify(monkeypatch):
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+    monkeypatch.setattr(server, "_playlist_add_api", lambda *a, **k: "Added Coltrane to Jazz")
+    monkeypatch.setattr(server, "_resolve_playlist", lambda p: _fake_resolved())
+    monkeypatch.setattr(server, "_verify_track_in_playlist_api", lambda *a, **k: True)
+    removed = []
+    monkeypatch.setattr(server, "_playlist_remove_api", lambda p, t, ar: removed.append(t) or "rm")
+    out = server.playlist(action="add", playlist="Jazz", track="Coltrane", replace="Old Song")
+    assert "Swapped" in out and removed == ["Old Song"]

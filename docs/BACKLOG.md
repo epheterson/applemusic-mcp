@@ -18,6 +18,12 @@ being written (`audit_log.log_action`). Real safety net, especially for batches.
 - Needs: a structured, reversible record per write (track + playlist + direction) and
   a bounded undo depth.
 
+## Folder rename off-mac
+`playlist(action="rename", folder=...)` works on macOS only — there's no
+`_folder_rename_api` (unlike create/delete, which have web-rail equivalents). Off-mac
+it returns a clear "requires macOS" error. Add an amp-api folder-rename if the API
+exposes one. Genuine capability gap, low frequency.
+
 ## Notes
 - Both should reuse the existing transactional-swap + native verify so they inherit
   the "never silently lose a track" guarantee.

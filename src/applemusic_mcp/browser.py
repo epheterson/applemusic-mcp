@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 import os
 import queue
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -277,6 +278,17 @@ class _BrowserEngine:
                 # raw Playwright stack trace at the user.
                 if not _looks_like_missing_browser(cx_exc):
                     raise
+                # The browser binary download is ~150 MB and can take minutes. Under the
+                # MCP server (stdio, no TTY) that would look like a dead hang with no
+                # output, so fail fast with actionable guidance instead — the visible
+                # download happens in the terminal during `applemusic-mcp login`.
+                if not sys.stdin.isatty():
+                    raise BrowserUnavailable(
+                        "First-time browser setup needed. Run `applemusic-mcp login` once "
+                        "in a terminal — it downloads the browser engine (~150 MB) with "
+                        "progress — then retry. (Install Google Chrome too for full-length "
+                        "playback.)"
+                    ) from cx_exc
                 if not _install_playwright_chromium():
                     raise BrowserUnavailable(
                         "Playwright's Chromium isn't installed (and neither system "
@@ -539,7 +551,8 @@ def _ensure_player_ready(page) -> None:
 
 
 _NO_DRM_NOTE = (
-    " (note: no audio — this browser lacks DRM/Widevine; install Google Chrome " "for playback)"
+    " (note: preview only, ~90s — this browser lacks DRM/Widevine; "
+    "install Google Chrome for full-length playback)"
 )
 
 

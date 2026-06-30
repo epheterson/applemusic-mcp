@@ -365,7 +365,7 @@ def test_play_catalog_success_no_drm_note(monkeypatch):
     page = FakePage(url="https://music.apple.com/us/browse")
     set_engine(monkeypatch, page=page, using_chrome=False)
     ok, msg = browser.play_catalog_track("55")
-    assert ok and msg.startswith("Playing: Strobe") and "no audio" in msg
+    assert ok and msg.startswith("Playing: Strobe") and "preview only" in msg
 
 
 def test_player_ready_navigates_when_ready_check_raises(monkeypatch):

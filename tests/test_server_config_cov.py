@@ -1046,7 +1046,7 @@ class TestAuthActionGaps:
         monkeypatch.setattr(browser, "signin_interactive", lambda: (False, "playwright not found"))
         out = server._auth_action("signin")
         assert "playwright not found" in out
-        assert "playwright install chromium" in out
+        assert "Google Chrome installed" in out and "downloads itself" in out
 
     def test_logout_failed_credentials(self, mock_config_dir, monkeypatch):
         """_clear_credentials returns non-empty failed → ⚠️ Partly signed out."""
