@@ -7591,49 +7591,61 @@ def playback(
         # now_playing call after a play/pause/next/seek.
         return f"{msg}\n\n{playback(action='now_playing', engine=engine)}"
     elif action == "now_playing":
-        # Report the active engine, then surface a split: if the OTHER engine is
-        # already alive and playing a DIFFERENT track, say so. The other engine is
-        # only peeked when already running — never launched just to check.
-        from . import browser
+        # PRIMARY = full state of the active engine (native keeps its rich detail:
+        # state / progress). Then surface any OTHER engine that's also playing, so a
+        # split is visible, with a hint to drive a specific one. Peeks never launch an
+        # engine — they only read one already running.
+        from . import browser, safari_player
 
-        if eng in ("safari", "chrome"):
-            wp = _web_player(eng)
-            label = "Safari" if eng == "safari" else "web player"
-            np = wp.now_playing()
-            if np:
-                st = f" [{np.get('state')}]" if np.get("state") else ""
-                primary = (
-                    f"Now playing — {label}{st}: "
-                    f"{np.get('name')} — {np.get('artist')} ({np.get('album')})"
-                )
-            else:
-                primary = f"Nothing playing ({label})"
-            primary_track = (np or {}).get("name", "")
-            other = asc.now_playing_if_running() if APPLESCRIPT_AVAILABLE else None
-            primary_label, other_label, other_value = label, "native (Music.app)", "native"
-        else:
+        _ENGINE_LABELS = {"native": "Music.app", "safari": "Safari", "chrome": "Chrome web player"}
+
+        def _peek(key):  # no-launch read of a non-active engine
+            if key == "native":
+                return asc.now_playing_if_running() if APPLESCRIPT_AVAILABLE else None
+            if key == "safari":
+                return safari_player.now_playing_if_running()
+            if key == "chrome":
+                return browser.now_playing_if_running()
+            return None
+
+        def _compact(label, np):
+            st = f" [{np.get('state')}]" if np.get("state") else ""
+            artist = f" — {np.get('artist')}" if np.get("artist") else ""
+            album = f" ({np.get('album')})" if np.get("album") else ""
+            return f"{label}{st}: {np.get('name')}{artist}{album}"
+
+        # Primary line for the active engine.
+        if eng == "native":
             if not APPLESCRIPT_AVAILABLE:
                 return _PLAYBACK_NEEDS_BROWSER
-            primary = _playback_now_playing()
-            primary_track = (asc.now_playing_if_running() or {}).get("name", "")
-            other = browser.now_playing_if_running()
-            primary_label, other_label, other_value = "Music.app", "web player", "web"
-
-        other_track = (other or {}).get("name", "")
-        other_state = (other or {}).get("state") or ""
-        # Only nag about a split when the other engine might actually be making sound.
-        # A track that's loaded-but-paused isn't competing for audio, so suppress it.
-        if (
-            other_track
-            and other_track != primary_track
-            and other_state not in ("paused", "stopped")
-        ):
-            return (
-                f"{primary}\n\n⚠️ Engine split — you're controlling the {primary_label}; the "
-                f"other engine ({other_label}) is also playing: {other_track}. Pass "
-                f"engine='{other_value}' to control {other_label} instead."
+            primary = _playback_now_playing()  # rich: state / track / artist / album / position
+        elif eng in ("safari", "chrome"):
+            np = _web_player(eng).now_playing()
+            primary = (
+                _compact(_ENGINE_LABELS[eng], np)
+                if np
+                else f"Nothing playing ({_ENGINE_LABELS[eng]})"
             )
-        return primary
+        else:  # none — no player resolved (e.g. api mode)
+            primary = _no_player_msg(override)
+
+        # Other engines also playing (peek-only), so a split is visible.
+        others = []
+        for key in ["native", "safari", "chrome"]:
+            if key == eng:
+                continue
+            np = _peek(key)
+            if np and np.get("name"):
+                others.append(f"  also on {_compact(_ENGINE_LABELS[key], np)}")
+
+        out = primary
+        if others:
+            out += "\n\nOther engines also playing:\n" + "\n".join(others)
+            out += "\n(pass engine='native' | 'safari' | 'chrome' to control a specific one)"
+        tabs = safari_player.music_tab_count() if APPLESCRIPT_AVAILABLE else 0
+        if tabs > 1:
+            out += f"\n\nℹ️ {tabs} Apple Music tabs are open in Safari — driving a consistent one."
+        return out
     elif action == "settings":
         if eng in ("safari", "chrome"):
             shuffle_b = (

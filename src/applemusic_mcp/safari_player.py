@@ -223,13 +223,14 @@ def reveal_url(music_url: str) -> tuple[bool, str]:
     if host != "music.apple.com" and not host.endswith(".music.apple.com"):
         return False, f"Not an Apple Music URL: {music_url}"
     u = _as_applescript_string(music_url)
-    # Open in a NEW tab — navigating an existing music.apple.com tab would yank the
-    # user off what they're viewing and stop playback if that tab is the player.
+    # Reuse the consistent music.apple.com tab (open one only if none exists) — same
+    # tab the player uses, so we don't spawn duplicates.
     script = f"""tell application "Safari"
-    if (count of windows) is 0 then
+{_FIND_MUSIC_TAB}
+    if theTab is missing value then
         make new document with properties {{URL:{u}}}
     else
-        tell window 1 to set current tab to (make new tab with properties {{URL:{u}}})
+        set URL of theTab to {u}
     end if
     return "ok"
 end tell"""
@@ -256,6 +257,45 @@ def now_playing():
     """Current Safari-player track dict, or None."""
     ok, v = _run_musickit(_NOW_PLAYING_JS)
     return v if ok else None
+
+
+_TAB_COUNT_SCRIPT = """tell application "Safari"
+    set n to 0
+    repeat with w in windows
+        repeat with t in tabs of w
+            if (URL of t) starts with "https://music.apple.com" then set n to n + 1
+        end repeat
+    end repeat
+    return n
+end tell"""
+
+
+def music_tab_count() -> int:
+    """How many music.apple.com tabs Safari has open (0 if none / not macOS / blocked).
+    Never opens one — used for peeking and the multi-tab FYI."""
+    if platform.system() != "Darwin":
+        return 0
+    try:
+        ok, out = run_applescript(_TAB_COUNT_SCRIPT)
+    except Exception:
+        return 0  # a peek probe must never break the caller (e.g. now_playing)
+    if not ok:
+        return 0
+    try:
+        return int((out or "0").strip())
+    except ValueError:
+        return 0
+
+
+def now_playing_if_running():
+    """now_playing(), but only if Safari already has a music.apple.com tab — never
+    opens one just to check (parity with browser/native peeks). None otherwise."""
+    if music_tab_count() < 1:
+        return None
+    try:
+        return now_playing()
+    except Exception:
+        return None
 
 
 def _queue_insert(catalog_id: str, later: bool) -> tuple[bool, str]:

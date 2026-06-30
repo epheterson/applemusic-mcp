@@ -203,10 +203,9 @@ class TestPlaybackDispatcher:
         assert "Playback: play" in out
 
     def test_now_playing_browser_track_found(self, monkeypatch):
-        """Lines 7017-7023: now_playing via browser, something playing."""
-        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        """now_playing primary = the active Chrome engine's track."""
         monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
-        monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: None)
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)  # chrome-only host
         from applemusic_mcp import browser
 
         monkeypatch.setattr(
@@ -218,92 +217,99 @@ class TestPlaybackDispatcher:
         assert "Strobe" in out and "deadmau5" in out
 
     def test_now_playing_browser_nothing(self, monkeypatch):
-        """Line 7021: browser now_playing returns None."""
-        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+        """Active Chrome engine, nothing playing → 'Nothing playing (Chrome...)'."""
         monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
-        monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: None)
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
         from applemusic_mcp import browser
 
         monkeypatch.setattr(browser, "now_playing", lambda: None)
         out = server.playback(action="now_playing")
         assert "Nothing" in out
 
-    def test_now_playing_split_web_selected_native_alive(self, monkeypatch):
-        """Web is the active engine but the native app is also playing a different
-        track — the split must be surfaced (the exact audition-trace confusion)."""
-        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+    def test_now_playing_surfaces_other_engines(self, monkeypatch):
+        """Primary = active engine; OTHER engines also playing are surfaced below it
+        with a hint to drive a specific one (replaces the old single-split warning)."""
         monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        from applemusic_mcp import browser
+        from applemusic_mcp import browser, safari_player
 
+        # active engine primary (direct read)
         monkeypatch.setattr(
             browser,
             "now_playing",
             lambda: {"name": "Now's The Time", "artist": "Charlie Parker", "album": "X"},
         )
+        # other engine peek (no-launch)
         monkeypatch.setattr(
             server.asc,
             "now_playing_if_running",
-            lambda: {"name": "Jeanie With The Light Brown Hair", "state": "playing"},
+            lambda: {"name": "Jeanie", "artist": "Foster", "state": "playing"},
         )
+        monkeypatch.setattr(safari_player, "now_playing_if_running", lambda: None)
+        monkeypatch.setattr(safari_player, "music_tab_count", lambda: 0)
         out = server.playback(action="now_playing")
-        assert "Now's The Time" in out
-        assert "Engine split" in out and "Jeanie" in out and "native" in out.lower()
+        assert "Now's The Time" in out  # primary (active chrome)
+        assert "Jeanie" in out and "also on Music.app" in out  # other engine surfaced
+        assert "engine=" in out  # how to drive a specific one
 
-    def test_now_playing_no_split_when_other_engine_paused(self, monkeypatch):
-        """A loaded-but-PAUSED other engine isn't competing for audio — suppress the
-        split nag (the 'pause native won't stick' annoyance was this firing anyway)."""
-        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
+    def test_now_playing_lists_paused_other_engine(self, monkeypatch):
+        """A loaded-but-paused OTHER engine is still surfaced (with its state)."""
         monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        from applemusic_mcp import browser
+        from applemusic_mcp import browser, safari_player
 
         monkeypatch.setattr(
-            browser,
-            "now_playing",
-            lambda: {"name": "Now's The Time", "artist": "Bird", "album": "X"},
+            browser, "now_playing", lambda: {"name": "Now's The Time", "artist": "Bird"}
         )
         monkeypatch.setattr(
             server.asc,
             "now_playing_if_running",
-            lambda: {"name": "Top Back", "state": "paused"},
+            lambda: {"name": "Top Back", "artist": "TI", "state": "paused"},
         )
+        monkeypatch.setattr(safari_player, "now_playing_if_running", lambda: None)
+        monkeypatch.setattr(safari_player, "music_tab_count", lambda: 0)
         out = server.playback(action="now_playing")
-        assert "Engine split" not in out
+        assert "Top Back" in out and "paused" in out.lower()
 
-    def test_now_playing_no_split_when_same_track(self, monkeypatch):
-        """Both engines on the same track → no spurious split warning."""
-        monkeypatch.setattr(server, "_playback_engine", lambda *a, **k: "chrome")
-        monkeypatch.setattr(server, "_get_active_playback", lambda: "chrome")
+    def test_now_playing_multi_tab_fyi(self, monkeypatch):
+        """Multiple Safari Apple Music tabs → an FYI note (a consistent one is driven)."""
+        monkeypatch.setattr(server, "_get_active_playback", lambda: "safari")
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        from applemusic_mcp import browser
+        from applemusic_mcp import browser, safari_player
 
         monkeypatch.setattr(
-            browser, "now_playing", lambda: {"name": "Strobe", "artist": "deadmau5", "album": "X"}
+            safari_player, "now_playing", lambda: {"name": "Strobe", "artist": "deadmau5"}
         )
-        monkeypatch.setattr(
-            server.asc, "now_playing_if_running", lambda: {"name": "Strobe", "state": "playing"}
-        )
+        monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: None)
+        monkeypatch.setattr(browser, "now_playing_if_running", lambda: None)
+        monkeypatch.setattr(safari_player, "music_tab_count", lambda: 3)
         out = server.playback(action="now_playing")
-        assert "Engine split" not in out
+        assert "Strobe" in out and "3 Apple Music tabs" in out
 
     def test_now_playing_no_applescript(self, monkeypatch):
-        """Lines 7024-7025: now_playing, no AppleScript."""
+        """Off-mac, active Chrome engine, nothing playing → 'Nothing playing (Chrome...)'."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
-        monkeypatch.setattr(server, "_use_browser_playback", lambda: False)
-        out = server.playback(action="now_playing")
-        assert "web" in out.lower()
-
-    def test_now_playing_native(self, monkeypatch):
-        """Line 7026: now_playing in native mode."""
-        _native(monkeypatch)
-        monkeypatch.setattr(server, "_playback_now_playing", lambda: "State: playing\nTrack: X")
-        monkeypatch.setattr(server.asc, "now_playing_if_running", lambda: {"name": "X"})
         from applemusic_mcp import browser
 
-        monkeypatch.setattr(browser, "now_playing_if_running", lambda: None)
+        monkeypatch.setattr(browser, "now_playing", lambda: None)
         out = server.playback(action="now_playing")
-        assert "State: playing" in out
+        assert "Chrome" in out and "Nothing" in out
+
+    def test_now_playing_native(self, monkeypatch):
+        """now_playing primary = native Music.app, with its rich detail."""
+        _native(monkeypatch)
+        monkeypatch.setattr(
+            server.asc,
+            "get_current_track",
+            lambda: (True, {"state": "playing", "name": "X", "artist": "Y"}),
+        )
+        from applemusic_mcp import browser, safari_player
+
+        monkeypatch.setattr(browser, "now_playing_if_running", lambda: None)
+        monkeypatch.setattr(safari_player, "now_playing_if_running", lambda: None)
+        monkeypatch.setattr(safari_player, "music_tab_count", lambda: 0)
+        out = server.playback(action="now_playing")
+        assert "X" in out and "playing" in out.lower()
 
     def test_settings_browser_success(self, monkeypatch):
         """Lines 7028-7036: settings via browser."""

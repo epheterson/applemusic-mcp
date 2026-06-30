@@ -210,5 +210,23 @@ def test_reveal_url(monkeypatch):
     _mock(monkeypatch, True, "ok", cap)
     ok, msg = sp.reveal_url("https://music.apple.com/us/album/x/1")
     assert ok and "Showing in Safari" in msg
-    # Opens a NEW tab (doesn't hijack/stop a playing music.apple.com tab).
-    assert "make new tab" in cap["script"]
+    # Reuses the consistent music tab (open one only if none) — no duplicate tabs.
+    assert "set URL of theTab" in cap["script"]
+
+
+def test_music_tab_count(monkeypatch):
+    monkeypatch.setattr(sp.platform, "system", lambda: "Darwin")
+    _mock(monkeypatch, True, "2")
+    assert sp.music_tab_count() == 2
+
+
+def test_now_playing_if_running_no_tab(monkeypatch):
+    # No music tab → peek returns None WITHOUT opening one.
+    monkeypatch.setattr(sp, "music_tab_count", lambda: 0)
+    assert sp.now_playing_if_running() is None
+
+
+def test_now_playing_if_running_with_tab(monkeypatch):
+    monkeypatch.setattr(sp, "music_tab_count", lambda: 1)
+    monkeypatch.setattr(sp, "now_playing", lambda: {"name": "X", "artist": "Y"})
+    assert sp.now_playing_if_running()["name"] == "X"
