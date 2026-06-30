@@ -143,3 +143,75 @@ def test_playlist_add_api_auto_add_on_searches_catalog(monkeypatch):
     )
     out = server._playlist_add_api("Mix", "New Song", auto_add=True)
     assert added["items"] == ["999"] and "New Song" in out
+
+
+# -- MEDIUM: native catalog->playlist attach must `duplicate` AT MOST ONCE ---
+
+
+class _Resp:
+    def __init__(self, code, js):
+        self.status_code = code
+        self._js = js
+
+    def json(self):
+        return self._js
+
+
+def _stub_attach(monkeypatch, add_calls, verify):
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+    monkeypatch.setattr(server, "get_headers", lambda: {})
+    monkeypatch.setattr(server, "get_storefront", lambda: "us")
+    monkeypatch.setattr(server, "_VERIFY_DELAY_S", 0)
+    monkeypatch.setattr(server, "_SYNC_POLL_BUDGET_S", 5)
+    monkeypatch.setattr(server, "_SYNC_POLL_INTERVAL_S", 0)
+    monkeypatch.setattr(server, "_SYNC_NUDGE_AFTER_S", 999)
+    monkeypatch.setattr(
+        server.requests,
+        "get",
+        lambda *a, **k: _Resp(
+            200,
+            {
+                "results": {
+                    "songs": {
+                        "data": [
+                            {"id": "123", "attributes": {"name": "Africa", "artistName": "Toto"}}
+                        ]
+                    }
+                }
+            },
+        ),
+    )
+    monkeypatch.setattr(server.requests, "post", lambda *a, **k: _Resp(202, {}))
+    monkeypatch.setattr(server.asc, "find_library_track", lambda n, a: (True, {}))  # synced
+    monkeypatch.setattr(
+        server.amp_api, "resolve_playlist", lambda n, **k: {"id": "p.user", "canEdit": True}
+    )
+    monkeypatch.setattr(server.amp_api, "playlist_kind", lambda pl: "user")
+
+    def fake_add(pl, nm, ar, al):
+        add_calls.append(1)
+        return True, "added", None
+
+    monkeypatch.setattr(server, "_smart_as_add_track_to_playlist", fake_add)
+    monkeypatch.setattr(server, "_verify_track_in_playlist", verify)
+
+
+def test_native_attach_adds_once_when_verify_never_confirms(monkeypatch):
+    add_calls = []
+    _stub_attach(monkeypatch, add_calls, lambda *a, **k: False)  # verify never confirms
+    ok, msg, _steps = server._auto_search_and_add_to_playlist("Africa", "Toto", "My User PL")
+    assert len(add_calls) == 1  # added EXACTLY once (old loop added up to 4x)
+    assert not ok and "duplicate" in msg.lower()
+
+
+def test_native_attach_adds_once_then_verify_lag_succeeds(monkeypatch):
+    add_calls = []
+    seen = []
+
+    def verify(*a, **k):
+        seen.append(1)
+        return len(seen) >= 2  # confirms on the 2nd poll (propagation lag)
+
+    _stub_attach(monkeypatch, add_calls, verify)
+    ok, msg, _steps = server._auto_search_and_add_to_playlist("Africa", "Toto", "My User PL")
+    assert len(add_calls) == 1 and ok  # added once, then verified on retry

@@ -251,7 +251,16 @@ class _BrowserEngine:
             )
             self._using_chrome = True
             return ctx
-        except Exception:
+        except Exception as exc:
+            # No system Chrome → fall back to Playwright's bundled Chromium, which has
+            # NO Widevine, so Apple Music plays 90s previews only. Don't let that
+            # downgrade be silent — it's the usual cause of "playback cuts off."
+            logger.warning(
+                "System Chrome unavailable (%s) — falling back to bundled Chromium, "
+                "which can't decode Apple Music DRM (preview-only ~90s). Install Google "
+                "Chrome for full playback.",
+                exc,
+            )
             try:
                 ctx = launch(
                     user_data_dir,

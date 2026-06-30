@@ -2758,13 +2758,26 @@ def _auto_search_and_add_to_playlist(
                     )
             time.sleep(_SYNC_POLL_INTERVAL_S)
         if synced:
-            # Synced locally — attach ONCE (a short retry absorbs attach/verify lag;
-            # never re-add in a way that could duplicate).
+            # Synced locally — attach via AppleScript, then verify. CRITICAL: the
+            # `duplicate` add must happen AT MOST ONCE. A successful add whose verify
+            # lags (iCloud propagation) must NOT trigger a re-add — that's how the old
+            # loop stacked up to 4 duplicate copies. So: retry the ADD only while it
+            # keeps failing with "Track not found" (nothing landed yet); once an add
+            # succeeds, stop adding and only re-poll the verify.
+            added = False
             for _ in range(4):
-                ok2, res2, _split = _smart_as_add_track_to_playlist(
-                    playlist_name, found_name, found_artist or None, None
-                )
-                if ok2 and _verify_track_in_playlist(playlist_name, found_name, found_artist or ""):
+                if not added:
+                    ok2, res2, _split = _smart_as_add_track_to_playlist(
+                        playlist_name, found_name, found_artist or None, None
+                    )
+                    if ok2:
+                        added = True
+                    elif "Track not found" not in res2:
+                        return False, _attach_error(found_name, res2), steps
+                    # else: not findable yet — safe to retry the add next loop
+                if added and _verify_track_in_playlist(
+                    playlist_name, found_name, found_artist or ""
+                ):
                     steps.append("Attached via Music.app (native)")
                     return (
                         True,
@@ -2773,9 +2786,17 @@ def _auto_search_and_add_to_playlist(
                         "attached to playlist via Music.app)",
                         steps,
                     )
-                if not ok2 and "Track not found" not in res2:
-                    return False, _attach_error(found_name, res2), steps
                 time.sleep(_VERIFY_DELAY_S)
+            if added:
+                # The add landed but verify never confirmed within the budget — report
+                # honestly (it likely attached); do NOT re-add and risk a duplicate.
+                return (
+                    False,
+                    f"Added '{found_name}' to '{playlist_name}' but couldn't confirm it "
+                    "within a few seconds (iCloud propagation lag) — it likely landed; "
+                    "check the playlist before re-adding so you don't get a duplicate.",
+                    steps,
+                )
         # Not synced within the budget (Apple's iCloud sync is variable — usually
         # seconds, occasionally a minute+). The library-add succeeded; tell the model
         # exactly that and the one-step fix so the experience stays smooth.
@@ -7621,8 +7642,8 @@ def queue(
 
 _PLAYBACK_NEEDS_BROWSER = (
     "Native (Music.app) playback needs macOS, and this host isn't macOS. "
-    "Set mode to web (config set-pref preference=mode string_value=web) and run "
-    "`applemusic-mcp login`, or call playback with engine='web' for this one request."
+    'Set the web engine — config(action="set-pref", preference="mode", string_value="web") '
+    "— and run `applemusic-mcp login`, or pass engine='web' for this one call."
 )
 
 

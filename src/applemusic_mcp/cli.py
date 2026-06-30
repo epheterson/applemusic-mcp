@@ -221,7 +221,7 @@ def cmd_status(args):
         days_left = (data["expires"] - time.time()) / 86400
         print(f"Developer token: valid ({days_left:.0f} days left)")
     elif data is not None:
-        print("Developer token: expired")
+        print("Developer token: expired — re-run `applemusic-mcp login --dev` to renew")
     elif has_user_token():
         # The web/Safari path has no generated token — it's harvested from Apple's
         # web player on demand. Say so rather than implying something's missing.
