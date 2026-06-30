@@ -39,7 +39,7 @@ class TestResolveFailureMsg:
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "expired")
         result = server._resolve_failure_msg("playlist X not found")
         assert "expired" in result.lower()
-        assert "applemusic-mcp signin" in result or "authorize" in result
+        assert "applemusic-mcp login" in result  # real re-auth command (no signin/authorize)
 
     def test_throttled(self, monkeypatch):
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "throttled")
@@ -2470,7 +2470,7 @@ class TestPlaylistAddIdsWithNoToken:
         )
         # Catalog ID input
         result = server._playlist_add("My PL", "1234567890")
-        assert "Error" in result or "token" in result.lower() or "generate-token" in result
+        assert "Error" in result or "token" in result.lower() or "login --dev" in result
 
     def test_all_tracks_duplicate_returns_no_tracks_added(self, monkeypatch):
         """When all tracks are skipped as duplicates."""

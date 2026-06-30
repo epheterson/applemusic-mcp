@@ -39,7 +39,7 @@ class TestGetTokenExpirationWarning:
         result = server.get_token_expiration_warning()
         assert result is not None
         assert "days" in result  # Could be 14 or 15 depending on timing
-        assert "generate-token" in result
+        assert "login --dev" in result
 
 
 class TestGetHeaders:
@@ -558,7 +558,7 @@ class TestCheckAuthStatus:
 
         # Keyless generated token (no .p8 to auto-renew) → escalating nudge.
         assert "expires in" in result.lower()
-        assert "generate-token" in result
+        assert "login --dev" in result
 
 
 class TestAuthTool:
@@ -3887,7 +3887,7 @@ class TestLibrarySearchSurfacesAppleScriptError:
 
         # API path raises the legacy token error
         def fake_get_headers():
-            raise FileNotFoundError("Developer token not found. Run: applemusic-mcp generate-token")
+            raise FileNotFoundError("Developer token not found. Run: applemusic-mcp login --dev")
 
         monkeypatch.setattr(server, "get_headers", fake_get_headers)
 
@@ -4061,7 +4061,7 @@ class TestPlaylistCreateNoTokenLeakOnAsFailure:
         # Token deliberately not configured — if cascade leaks, this is
         # the error the user would see.
         def raise_no_token():
-            raise FileNotFoundError("Developer token not found. Run: applemusic-mcp generate-token")
+            raise FileNotFoundError("Developer token not found. Run: applemusic-mcp login --dev")
 
         monkeypatch.setattr(server, "get_headers", raise_no_token)
 
@@ -4069,7 +4069,7 @@ class TestPlaylistCreateNoTokenLeakOnAsFailure:
 
         assert "Music.app isn't running" in result
         assert "Developer token not found" not in result
-        assert "generate-token" not in result
+        assert "login --dev" not in result
 
     def test_automation_denied_surfaces_actionable_message(self, monkeypatch):
         from applemusic_mcp import applescript as real_asc
@@ -4202,7 +4202,7 @@ class TestLibraryBrowseNoTokenLeakOnAsFailure:
 
         # Token NOT configured. If cascade leaks, this is what the user sees.
         def raise_no_token():
-            raise FileNotFoundError("Developer token not found. Run: applemusic-mcp generate-token")
+            raise FileNotFoundError("Developer token not found. Run: applemusic-mcp login --dev")
 
         monkeypatch.setattr(server, "get_headers", raise_no_token)
 
@@ -4614,8 +4614,8 @@ class TestLibrarySearchEmptyDoesNotLeakToken:
         assert "No songs found" in result
         # The leak-error must NOT appear
         assert "Developer token not found" not in result
-        assert "applemusic-mcp generate-token" not in result
-        assert "applemusic-mcp authorize" not in result
+        assert "applemusic-mcp login --dev" not in result
+        assert "applemusic-mcp login --dev" not in result
 
     def test_tokenful_macos_empty_as_still_cascades_for_cloud_check(
         self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch

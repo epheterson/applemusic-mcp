@@ -750,7 +750,7 @@ class TestLibraryAdd:
         monkeypatch.setattr(server, "_can_use_library_api", lambda: False)
         result = server._library_add(track="Song A")
         assert "Error" in result
-        assert "signin" in result or "generate-token" in result
+        assert "signin" in result or "login --dev" in result
 
     @responses.activate
     def test_catalog_id_track_success(

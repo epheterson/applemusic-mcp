@@ -892,7 +892,7 @@ def get_token_expiration_warning() -> str | None:
 
     # Only reaches here for a keyless generated token (no .p8 to auto-renew), so
     # give plenty of runway given sparse use: notice ≤30 days, urgent ≤7.
-    renew = "renew with `applemusic-mcp generate-token`"
+    renew = "renew with `applemusic-mcp login --dev`"
     days = round(days_left)
     if days_left < 0:
         return f"⚠️ Apple Developer token EXPIRED — {renew} (issues a fresh 180-day token)."
@@ -1230,7 +1230,7 @@ def _playlist_rename_api(name: str, new_name: str) -> str:
 
 _SESSION_EXPIRED_MSG = (
     "Error: your Apple Music session has expired — re-run `applemusic-mcp login` "
-    "(browser) or `applemusic-mcp authorize` (developer-token path)."
+    "(browser) or `applemusic-mcp login --dev` (developer-token path)."
 )
 _SESSION_THROTTLED_MSG = (
     "Error: Apple Music is rate-limiting requests (HTTP 429) — wait a moment and retry."
@@ -2321,7 +2321,7 @@ def _add_to_library_api(catalog_ids: list[str], content_type: str = "songs") -> 
         if response.status_code in (401, 403):
             return False, (
                 f"Not authorized (status {response.status_code}) — your session may have "
-                "expired. Re-run `applemusic-mcp login` or `applemusic-mcp generate-token`."
+                "expired. Re-run `applemusic-mcp login` or `applemusic-mcp login --dev`."
             )
         return False, f"API returned status {response.status_code}"
     except Exception as e:
@@ -2533,7 +2533,7 @@ def _unified_auto_search_to_playlist(
         return (
             False,
             "Catalog add needs the API. Run `applemusic-mcp login` (browser sign-in, "
-            "no Apple Developer account) or `applemusic-mcp generate-token`.",
+            "no Apple Developer account) or `applemusic-mcp login --dev`.",
             steps,
         )
 
@@ -2757,7 +2757,7 @@ def _rate_song_api(song_id: str, rating: str) -> tuple[bool, str]:
         if response.status_code in (401, 403):
             return False, (
                 f"Not authorized (status {response.status_code}) — your session may have "
-                "expired. Re-run `applemusic-mcp login` or `applemusic-mcp generate-token`."
+                "expired. Re-run `applemusic-mcp login` or `applemusic-mcp login --dev`."
             )
         return False, f"API returned status {response.status_code}"
     except Exception as e:
@@ -3664,7 +3664,7 @@ def _playlist_add(
                 "Error: Adding by album requires an API token (the album's "
                 "tracklist is fetched from the catalog). To add tracks "
                 "without a token, pass them by name. To configure an API "
-                "token, run: applemusic-mcp generate-token"
+                "token, run: applemusic-mcp login --dev"
             )
         resolved_albums = _resolve_album(album, artist)
         for r in resolved_albums:
@@ -3854,7 +3854,7 @@ def _playlist_add(
                     "Track IDs require an API token on macOS (resolving the ID's "
                     "catalog metadata uses the REST API). To add by ID without a "
                     "token, pass the track by name instead. To configure an API "
-                    "token, run: applemusic-mcp generate-token"
+                    "token, run: applemusic-mcp login --dev"
                 )
                 ids_list = []  # Skip the ID loop below
 
@@ -4846,7 +4846,7 @@ def _library_add(
         return (
             "Error: Adding to your library needs the API. Run "
             "`applemusic-mcp login` (browser sign-in, no Apple Developer account) "
-            "or `applemusic-mcp generate-token`."
+            "or `applemusic-mcp login --dev`."
         )
 
     # Helper to add a song by catalog search
@@ -6813,16 +6813,16 @@ def _config_auth_status(mutation_status: "Optional[str]" = None) -> str:
             days_left = (dev_info.get("expires", 0) - time.time()) / 86400
             days = round(days_left)
             if days_left < 0:
-                status.append("Developer Token: EXPIRED — run `applemusic-mcp generate-token`")
+                status.append("Developer Token: EXPIRED — run `applemusic-mcp login --dev`")
             elif days_left <= 7:
                 status.append(
                     f"Developer Token: ⚠️ EXPIRES IN {days} DAY(S) — "
-                    "run `applemusic-mcp generate-token` now"
+                    "run `applemusic-mcp login --dev` now"
                 )
             elif days_left <= 30:
                 status.append(
                     f"Developer Token: expires in {days} days — "
-                    "run `applemusic-mcp generate-token` soon"
+                    "run `applemusic-mcp login --dev` soon"
                 )
             else:
                 status.append(f"Developer Token: OK ({days} days remaining, generated)")
@@ -6834,7 +6834,7 @@ def _config_auth_status(mutation_status: "Optional[str]" = None) -> str:
     else:
         status.append(
             "Developer Token: MISSING — run `applemusic-mcp login` (browser, no account) "
-            "or `applemusic-mcp generate-token` (Apple Developer)"
+            "or `applemusic-mcp login --dev` (Apple Developer)"
         )
 
     # User token (media-user-token). Persists; re-auth = signin (browser) or authorize.
@@ -6845,7 +6845,7 @@ def _config_auth_status(mutation_status: "Optional[str]" = None) -> str:
     else:
         status.append(
             "Music User Token: MISSING — run `applemusic-mcp login` (browser) "
-            "or `applemusic-mcp authorize` (dev token)"
+            "or `applemusic-mcp login --dev` (dev token)"
         )
 
     # Test API connection
@@ -6863,7 +6863,7 @@ def _config_auth_status(mutation_status: "Optional[str]" = None) -> str:
             elif response.status_code in (401, 403):
                 status.append(
                     "API Connection: UNAUTHORIZED — your session expired. Re-run "
-                    "`applemusic-mcp login` (browser) or `applemusic-mcp authorize` (dev token)."
+                    "`applemusic-mcp login` (browser) or `applemusic-mcp login --dev` (dev token)."
                 )
             elif response.status_code == 429:
                 status.append("API Connection: RATE-LIMITED (429) — wait a moment and retry.")
@@ -7370,7 +7370,7 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
             )
         return (
             "✓ Reset complete. Run config(action='signin') for the free web path, or set up an "
-            "Apple Developer token with `applemusic-mcp generate-token`."
+            "Apple Developer token with `applemusic-mcp login --dev`."
         )
 
     return f"Unknown action: {action}. Use: status, signin, logout, reset"

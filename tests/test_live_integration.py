@@ -58,7 +58,7 @@ def _env_skip_reason() -> str:
     if not os.environ.get("TEST_API"):
         return "live API gate is opt-in; run with TEST_API=1"
     if not auth.has_any_developer_token():
-        return "no developer token (generate-token or a harvestable one) — can't reach the API"
+        return "no developer token (login --dev or a harvestable one) — can't reach the API"
     try:
         auth.get_user_token()
     except Exception:
