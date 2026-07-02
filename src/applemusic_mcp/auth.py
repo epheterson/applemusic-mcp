@@ -280,7 +280,15 @@ def has_any_developer_token() -> bool:
 def get_config_dir() -> Path:
     """Get or create the config directory (0700 — it holds tokens and the .p8)."""
     config_dir = DEFAULT_CONFIG_DIR
-    config_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        config_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        # A clear, actionable message beats a raw traceback (e.g. an unwritable
+        # APPLEMUSIC_MCP_HOME, or a root-owned mount under a non-root user).
+        raise RuntimeError(
+            f"Can't create the config directory at {config_dir}: {exc}. "
+            "Check that the path is writable (or set APPLEMUSIC_MCP_HOME to one that is)."
+        ) from exc
     try:
         os.chmod(config_dir, 0o700)
     except OSError:

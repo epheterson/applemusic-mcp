@@ -38,6 +38,11 @@ ENV DISPLAY=:99 \
     APPLEMUSIC_MCP_HOME=/home/tester/.applemusic-mcp \
     APPLEMUSIC_BROWSER_NO_SANDBOX=1
 
+# Pre-create the state dir AS tester so a mounted named volume inherits tester
+# ownership (Docker copies the image dir's ownership into an empty volume on first
+# mount). Otherwise the volume is root-owned and the non-root user can't write it.
+RUN mkdir -p "$APPLEMUSIC_MCP_HOME/.config/applemusic-mcp"
+
 COPY --chown=tester:tester docker/linux-tryout/start.sh /home/tester/start.sh
 COPY --chown=tester:tester docker/linux-tryout/welcome.txt /home/tester/welcome.txt
 COPY --chown=tester:tester docker/linux-tryout/smoke.py /home/tester/smoke.py

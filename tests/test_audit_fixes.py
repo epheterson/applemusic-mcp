@@ -305,3 +305,21 @@ def test_offmac_swap_removes_old_after_api_verify(monkeypatch):
     monkeypatch.setattr(server, "_playlist_remove_api", lambda p, t, ar: removed.append(t) or "rm")
     out = server.playlist(action="add", playlist="Jazz", track="Coltrane", replace="Old Song")
     assert "Swapped" in out and removed == ["Old Song"]
+
+
+# -- config dir: clean error instead of a raw traceback when unwritable -----------
+
+
+def test_get_config_dir_raises_clean_error(monkeypatch):
+    """An unwritable APPLEMUSIC_MCP_HOME (or root-owned mount) should give an
+    actionable message, not a raw OSError traceback."""
+    import pytest
+
+    import applemusic_mcp.auth as auth
+
+    def boom(*a, **k):
+        raise PermissionError("Permission denied")
+
+    monkeypatch.setattr("pathlib.Path.mkdir", boom)
+    with pytest.raises(RuntimeError, match="config directory"):
+        auth.get_config_dir()
