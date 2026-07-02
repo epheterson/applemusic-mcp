@@ -33,13 +33,16 @@ dependencies = [
     { name = "cryptography" },
     { name = "keyring" },
     { name = "mcp" },
-    { name = "playwright" },
+    { name = "playwright", marker = "sys_platform != 'darwin'" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'" },
     { name = "requests" },
 ]
 
 [package.optional-dependencies]
+browser = [
+    { name = "playwright" },
+]
 dev = [
     { name = "black" },
     { name = "pytest" },
@@ -56,7 +59,8 @@ requires-dist = [
     { name = "cryptography", specifier = ">=41.0.0" },
     { name = "keyring", specifier = ">=24.0.0" },
     { name = "mcp", specifier = ">=1.0.0" },
-    { name = "playwright", specifier = ">=1.44.0" },
+    { name = "playwright", marker = "sys_platform != 'darwin'", specifier = ">=1.44.0" },
+    { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.44.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8.0" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin'", specifier = ">=10.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
@@ -67,7 +71,7 @@ requires-dist = [
     { name = "responses", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["browser", "dev"]
 
 [[package]]
 name = "attrs"

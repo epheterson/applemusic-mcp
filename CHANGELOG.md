@@ -5,12 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2026-06-24
+## [1.0.0] - 2026-07-01
 
 The cross-platform milestone: **full Apple Music control on macOS, Windows, and
 Linux with no Apple Developer account** — library, playlists, *and playback*.
 
 ### Added
+
+- **Transactional playlist swaps — never silently lose a track.** `playlist(action=
+  "add", …, replace="<old track>")` adds the new track, CONFIRMS it actually persisted,
+  and only then removes the old one. On macOS it verifies against native AppleScript
+  truth; on Windows/Linux it re-reads the playlist over the API (`_verify_track_in_
+  playlist_api`). If the add can't be confirmed — e.g. Music.app's silent server-side
+  revert — the old track is KEPT. Fixes a real data-loss case (a swap where the remove
+  stuck but the add reverted, dropping an artist).
+- **`now_playing` shows position/progress** (e.g. `1:12/5:05`) on the Safari and Chrome
+  engines, matching native.
+- **System-aware guidance.** Error/setup messages now name only the engines that exist
+  on the current OS (native/safari are macOS-only; Chrome is cross-platform), instead
+  of listing every platform's steps to everyone.
+
+### Fixed (Windows/Linux hardening)
+
+- **The Chrome web player stays signed in across launches.** Playwright's persistent
+  profile doesn't reliably persist session cookies and can corrupt on an ungraceful
+  exit; the saved `media-user-token` is now re-asserted as the authoritative cookie on
+  every launch, and the browser context is closed gracefully on shutdown (atexit +
+  SIGTERM). No more "signed-out every launch."
+- **First-run no longer looks hung.** The one-time ~150 MB browser download used to
+  block the first play for minutes with no output; under the server it now fails fast
+  with "run `applemusic-mcp login` once in a terminal" (where the download shows
+  progress). The CLI still auto-installs.
+- **Honest off-mac messaging.** Preview-only playback is labeled "preview only ~90s"
+  (not the contradictory "no audio"); `move`/`remove`/`delete`/`rename` are no longer
+  mislabeled "(macOS)" (they work off-mac via the API); the add-by-name error states
+  the real cause instead of a wrong "requires macOS."
 
 - **Safari is now a full playback + queue engine on macOS — not just sign-in.** The
   same Apple-Events `do JavaScript` channel drives your signed-in Safari's MusicKit
@@ -593,7 +622,7 @@ This release consolidates the macOS UI automation paths onto a small set of shar
 
 ### Added
 
-- **Verify-after-modify on every playlist + library data path** — `_playlist_add` (both names path and IDs path), `ui_add_to_playlist`'s final step, `_playlist_remove` (all 4 input-type branches), `_library_remove` (all 4 input-type branches), and `_library_add_track_via_ui` now confirm the change actually persisted before reporting success. On verify miss the call retries once with sync-lag delay; if still missing, the user sees a clear actionable error ("Some user-created playlists silently revert AppleScript edits server-side; adding manually via Music.app's right-click → Add to Playlist usually works") instead of a misleading "Added 1 track(s)" with nothing in the playlist. The previous behavior could return success three times in a row for the same track that never actually landed (caught during live testing — Lionel Richie "Hello" added to a `canEdit:false` user-created playlist).
+- **Verify-after-modify on every playlist + library data path** — `_playlist_add` (both names path and IDs path), `ui_add_to_playlist`'s final step, `_playlist_remove` (all 4 input-type branches), `_library_remove` (all 4 input-type branches), and `_library_add_track_via_ui` now confirm the change actually persisted before reporting success. On verify miss the call retries once with sync-lag delay; if still missing, the user sees a clear actionable error (Music.app silently reverted the edit server-side — an Apple bug where even a manual add fails; quit and reopen Music.app, then retry) instead of a misleading "Added 1 track(s)" with nothing in the playlist. The previous behavior could return success three times in a row for the same track that never actually landed (caught during live testing — Lionel Richie "Hello" added to a `canEdit:false` user-created playlist).
 - **`playlist_tracks` paginated header now shows true total on the API path** — when a `limit` is set on the API-optimized branch (used when both `api_id` and `applescript_name` resolve, or when only `api_id` is available), the header now reads `=== 1-200 of 436 tracks ===` rather than `=== 200 tracks ===`. Captured from `meta.total` on the first /tracks API response — no extra API call. The AppleScript-only branch (used in tokenless mode and for playlists with no API ID) was already correct: it fetches the full list, then `_apply_pagination` records the pre-slice count, so the header has always shown the true total there. This fix closes the API-path gap. Prevents callers (including AI agents) from treating a partial view as authoritative when surveying playlist contents. Same hard-rule lesson Eric called out: "don't define a limit, and even if a limit is defined the true count is returned."
 - **`_SEARCH_FIELD_TOOLBAR_FLAT` variant** — third toolbar layout for macOS 26 builds where the search text field sits directly under `toolbar 1` without a wrapping `group 1`. The dual-path probe in `_get_search_field()` now tries grouped → flat → sidebar in order, caches the first hit, and picks up future toolbar variants without code changes if needed.
 - **TestUIPrimitives** — 13 new mock-based unit tests covering each new internal primitive (`_focus_search_field`, `_wait_for_top_results`, `_parse_top_results`, `_find_top_result_position`, `_hover_then_click_subelement`, `_verify_track_playing`).
