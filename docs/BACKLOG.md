@@ -24,6 +24,21 @@ being written (`audit_log.log_action`). Real safety net, especially for batches.
 it returns a clear "requires macOS" error. Add an amp-api folder-rename if the API
 exposes one. Genuine capability gap, low frequency.
 
+## Deferred from the pre-1.0 review (lower priority — not data-loss)
+- **Swap uses a resolver per step.** `_playlist_add`, `_confirm_swap_track`, and
+  `_playlist_remove` each resolve the playlist name independently. Deterministic
+  resolution makes divergence unlikely, but resolving ONCE and threading the resolved
+  id through all three would remove the theoretical "add to A, remove from B" edge.
+- **`_profile_in_use()` is a no-op on Windows** (`pgrep`). The "server already holds
+  the Chrome profile" fast-fail never fires there → a CLI login during an active
+  server can collide on the profile lock. Use a cross-platform process check.
+- **Multi-track `track` in a swap**: `_add_landed` accepts "Added N, M failed", so a
+  swap whose intended track was the failed one could still remove `replace`. Guard
+  swaps to a single resolved track.
+- **Bare `mkdir` in `track_cache.py` / `audit_log.py`** lacks the friendly-error
+  wrapper `get_config_dir` now has — an unwritable `APPLEMUSIC_MCP_HOME` surfaces a
+  raw traceback there. Consistency.
+
 ## Notes
 - Both should reuse the existing transactional-swap + native verify so they inherit
   the "never silently lose a track" guarantee.
