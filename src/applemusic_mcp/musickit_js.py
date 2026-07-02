@@ -44,9 +44,12 @@ _PLAY_SONG_JS = """
 async (songId) => {
   const mk = window.MusicKit.getInstance();
   await mk.setQueue({ song: songId, startPlaying: true });
-  await mk.play();
+  // mk.play() can HANG forever when the browser blocks audio until a real user
+  // gesture (Safari "sticky activation"). Race it against a timeout so we return a
+  // clear state fast instead of eating the whole poll budget.
+  await Promise.race([mk.play().catch(() => {}), new Promise(r => setTimeout(r, 4000))]);
   const nm = mk.nowPlayingItem ? mk.nowPlayingItem.attributes.name : 'playing';
-  // play() can resolve without audio actually starting (autoplay-blocked, etc.) —
+  // play() can resolve/‑time-out without audio actually starting (autoplay-blocked) —
   // don't claim "Playing" if the player isn't playing.
   return mk.isPlaying ? nm : (nm + ' [no audio — the player did not start]');
 }
@@ -58,8 +61,10 @@ async (q) => {
   const shuffle = !!q.__shuffle; delete q.__shuffle;
   await mk.setQueue(Object.assign({ startPlaying: false }, q));
   mk.shuffleMode = shuffle ? 1 : 0;
-  await mk.play();
-  return mk.nowPlayingItem ? mk.nowPlayingItem.attributes.name : 'playing';
+  // Race play() so a gesture-blocked player (Safari sticky activation) can't hang.
+  await Promise.race([mk.play().catch(() => {}), new Promise(r => setTimeout(r, 4000))]);
+  const nm = mk.nowPlayingItem ? mk.nowPlayingItem.attributes.name : 'playing';
+  return mk.isPlaying ? nm : (nm + ' [no audio — the player did not start]');
 }
 """
 
@@ -68,7 +73,7 @@ async (args) => {
   const mk = window.MusicKit.getInstance();
   const { action, seconds } = args;
   switch (action) {
-    case 'play':     await mk.play(); break;
+    case 'play':     await Promise.race([mk.play().catch(() => {}), new Promise(r => setTimeout(r, 4000))]); return mk.isPlaying ? 'ok' : 'no-audio';
     case 'pause':    await mk.pause(); break;
     case 'stop':     await mk.stop(); break;
     case 'next':     await mk.skipToNextItem(); break;

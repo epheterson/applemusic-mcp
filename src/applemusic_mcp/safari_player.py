@@ -62,6 +62,18 @@ _NOT_READY_MSG = (
     "Safari's Apple Music player isn't ready yet — open music.apple.com in Safari first."
 )
 _TIMEOUT_MSG = "Safari: timed out waiting for the Apple Music player to respond."
+# WebKit won't start audio until the tab has had one real click ("sticky
+# activation"), so a fresh/just-reloaded Safari tab loads the queue but won't play.
+_GESTURE_MSG = (
+    "Queued and ready — but Safari won't start audio until the tab gets one real "
+    "click (a browser autoplay rule, not a bug). Click ▶ once in the Apple Music tab, "
+    "then say play again; after that, play / pause / next all work hands-free."
+)
+
+
+def _gesture_blocked(v) -> bool:
+    """True if a play result signals audio didn't start (the sticky-activation cliff)."""
+    return isinstance(v, str) and "[no audio" in v
 
 
 def _as_applescript_string(s: str) -> str:
@@ -192,7 +204,9 @@ def play_catalog_track(catalog_id: str) -> tuple[bool, str]:
     if not str(catalog_id).strip():
         return False, "Empty catalog id"
     ok, v = _run_musickit(_PLAY_SONG_JS, str(catalog_id), poll_attempts=60)
-    return (True, f"Playing: {v}") if ok else (False, v)
+    if not ok:
+        return False, v
+    return (True, _GESTURE_MSG) if _gesture_blocked(v) else (True, f"Playing: {v}")
 
 
 def queue_set(catalog_ids: list) -> tuple[bool, str]:
@@ -217,6 +231,8 @@ def playback_control(action: str, seconds: float = 0) -> tuple[bool, str]:
     ok, v = _run_musickit(_CONTROL_JS, {"action": action, "seconds": seconds})
     if not ok:
         return False, v
+    if v == "no-audio":  # play() ran but the tab needs one click first
+        return True, _GESTURE_MSG
     return (v == "ok"), v
 
 
@@ -225,7 +241,9 @@ def play_descriptor(descriptor: dict, shuffle: bool = False) -> tuple[bool, str]
     payload = dict(descriptor)
     payload["__shuffle"] = bool(shuffle)
     ok, v = _run_musickit(_PLAY_QUEUE_JS, payload, poll_attempts=60)
-    return (True, f"Playing: {v}") if ok else (False, v)
+    if not ok:
+        return False, v
+    return (True, _GESTURE_MSG) if _gesture_blocked(v) else (True, f"Playing: {v}")
 
 
 def play_url(music_url: str, shuffle: bool = False) -> tuple[bool, str]:

@@ -192,6 +192,7 @@ applemusic-mcp reset --all --force   # full uninstall: also removes the .p8, pro
 ## Good to know
 
 - **macOS playback needs an unlocked screen and Accessibility permission.** Native catalog playback drives Music.app via System Events and moves the cursor to click Play. Grant it under System Settings → Privacy & Security → Accessibility, or set `mode="safari"` to play in the Safari web player instead (no Accessibility, no Chrome).
+- **Safari playback needs one real click to start.** The first time you play in a freshly-opened or reloaded Safari tab, the browser requires a genuine click before it will start audio (a standard autoplay rule — we don't fake it). Click ▶ once in the Apple Music tab, then play/pause/next all work hands-free. If a play command reports the queue is ready but the track sits at 0:00, that's this — give the tab one click.
 - **Brand-new playlists take a moment** to be addable over the API (cloud propagation). Existing ones are immediate.
 - **A few macOS-only features** have no Apple Music API equivalent: 1 to 5 star ratings, favorites, library snapshots, AirPlay, and nested folder paths.
 - **If catalog actions start failing**, re-run `applemusic-mcp login`. A handful of user playlists silently revert AppleScript edits ([known Music.app bug](https://www.macscripter.net/t/add-current-track-from-apple-music-to-playlist/72058)); the server detects and surfaces the rollback.

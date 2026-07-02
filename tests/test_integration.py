@@ -78,16 +78,8 @@ def test_partial_matching_playlist(monkeypatch):
     # Try finding Jack & Norah playlist with partial name
     success, tracks = asc.get_playlist_tracks("Jack & Norah")
 
-    if success:
-        print(f"✓ PASS: Found playlist with partial name 'Jack & Norah'")
-        print(f"  Found {len(tracks)} tracks")
-        if tracks:
-            print(f"  First track: {tracks[0].get('name', 'Unknown')}")
-    else:
-        print(f"✗ FAIL: Could not find playlist with partial name")
-        print(f"  Error: {tracks}")
-
-    return success
+    assert success, f"Could not find playlist with partial name: {tracks}"
+    print(f"✓ Found {len(tracks)} tracks")
 
 
 def test_partial_matching_track_removal(monkeypatch):
@@ -109,9 +101,7 @@ def test_partial_matching_track_removal(monkeypatch):
         TEST_PLAYLIST, "What a Wonderful World", "Louis Armstrong"  # Common track
     )
 
-    if not success:
-        print("⚠ Could not add test track, skipping partial match test")
-        return False
+    assert success, "Could not add test track"
 
     print("✓ Added 'What a Wonderful World' to test playlist")
 
@@ -119,15 +109,7 @@ def test_partial_matching_track_removal(monkeypatch):
     success, result = asc.remove_track_from_playlist(
         TEST_PLAYLIST, track_name="What a Wonderful", artist="Louis Armstrong"  # Partial name
     )
-
-    if success and "Removed" in result:
-        print(f"✓ PASS: Partial track name matching works")
-        print(f"  Result: {result}")
-        return True
-    else:
-        print(f"✗ FAIL: Partial track name did not work")
-        print(f"  Result: {result}")
-        return False
+    assert success and "Removed" in result, f"Partial track name removal failed: {result}"
 
 
 def test_array_removal(monkeypatch):
@@ -160,40 +142,37 @@ def test_array_removal(monkeypatch):
         else:
             print(f"⚠ Failed to add '{track_name}': {result}")
 
-    if added_count == 0:
-        print("⚠ Could not add any tracks, skipping array removal test")
-        return False
+    assert added_count > 0, "Could not add any tracks"
 
     # Verify tracks are in playlist
     success, tracks = asc.get_playlist_tracks(TEST_PLAYLIST)
     if success:
         print(f"  Playlist now has {len(tracks)} tracks")
 
-    # Test comma-separated removal using the SERVER function (which handles arrays)
-    # This calls the actual MCP tool function that handles comma-separated input
-    try:
-        # Import the actual decorated function
-        from applemusic_mcp.server import remove_from_playlist as server_remove_from_playlist
+    # Comma-separated removal via the real MCP tool (`playlist(action="remove")`).
+    # Mock the remove + the post-remove verify so it runs offline.
+    monkeypatch.setattr(
+        asc, "remove_track_from_playlist", lambda *a, **k: (True, "Removed: Yesterday")
+    )
+    monkeypatch.setattr(asc, "track_exists_in_playlist", lambda *a, **k: (True, False))
+    import types as _t
 
-        # The server function returns a string result, not (bool, str) tuple
-        # v0.3.0: Uses unified 'track' parameter instead of 'track_name'
-        result = server_remove_from_playlist(
-            playlist=TEST_PLAYLIST, track="Yesterday,Hey Jude", artist="The Beatles"
-        )
-        print(f"  Result: {result}")
+    from applemusic_mcp import server
 
-        if "Removed" in result and ("Yesterday" in result or "Hey Jude" in result):
-            print(f"✓ PASS: Array removal works via server function")
-            return True
-        else:
-            print(f"✗ FAIL: Array removal didn't work as expected")
-            return False
-    except Exception as e:
-        print(f"✗ FAIL: Exception during array removal: {e}")
-        import traceback
-
-        traceback.print_exc()
-        return False
+    monkeypatch.setattr(
+        server,
+        "_resolve_playlist",
+        lambda p: _t.SimpleNamespace(
+            applescript_name=TEST_PLAYLIST, api_id=None, error=None, fuzzy_match=None
+        ),
+    )
+    result = server.playlist(
+        action="remove", playlist=TEST_PLAYLIST, track="Yesterday,Hey Jude", artist="The Beatles"
+    )
+    print(f"  Result: {result}")
+    assert "Removed" in result and (
+        "Yesterday" in result or "Hey Jude" in result
+    ), f"Array removal failed: {result}"
 
 
 def test_id_based_removal(monkeypatch):
@@ -217,17 +196,13 @@ def test_id_based_removal(monkeypatch):
     # Add a track and get its ID
     success, _ = asc.add_track_to_playlist(TEST_PLAYLIST, "Imagine", "John Lennon")
 
-    if not success:
-        print("⚠ Could not add test track, skipping ID removal test")
-        return False
+    assert success, "Could not add test track"
 
     print("✓ Added 'Imagine' to test playlist")
 
     # Get playlist tracks to find the ID
     success, tracks = asc.get_playlist_tracks(TEST_PLAYLIST)
-    if not success or not tracks:
-        print("⚠ Could not get playlist tracks, skipping ID removal test")
-        return False
+    assert success and tracks, "Could not get playlist tracks"
 
     # Find Imagine
     imagine_track = None
@@ -236,30 +211,16 @@ def test_id_based_removal(monkeypatch):
             imagine_track = track
             break
 
-    if not imagine_track:
-        print("⚠ Could not find Imagine track")
-        print(f"  Available tracks: {[t.get('name') for t in tracks]}")
-        return False
-
+    assert imagine_track, f"Could not find Imagine track in {[t.get('name') for t in tracks]}"
     # The field is called 'id' not 'persistent_id'
-    if "id" not in imagine_track:
-        print(f"⚠ Track missing 'id' field. Available fields: {imagine_track.keys()}")
-        return False
+    assert "id" in imagine_track, f"Track missing 'id' field: {list(imagine_track.keys())}"
 
     track_id = imagine_track["id"]
     print(f"✓ Found track ID: {track_id}")
 
     # Remove by ID
     success, result = asc.remove_track_from_playlist(TEST_PLAYLIST, track_id=track_id)
-
-    if success and "Removed" in result:
-        print(f"✓ PASS: ID-based removal works")
-        print(f"  Result: {result}")
-        return True
-    else:
-        print(f"✗ FAIL: ID-based removal failed")
-        print(f"  Result: {result}")
-        return False
+    assert success and "Removed" in result, f"ID-based removal failed: {result}"
 
 
 def test_preferences_loading():
@@ -278,12 +239,7 @@ def test_preferences_loading():
     required_keys = ["fetch_explicit", "clean_only"]
     has_all_keys = all(k in prefs for k in required_keys)
 
-    if has_all_keys:
-        print(f"✓ PASS: Preferences loaded with all required keys")
-        return True
-    else:
-        print(f"✗ FAIL: Missing preference keys")
-        return False
+    assert has_all_keys, f"Missing preference keys; got {list(prefs.keys())}"
 
 
 def test_search_library_parameter():
@@ -300,15 +256,9 @@ def test_search_library_parameter():
 
     print(f"search_library parameters: {params}")
 
-    if "types" in params and "search_type" not in params:
-        print(f"✓ PASS: search_library uses 'types' parameter (matches search_catalog)")
-        return True
-    elif "search_type" in params:
-        print(f"✗ FAIL: search_library still uses old 'search_type' parameter")
-        return False
-    else:
-        print(f"⚠ WARNING: Neither 'types' nor 'search_type' found")
-        return False
+    assert (
+        "types" in params and "search_type" not in params
+    ), f"search_library should use 'types', not 'search_type'; got {params}"
 
 
 def test_copy_playlist_with_name():
@@ -381,58 +331,3 @@ def review_tool_outputs():
             print("✗ config tool not found")
     except Exception as e:
         print(f"⚠ Could not check system tool: {e}")
-
-
-def main():
-    """Run all integration tests."""
-    print("\n" + "=" * 80)
-    print("APPLE MUSIC MCP - INTEGRATION TEST SUITE")
-    print("Testing v0.2.5 asymmetry fixes on real library")
-    print("=" * 80)
-
-    results = {}
-
-    try:
-        # Setup
-        setup_test_playlist()
-
-        # Run tests
-        results["partial_playlist"] = test_partial_matching_playlist()
-        results["partial_track"] = test_partial_matching_track_removal()
-        results["array_removal"] = test_array_removal()
-        results["id_removal"] = test_id_based_removal()
-        results["preferences"] = test_preferences_loading()
-        results["search_param"] = test_search_library_parameter()
-        results["copy_name"] = test_copy_playlist_with_name()
-
-        # Review outputs
-        review_tool_outputs()
-
-    finally:
-        # Cleanup
-        cleanup_test_playlist()
-
-    # Summary
-    print("\n" + "=" * 80)
-    print("TEST SUMMARY")
-    print("=" * 80)
-
-    passed = sum(1 for v in results.values() if v)
-    total = len(results)
-
-    for test_name, passed_test in results.items():
-        status = "✓ PASS" if passed_test else "✗ FAIL"
-        print(f"{status}: {test_name}")
-
-    print(f"\nTotal: {passed}/{total} tests passed")
-
-    if passed == total:
-        print("\n🎉 All integration tests PASSED!")
-        return 0
-    else:
-        print(f"\n⚠️  {total - passed} test(s) FAILED")
-        return 1
-
-
-if __name__ == "__main__":
-    exit(main())

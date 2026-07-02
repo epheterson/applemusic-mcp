@@ -230,3 +230,28 @@ def test_now_playing_if_running_with_tab(monkeypatch):
     monkeypatch.setattr(sp, "music_tab_count", lambda: 1)
     monkeypatch.setattr(sp, "now_playing", lambda: {"name": "X", "artist": "Y"})
     assert sp.now_playing_if_running()["name"] == "X"
+
+
+# -- Safari first-play gesture cliff → actionable message, no 30s hang -----------
+
+
+def test_play_gesture_blocked_returns_actionable(monkeypatch):
+    """A gesture-blocked play (queue loaded, audio didn't start) returns the one-click
+    guidance, not a bare timeout or a false 'Playing'."""
+    monkeypatch.setattr(
+        sp, "_run_musickit", lambda *a, **k: (True, "Naima [no audio — the player did not start]")
+    )
+    ok, msg = sp.play_catalog_track("123")
+    assert ok and "one real click" in msg and "0:00" not in msg
+
+
+def test_play_normal_still_reports_playing(monkeypatch):
+    monkeypatch.setattr(sp, "_run_musickit", lambda *a, **k: (True, "Naima"))
+    ok, msg = sp.play_catalog_track("123")
+    assert ok and msg == "Playing: Naima"
+
+
+def test_control_play_gesture_blocked_returns_actionable(monkeypatch):
+    monkeypatch.setattr(sp, "_run_musickit", lambda *a, **k: (True, "no-audio"))
+    ok, msg = sp.playback_control("play")
+    assert ok and "one real click" in msg
