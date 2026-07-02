@@ -2523,22 +2523,41 @@ def _verify_track_not_in_playlist(
 _ROLLBACK_SETTLE_S = 2.0  # wait for Music.app's local reconciliation (~1s observed)
 
 
-def _verify_track_in_playlist_api(api_id: str, track_name: str, artist: str = "") -> bool:
-    """Off-mac read-back: confirm a track is really in a playlist via the API.
+def _confirm_swap_track(
+    track_name: str,
+    artist: str = "",
+    *,
+    applescript_name: Optional[str] = None,
+    api_id: Optional[str] = None,
+) -> bool:
+    """Strict, artist-aware confirmation that the SPECIFIC new track is in a playlist,
+    used by swaps BEFORE the destructive remove.
 
-    The native verify is AppleScript-only, so off macOS a write would otherwise be
-    trusted purely on the POST response. This re-reads the playlist over amp-api and
-    matches by name, with a short retry for read-after-write lag — so the transactional
-    swap's "never lose the old track" guarantee holds off-mac too."""
-    if not api_id or not track_name:
+    Unlike the general verify (substring `contains`, to tolerate punctuation), this
+    requires a normalized-EXACT name match plus the artist when one is given — so a
+    reverted add can't hide behind a similarly-named track already in the playlist
+    (e.g. adding "One" while "One More Time" is present) and cost the old track. Reads
+    native truth on macOS (AppleScript; the API lags local writes) and the API off-mac.
+    Retries for read-after-write lag. Fails safe: any doubt → False → swap keeps the
+    old track."""
+    if not track_name:
         return False
     for i in range(_VERIFY_ATTEMPTS):
         if i > 0:
             time.sleep(_VERIFY_DELAY_S)
-        ok, tracks = _get_playlist_track_names(api_id)
-        if ok and isinstance(tracks, list):
-            if any(_loose_contains(track_name, t.get("name", "")) for t in tracks):
-                return True
+        rows = None
+        if applescript_name and APPLESCRIPT_AVAILABLE:
+            ok, res = asc.search_playlist(applescript_name, track_name)
+            rows = res if ok and isinstance(res, list) else None
+        elif api_id:
+            ok, res = _get_playlist_track_names(api_id)
+            rows = res if ok and isinstance(res, list) else None
+        if rows:
+            for r in rows:
+                if _loose_equals(track_name, r.get("name", "")) and (
+                    not artist or _loose_contains(artist, r.get("artist", ""))
+                ):
+                    return True
     return False
 
 
@@ -3658,6 +3677,23 @@ def _playlist_move_to_root(playlist_name: str) -> str:
 
 def _playlist_create_in_folder(name: str, folder: str, description: str = "") -> str:
     """Internal: Create a playlist inside a folder. Creates the folder if it doesn't exist."""
+    # Off-mac there's no AppleScript — route through the web API (folder create +
+    # playlist create + move). The native branch below would silently fail every
+    # osascript call and then falsely claim the playlist was removed.
+    if not APPLESCRIPT_AVAILABLE:
+        _folder_create_api(folder)  # ok if it already exists
+        create_result = _playlist_create_api(name, description)
+        if "Error" in create_result:
+            return create_result
+        move_result = _playlist_move_api(name, folder)
+        if "Error" in move_result:
+            return (
+                f"Created playlist '{name}', but couldn't move it into '{folder}': "
+                f"{move_result}. It's in your library at the top level (NOT removed) — "
+                f"move it manually or retry."
+            )
+        return f"Created playlist '{name}' in folder '{folder}'"
+
     # Ensure folder exists (ignore errors — folder may already exist)
     if "/" in folder:
         asc.create_folder_path(folder)
@@ -4527,21 +4563,32 @@ def _playlist_swap(
             f"'{replace}' was NOT removed (nothing lost). Fix the add first, then retry.\n\n"
             f"{add_result}"
         )
-    # Off-mac the add helpers don't re-read (no AppleScript), so the API claimed success
-    # without proof. Re-read the playlist over the API before the destructive remove —
-    # for a track NAME (a catalog id add is precise, so trust _add_landed there).
-    if not APPLESCRIPT_AVAILABLE and track and not album and not str(track).strip().isdigit():
+    # STRICT confirmation before the destructive remove: require the SPECIFIC new track
+    # (normalized-exact name + artist), not just a substring the add path's looser verify
+    # would accept — so a reverted add can't hide behind a similarly-named track and cost
+    # the old one. For a catalog id the add already pinned the exact edition, so trust
+    # _add_landed there.
+    if track and not album and not str(track).strip().isdigit():
         resolved = _resolve_playlist(playlist)
-        if resolved.api_id and not _verify_track_in_playlist_api(resolved.api_id, track, artist):
+        if not _confirm_swap_track(
+            track, artist, applescript_name=resolved.applescript_name, api_id=resolved.api_id
+        ):
             return (
-                f"⚠️ Swap aborted — added '{track}' but couldn't confirm it persisted in "
-                f"'{playlist}' (API read-back), so '{replace}' was NOT removed (nothing "
-                f"lost). Retry in a moment.\n\n{add_result}"
+                f"⚠️ Swap aborted — added '{track}' but couldn't confirm that exact track is "
+                f"now in '{playlist}', so '{replace}' was NOT removed (nothing lost). "
+                f"Re-check the playlist, then retry.\n\n{add_result}"
             )
     if APPLESCRIPT_AVAILABLE:
         rm = _playlist_remove(playlist, replace, "")
     else:
         rm = _playlist_remove_api(playlist, replace, "")
+    # Be honest if the remove didn't take — don't claim "removed" when the old track
+    # may still be there (the add succeeded, so this is not data loss).
+    if rm.lower().startswith("error") or "did not" in rm.lower() or "still" in rm.lower():
+        return (
+            f"Added '{track}' to '{playlist}', but removing '{replace}' didn't take — it "
+            f"may still be there; check and remove it manually.\n\n{add_result}\n\n{rm}"
+        )
     return f"Swapped in '{playlist}': added '{track}', removed '{replace}'.\n\n{add_result}\n\n{rm}"
 
 

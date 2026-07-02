@@ -255,10 +255,28 @@ def test_swap_removes_old_only_after_add_confirms(monkeypatch):
     monkeypatch.setattr(
         server, "_playlist_add", lambda *a, **k: "Added Coltrane to Jazz (via Music.app)"
     )
+    monkeypatch.setattr(server, "_resolve_playlist", lambda p: _fake_resolved())
+    monkeypatch.setattr(server, "_confirm_swap_track", lambda *a, **k: True)
     removed = []
     monkeypatch.setattr(server, "_playlist_remove", lambda p, t, ar: removed.append(t) or "Removed")
     out = server.playlist(action="add", playlist="Jazz", track="Coltrane", replace="Old Song")
     assert "Swapped" in out and removed == ["Old Song"]
+
+
+def test_swap_aborts_when_strict_confirm_fails(monkeypatch):
+    """The add reports success but the STRICT confirm can't find the exact track (a
+    reverted add hiding behind a similar title) → old track kept. The substring-verify
+    data-loss fix."""
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+    monkeypatch.setattr(
+        server, "_playlist_add", lambda *a, **k: "Added One to Jazz (via Music.app)"
+    )
+    monkeypatch.setattr(server, "_resolve_playlist", lambda p: _fake_resolved())
+    monkeypatch.setattr(server, "_confirm_swap_track", lambda *a, **k: False)
+    removed = []
+    monkeypatch.setattr(server, "_playlist_remove", lambda p, t, ar: removed.append(t) or "Removed")
+    out = server.playlist(action="add", playlist="Jazz", track="One", replace="Old Song")
+    assert "aborted" in out.lower() and removed == []
 
 
 def test_add_landed_is_conservative():
@@ -283,28 +301,40 @@ def _fake_resolved(api_id="p.1", name="Jazz"):
     return _t.SimpleNamespace(api_id=api_id, applescript_name=name, error=None, fuzzy_match=None)
 
 
-def test_offmac_swap_aborts_when_api_verify_fails(monkeypatch):
-    """Off-mac there's no native verify; if the API read-back can't confirm the add,
-    the old track is NOT removed."""
+def test_offmac_swap_aborts_when_confirm_fails(monkeypatch):
+    """Off-mac there's no native verify; if the strict confirm can't find the exact
+    track, the old track is NOT removed."""
     monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
     monkeypatch.setattr(server, "_playlist_add_api", lambda *a, **k: "Added Coltrane to Jazz")
     monkeypatch.setattr(server, "_resolve_playlist", lambda p: _fake_resolved())
-    monkeypatch.setattr(server, "_verify_track_in_playlist_api", lambda *a, **k: False)
+    monkeypatch.setattr(server, "_confirm_swap_track", lambda *a, **k: False)
     removed = []
     monkeypatch.setattr(server, "_playlist_remove_api", lambda p, t, ar: removed.append(t) or "rm")
     out = server.playlist(action="add", playlist="Jazz", track="Coltrane", replace="Old Song")
     assert "aborted" in out.lower() and removed == []
 
 
-def test_offmac_swap_removes_old_after_api_verify(monkeypatch):
+def test_offmac_swap_removes_old_after_confirm(monkeypatch):
     monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
     monkeypatch.setattr(server, "_playlist_add_api", lambda *a, **k: "Added Coltrane to Jazz")
     monkeypatch.setattr(server, "_resolve_playlist", lambda p: _fake_resolved())
-    monkeypatch.setattr(server, "_verify_track_in_playlist_api", lambda *a, **k: True)
+    monkeypatch.setattr(server, "_confirm_swap_track", lambda *a, **k: True)
     removed = []
     monkeypatch.setattr(server, "_playlist_remove_api", lambda p, t, ar: removed.append(t) or "rm")
     out = server.playlist(action="add", playlist="Jazz", track="Coltrane", replace="Old Song")
     assert "Swapped" in out and removed == ["Old Song"]
+
+
+def test_confirm_swap_track_requires_exact_name(monkeypatch):
+    """The strict confirm must NOT accept a substring collision — adding 'One' while
+    'One More Time' is present must return False (the data-loss fix)."""
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+    listing = (True, [{"name": "One More Time", "artist": "Daft Punk"}])
+    monkeypatch.setattr(server, "_get_playlist_track_names", lambda pid: listing)
+    assert server._confirm_swap_track("One", "", api_id="p.1") is False
+    exact = (True, [{"name": "One", "artist": "Metallica"}])
+    monkeypatch.setattr(server, "_get_playlist_track_names", lambda pid: exact)
+    assert server._confirm_swap_track("One", "", api_id="p.1") is True
 
 
 # -- config dir: clean error instead of a raw traceback when unwritable -----------
