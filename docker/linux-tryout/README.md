@@ -34,22 +34,32 @@ Your sign-in persists in the docker volume `applemusic-linux-data` across restar
 
 ## Auth: passkeys / YubiKeys (read this)
 
-**You almost certainly don't need them.** Standard Apple ID two-factor uses a
-6-digit code pushed to your trusted iPhone/Mac — that works fine in the Linux
-Chrome. Enter Apple ID + password, then the code.
+Standard Apple ID two-factor (a 6-digit code to your trusted iPhone/Mac) works
+fine in the Linux Chrome — enter Apple ID + password, then the code.
 
-**USB security keys cannot pass through Docker on a Mac** (Docker Desktop's Linux
-VM doesn't expose host USB). So a YubiKey plugged into the Mac is invisible here.
-If your Apple ID is configured to *require* a hardware security key, you have two
-options:
+**But USB security keys cannot pass through Docker on a Mac** (Docker Desktop's
+Linux VM doesn't expose host USB). So if your Apple ID *requires* a hardware key
+(YubiKey / passkey), interactive sign-in here is impossible — the key is invisible
+to the container. Use **token injection** instead:
 
-1. **Inject a token harvested on your Mac (recommended).** Sign in on macOS where
-   your passkey/YubiKey works (`applemusic-mcp login --safari`), then hand that
-   token to the container — the Chrome engine injects it and is signed in without
-   an interactive login. (The server already does this via `_ensure_session_cookie`;
-   wiring a token env into this container is a small follow-up if you need it.)
-2. **Run a full Linux VM with USB passthrough** (e.g. UTM/Parallels) instead of
-   Docker, and pass the YubiKey through to it.
+### Token injection (recommended when a hardware key is required)
+
+Sign in where the key works (macOS: `applemusic-mcp login --safari`), grab the
+`media-user-token`, and pass it to the container via `APPLEMUSIC_USER_TOKEN`:
+
+```bash
+# On the Mac that's signed in, print the token (keep it private):
+TOK=$(python -c "from applemusic_mcp.auth import get_user_token; print(get_user_token())")
+
+# Run the container with it injected — no interactive login needed:
+docker run --rm -it -p 6080:6080 --shm-size=1g \
+  -e APPLEMUSIC_USER_TOKEN="$TOK" applemusic-mcp-linux-tryout
+```
+
+The API works immediately and the Chrome web player injects the token as its
+session cookie, so playback/queue work with no in-container sign-in. (This is the
+same env var any headless/CI deployment can use.) Alternatively, run a full Linux
+VM with USB passthrough (UTM/Parallels) and pass the key through to it.
 
 ## Notes
 

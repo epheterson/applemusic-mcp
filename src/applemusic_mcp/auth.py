@@ -144,7 +144,9 @@ def secret_delete(key: str) -> bool:
 
 
 def has_user_token() -> bool:
-    return secret_get("music_user_token") is not None
+    return (
+        bool(os.environ.get("APPLEMUSIC_USER_TOKEN")) or secret_get("music_user_token") is not None
+    )
 
 
 def developer_token_info() -> Optional[dict]:
@@ -449,7 +451,15 @@ def get_developer_token() -> str:
 
 
 def get_user_token() -> str:
-    """Get the music user token or raise if not found."""
+    """Get the music user token or raise if not found.
+
+    Honors APPLEMUSIC_USER_TOKEN first — the injection path for headless/CI/container
+    use where interactive sign-in isn't possible (e.g. an Apple ID that requires a
+    hardware security key that can't reach the box). Harvest the token where the key
+    works, then pass it in via the env."""
+    env_tok = os.environ.get("APPLEMUSIC_USER_TOKEN")
+    if env_tok:
+        return env_tok
     raw = secret_get("music_user_token")
     if not raw:
         raise FileNotFoundError("Music user token not found. Run: applemusic-mcp login")

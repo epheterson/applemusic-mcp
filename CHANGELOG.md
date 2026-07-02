@@ -24,6 +24,10 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
 - **System-aware guidance.** Error/setup messages now name only the engines that exist
   on the current OS (native/safari are macOS-only; Chrome is cross-platform), instead
   of listing every platform's steps to everyone.
+- **`APPLEMUSIC_USER_TOKEN` env var** — inject a harvested `media-user-token` for
+  headless / CI / container use where interactive sign-in isn't possible (e.g. an
+  Apple ID that requires a hardware security key that can't reach the box). The API
+  works immediately and the Chrome web player injects it as the session cookie.
 
 ### Fixed (Windows/Linux hardening)
 

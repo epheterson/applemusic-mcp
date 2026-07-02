@@ -353,3 +353,13 @@ def test_get_config_dir_raises_clean_error(monkeypatch):
     monkeypatch.setattr("pathlib.Path.mkdir", boom)
     with pytest.raises(RuntimeError, match="config directory"):
         auth.get_config_dir()
+
+
+def test_env_var_user_token_injection(monkeypatch):
+    """APPLEMUSIC_USER_TOKEN is the headless/container injection path (for an Apple ID
+    that requires a hardware key that can't reach the box)."""
+    import applemusic_mcp.auth as auth
+
+    monkeypatch.setenv("APPLEMUSIC_USER_TOKEN", "INJECTED-TOK")
+    assert auth.get_user_token() == "INJECTED-TOK"
+    assert auth.has_user_token() is True

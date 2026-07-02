@@ -8,14 +8,13 @@ web player. This is exactly what a Windows/Linux user gets.
 ------------------------------------------------------------ 1. SIGN IN ----
     applemusic-mcp login
 
-A Chrome window opens on music.apple.com. Sign in with your Apple ID +
-password, then enter the 6-digit two-factor code from your iPhone/Mac.
+A Chrome window opens on music.apple.com. Sign in with your Apple ID and
+complete two-factor as prompted.
 
-  >> A trusted-device 2FA code is all you need — NOT a passkey or YubiKey. <<
-
-(USB security keys can't pass through Docker on a Mac. If your Apple ID is
- set to *require* a security key, sign in on your Mac instead and inject the
- token — see docker/linux-tryout/README.md.)
+Heads-up: USB security keys can't pass through Docker on a Mac, so if your
+Apple ID *requires* a hardware key, interactive sign-in here won't work.
+Sign in where the key works and inject the token instead — see
+docker/linux-tryout/README.md ("Token injection").
 
 ------------------------------------------------------------ 2. CHECK -------
     applemusic-mcp status        # should show: User token present, API ok
