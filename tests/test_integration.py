@@ -159,6 +159,11 @@ def test_array_removal(monkeypatch):
 
     from applemusic_mcp import server
 
+    # This exercises the NATIVE comma-removal path (it mocks asc.* throughout), so pin
+    # it there deterministically — off-mac the remove would otherwise route to the web
+    # rail where these mocks don't apply.
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+    monkeypatch.setattr(server, "_write_rail", lambda *a, **k: "native")
     monkeypatch.setattr(
         server,
         "_resolve_playlist",
