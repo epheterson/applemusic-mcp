@@ -27,7 +27,7 @@ wheels = [
 
 [[package]]
 name = "applemusic-mcp"
-version = "1.0.0"
+version = "0.16.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },

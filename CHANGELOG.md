@@ -283,6 +283,19 @@ Windows, and Linux, plus a Safari playback engine and data-safety fixes.
   platform for AirPlay, 1–5 star ratings, nested folders, and playlist/track
   deletion).
 
+## [0.15.1] - 2026-06-24
+
+### Fixed
+
+- **Playlist delete works off-macOS / without Music.app.** It was gated
+  macOS-only and the public API's `DELETE` returns 401 even with a paid token.
+  Deletion now routes through the web player's host (which accepts it) using the
+  captured token. Folders remain macOS-only.
+
+### Changed
+
+- GitHub Release titles are prefixed **"Apple Music MCP vX.Y.Z"**.
+
 ## [0.15.0] - 2026-06-23
 
 ### Added
