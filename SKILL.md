@@ -1,6 +1,6 @@
 ---
 name: apple-music
-version: 1.0.0
+version: 0.16.0
 description: Apple Music integration — AppleScript (local Music.app) and the Apple Music API / web player (cross-platform library, playlists, playback, and queue)
 ---
 
