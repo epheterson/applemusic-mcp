@@ -164,8 +164,7 @@ def developer_token_info() -> Optional[dict]:
 # Apple ships a public developer token (issuer "AMPWebPlay") to every browser
 # that loads music.apple.com, embedded in the web player's JS bundle. It's the
 # fallback dev-token source for users WITHOUT a generated (paid) token — the
-# generated token always takes precedence (legit, 6-month). This is the
-# documented community technique; see docs/plans/browser-first-architecture.md.
+# generated token always takes precedence (legit, 6-month).
 _HARVEST_UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
 _HARVEST_BROWSE_URL = "https://music.apple.com/us/browse"
 _HARVEST_ORIGIN = "https://music.apple.com"
@@ -453,10 +452,7 @@ def get_developer_token() -> str:
 def get_user_token() -> str:
     """Get the music user token or raise if not found.
 
-    Honors APPLEMUSIC_USER_TOKEN first — the injection path for headless/CI/container
-    use where interactive sign-in isn't possible (e.g. an Apple ID that requires a
-    hardware security key that can't reach the box). Harvest the token where the key
-    works, then pass it in via the env."""
+    Honors APPLEMUSIC_USER_TOKEN if set (for headless / CI runs), else the stored token."""
     env_tok = os.environ.get("APPLEMUSIC_USER_TOKEN")
     if env_tok:
         return env_tok
@@ -536,7 +532,7 @@ def create_auth_html(developer_token: str, port: int) -> str:
             try {{
                 await MusicKit.configure({{
                     developerToken: developerToken,
-                    app: {{ name: 'Apple Music MCP Server', build: '1.0.0' }}
+                    app: {{ name: 'Apple Music MCP Server', build: '0.16.0' }}
                 }});
                 document.getElementById('status').innerHTML = '<p class="success">MusicKit loaded. Click the button to authorize.</p>';
             }} catch (err) {{

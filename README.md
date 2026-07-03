@@ -41,7 +41,7 @@ Four engines back the server. **Native** drives the local Music.app on macOS via
 |**Works with no Apple account**|✓|✗|✗|
 |**Cross-platform (Win/Linux)**|✗|✓|✓|
 
-Everything in the **API** column runs anywhere, no browser and no Music app. Browser playback and the queue need a desktop session and a web player — **Safari on macOS** (no install) or **Google Chrome** elsewhere. Full per-capability reasoning: [docs/CAPABILITIES.md](docs/CAPABILITIES.md).
+Everything in the **API** column runs anywhere, no browser and no Music app. Browser playback and the queue need a desktop session and a web player — **Safari on macOS** (no install) or **Google Chrome** elsewhere.
 
 ## Setup
 
@@ -87,7 +87,7 @@ applemusic-mcp login --dev      # prompts for Team ID, Key ID, and .p8 path
 
 See the [appendix](#appendix-developer-token) for getting the MusicKit key.
 
-**Web sign-in (no developer account).** The quick path, and what plain `applemusic-mcp login` does. Your password never touches this tool, sign-in persists, and tokens re-fetch before they expire. You can also sign in conversationally — just ask your assistant. (Web sign-in uses Apple's web-player API, the same path as open-source clients like [Cider](https://github.com/ciderapp/Cider-2) and [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/).)
+**Web sign-in.** The quick path, and what plain `applemusic-mcp login` does. Your password never touches this tool, sign-in persists, and tokens re-fetch before they expire. You can also sign in conversationally — just ask your assistant. (Web sign-in uses Apple's web-player API, the same path as open-source clients like [Cider](https://github.com/ciderapp/Cider-2) and [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/).)
 
 - **macOS — reads from a signed-in Safari (no Chrome, no ~500 MB Playwright):**
 
@@ -121,7 +121,7 @@ See the [appendix](#appendix-developer-token) for getting the MusicKit key.
 This server reaches Apple Music three ways and prefers the most official one available:
 
 - **Apple Music API (sanctioned).** Your own developer token (from `login --dev`) against `api.music.apple.com`, Apple's documented API.
-- **Web player (community path).** A token from a signed-in `music.apple.com` session against the web player's backend, the same approach as [Cider](https://github.com/ciderapp/Cider-2) and [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/). This is the no-developer-account path, and it fills the few gaps the public API doesn't expose.
+- **Web player (community path).** A token from a signed-in `music.apple.com` session against the web player's backend — the same approach as [Cider](https://github.com/ciderapp/Cider-2) and [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/). It fills the few gaps the public API doesn't expose.
 - **Music.app (macOS).** Local AppleScript automation of your own app. No tokens, no network.
 
 With a developer token, writes go through the sanctioned API; the web path is used only for the operations Apple's public API can't do. With web sign-in alone, everything runs on the web path. On macOS, library and playlist edits can also run locally through Music.app. Each write tells you which path it took.
@@ -218,7 +218,7 @@ The preferred path. With an [Apple Developer Program](https://developer.apple.co
 
 ## License
 
-MIT · *Unofficial community project, not affiliated with Apple.*
+MIT · *Unofficial community project — not affiliated with or endorsed by Apple. Uses your own Apple Music account for personal use; follow Apple's terms.*
 
 <!-- Identifier for the official MCP Registry (PyPI ownership check). -->
 mcp-name: io.github.epheterson/applemusic-mcp

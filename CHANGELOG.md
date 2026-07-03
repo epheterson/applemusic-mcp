@@ -5,29 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - 2026-07-01
+## [0.16.0] - 2026-07-02
 
-The cross-platform milestone: **full Apple Music control on macOS, Windows, and
-Linux with no Apple Developer account** — library, playlists, *and playback*.
+Cross-platform playback and hardening: library, playlists, *and playback* on macOS,
+Windows, and Linux, plus a Safari playback engine and data-safety fixes.
 
 ### Added
 
 - **Transactional playlist swaps — never silently lose a track.** `playlist(action=
   "add", …, replace="<old track>")` adds the new track, CONFIRMS it actually persisted,
   and only then removes the old one. On macOS it verifies against native AppleScript
-  truth; on Windows/Linux it re-reads the playlist over the API (`_verify_track_in_
-  playlist_api`). If the add can't be confirmed — e.g. Music.app's silent server-side
-  revert — the old track is KEPT. Fixes a real data-loss case (a swap where the remove
-  stuck but the add reverted, dropping an artist).
+  truth; on Windows/Linux it re-reads the playlist over the API. If the add can't be
+  confirmed — e.g. Music.app's silent server-side revert — the old track is KEPT. Fixes
+  a real data-loss case (a swap where the remove stuck but the add reverted).
 - **`now_playing` shows position/progress** (e.g. `1:12/5:05`) on the Safari and Chrome
   engines, matching native.
 - **System-aware guidance.** Error/setup messages now name only the engines that exist
   on the current OS (native/safari are macOS-only; Chrome is cross-platform), instead
   of listing every platform's steps to everyone.
-- **`APPLEMUSIC_USER_TOKEN` env var** — inject a harvested `media-user-token` for
-  headless / CI / container use where interactive sign-in isn't possible (e.g. an
-  Apple ID that requires a hardware security key that can't reach the box). The API
-  works immediately and the Chrome web player injects it as the session cookie.
 
 ### Fixed (Windows/Linux hardening)
 
@@ -101,8 +96,7 @@ Linux with no Apple Developer account** — library, playlists, *and playback*.
   your writes onto the web path. Each write reports the path it took, e.g.
   `(via Apple Music API)` / `(via web player)` / `(via Music.app)`. Star ratings
   now work on macOS regardless of the playback mode (they need AppleScript, not a
-  particular mode). See [docs/CAPABILITIES.md](docs/CAPABILITIES.md) and the
-  README "What's sanctioned vs web" section.
+  particular mode). See the README "What's sanctioned vs web" section.
 - **`now_playing` surfaces an engine split.** When the active engine is playing
   one track and the OTHER engine is also live with a different track (the classic
   "queued in the web player but transport drove the native app" confusion),

@@ -1121,7 +1121,7 @@ def _use_browser_playback() -> bool:
 
 # Writes choose their rail by CREDENTIAL + capability, independent of the playback
 # `mode`. Choosing web *playback* must not force writes onto the grey rail when the
-# user holds a developer token. See docs/plans/sanctioned-first-writes.md.
+# user holds a developer token.
 #
 # Ops whose only non-web (legit) implementation is macOS AppleScript — off macOS
 # the public API can't do them (delete 401s, move/rename have no public endpoint),

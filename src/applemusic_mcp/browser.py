@@ -479,10 +479,8 @@ def signed_in() -> bool:
 
 # In-page add: make the SAME request the web player's "Add to Library" button
 # fires — POST /v1/me/library?ids[songs]=<id> — using MusicKit's own tokens, from
-# inside the authenticated music.apple.com page. No DOM clicking, no token
-# exfiltration; the call is indistinguishable from the player's own traffic.
-# (Validated out-of-band: this endpoint returns 202 on success — see
-# docs/plans/browser-first-architecture.md Appendix A.)
+# inside the authenticated music.apple.com page — the same request the web player's
+# own "Add" button makes. (Validated out-of-band: this endpoint returns 202 on success.)
 
 
 def _add_via_api(page, song_id: str) -> int:

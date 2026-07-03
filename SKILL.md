@@ -346,8 +346,8 @@ osascript stderr messages map to a small set of environmental states. When Apple
 > add-to-library and auto_add→playlist run over the **unified Apple Music API**
 > (developer token generated **or** sourced from Apple's public web player, plus a
 > `media-user-token`). The old UI add path was version-fragile (it broke across
-> macOS/Music.app releases, #37). To enable the API path without an Apple Developer
-> account: `applemusic-mcp login`. On **macOS** this defaults to reading the
+> macOS/Music.app releases, #37). To enable the API path: `applemusic-mcp login`
+> (or `login --dev` with a developer token). On **macOS** `login` defaults to reading the
 > media-user-token from a signed-in **Safari** — no Chrome/Playwright — provided
 > Safari → Settings → Advanced → Develop → "Allow JavaScript from Apple Events" is
 > enabled; `login --chrome` uses the Chrome web player instead (needs
@@ -503,7 +503,7 @@ end tell
 The server picks a write's path by **credential and capability, not the playback mode**:
 
 - **Sanctioned** — the official Apple Music API (`api.music.apple.com`) with a generated developer token. Preferred whenever a dev token is present and the op is supported.
-- **Web** — `amp-api.music.apple.com` with the harvested web-player token. Used only for the gaps the public API can't do (delete a playlist, add to a Music.app-created playlist, move out of a folder) or when there's no dev token.
+- **Web** — the web-player backend with a signed-in session token. Used only for the gaps the public API can't do (delete a playlist, add to a Music.app-created playlist, move out of a folder) or when there's no dev token.
 - **Native** — local Music.app via AppleScript on macOS (tokenless), the default writer on a Mac.
 
 So `mode=web` (a *playback* choice) does NOT force writes onto the web path — a dev-token holder still writes via the official API. Star ratings need AppleScript (macOS) regardless of mode. Each write reports the path it took (`via Apple Music API` / `via web player` / `via Music.app`); `config(action="status")` shows the resolved rail on its `Writes:` line.
