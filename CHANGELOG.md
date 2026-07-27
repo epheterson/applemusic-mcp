@@ -5,7 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.16.1] - 2026-07-27
+## [0.17.0] - 2026-07-27
+
+### Added
+
+- **`catalog(action="resolve_isrc", isrcs=…)` — batch-resolve tracks by ISRC.** The import
+  shape ("one catalog search per track to get a catalog id") costs one request per track
+  and matches fuzzily. Where the caller has ISRCs — Spotify, Rekordbox, and Plex exports
+  all carry them — this resolves **25 per request** and matches **exactly**: ~25x fewer
+  requests, which is what keeps a large import under Apple's rate limit, and no
+  fuzzy-match errors. Accepts a comma-separated list or a JSON array, with or without the
+  printed separators (`US-ABC-12-34567`). Resulting IDs go straight into
+  `playlist(action="add", track=…)`.
+
+  It distinguishes three outcomes rather than flattening them: resolved (with a match
+  count, since one ISRC can map to several releases), **asked and not in your storefront**,
+  and **never asked** (a batch that got throttled — status unknown, not absent).
+  Malformed ISRCs are reported instead of being sent, since a bad batch still costs a
+  request. Suggested by [@Design-UU](https://github.com/Design-UU) in
+  [#42](https://github.com/epheterson/applemusic-mcp/issues/42).
 
 ### Fixed
 

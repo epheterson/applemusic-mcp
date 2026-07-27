@@ -588,8 +588,41 @@ Consequences that bite:
 - **For bulk work, use `login --dev`.** Your own developer token gets its own, much larger
   quota. Reported and measured in [#42](https://github.com/epheterson/applemusic-mcp/issues/42).
 
-To cut request count where the caller has ISRCs, `GET /v1/catalog/{storefront}/songs?filter[isrc]=ISRC1,ISRC2,…`
-resolves many tracks in one request and matches exactly, instead of one fuzzy search per track.
+### Batch-resolve by ISRC instead of searching per track
+
+Where the caller has ISRCs (Spotify / Rekordbox / Plex exports all carry them),
+`GET /v1/catalog/{storefront}/songs?filter[isrc]=ISRC1,ISRC2,…` resolves **25 per request**
+and matches **exactly** — ~25x fewer requests than a search per track, and no fuzzy-match
+errors. Via the tool: `catalog(action="resolve_isrc", isrcs="…", format="json")`.
+
+Two things to get right, because `filter[isrc]` is a *filter*, not a search:
+
+- **Misses are silent.** Apple returns only what it matched and omits the rest, so the
+  unresolved ISRCs exist only as a diff of your request set against `attributes.isrc` on
+  the responses. Compute that diff — don't assume a full response.
+- **Keep "asked and absent" separate from "never asked."** If a batch fails (429) the
+  remaining ISRCs have *unknown* status, not "not in the catalog." Collapsing the two
+  recreates the false-negative bug this section exists to warn about.
+
+One ISRC can map to several catalog songs (regional releases, remasters), so carry the
+match count rather than silently taking the first.
+
+Manually:
+
+```python
+resolved = {}
+for i in range(0, len(isrcs), 25):
+    batch = isrcs[i : i + 25]
+    r = requests.get(
+        f"https://api.music.apple.com/v1/catalog/{storefront}/songs",
+        headers=headers,
+        params={"filter[isrc]": ",".join(batch)},
+    )
+    if r.status_code == 429:
+        break                      # later batches only extend the window
+    for song in r.json().get("data", []):
+        resolved.setdefault(song["attributes"]["isrc"], song["id"])
+```
 
 ## Available Endpoints
 

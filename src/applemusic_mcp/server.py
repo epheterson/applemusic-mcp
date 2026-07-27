@@ -5461,6 +5461,152 @@ def _catalog_search(
         return str(e)
 
 
+# ============ ISRC BATCH RESOLVE ============
+#
+# The import shape — "for each track, one catalog search to turn title+artist into
+# a catalog id" — costs one request per track and matches fuzzily. Where the caller
+# has ISRCs (Spotify/Rekordbox/Plex exports all carry them), Apple's
+# ``filter[isrc]`` resolves 25 at a time and matches EXACTLY: a ~25x cut in requests
+# (which is what keeps you under the rate limit, #42) and no fuzzy-match errors.
+
+_ISRC_BATCH_SIZE = 25  # Apple caps filter[isrc] at 25 values per request
+# CC (country) + 3-char registrant + 2-digit year + 5-digit designation.
+_ISRC_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$")
+
+
+def _normalize_isrc(raw: str) -> str:
+    """ISRCs are printed with separators (``US-ABC-12-34567``) but sent without."""
+    return re.sub(r"[^A-Z0-9]", "", raw.strip().upper())
+
+
+def _parse_isrc_list(value: str) -> tuple[list[str], list[str]]:
+    """Parse a JSON array or a comma/whitespace-separated list of ISRCs.
+
+    Returns (valid, invalid). Malformed entries are reported rather than sent —
+    a batch that includes garbage still costs a request, and the caller needs to
+    know which of its inputs never got asked about."""
+    value = value.strip()
+    if value.startswith("["):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return [], [value]
+        items = [str(i) for i in parsed]
+    else:
+        items = re.split(r"[,\s]+", value)
+
+    valid: list[str] = []
+    invalid: list[str] = []
+    for item in items:
+        if not item.strip():
+            continue
+        norm = _normalize_isrc(item)
+        if not _ISRC_RE.match(norm):
+            invalid.append(item.strip())
+        elif norm not in valid:  # de-dup: no point paying for the same one twice
+            valid.append(norm)
+    return valid, invalid
+
+
+def _catalog_resolve_isrc(isrcs: str, format: str = "text", full: bool = False) -> str:
+    """Resolve ISRCs to catalog songs in batches of 25 — exact, not fuzzy.
+
+    ``filter[isrc]`` is a filter, not a search: Apple returns only what it matched
+    and silently omits the rest, so the misses are computed by diffing the request
+    set against what came back. One ISRC can legitimately map to several catalog
+    songs (regional releases, remasters); the first is returned and the match count
+    travels with it, so the caller can tell an unambiguous hit from a judgement call.
+    """
+    if not isrcs.strip():
+        return "Error: isrcs required (comma-separated or a JSON array)"
+
+    wanted, invalid = _parse_isrc_list(isrcs)
+    if not wanted:
+        return f"Error: no valid ISRCs in input (rejected: {', '.join(invalid[:5])})"
+
+    resolved: dict[str, dict] = {}
+    asked: list[str] = []  # only batches that actually came back
+    requests_made = 0
+    throttled = False
+
+    try:
+        headers = get_headers()
+        storefront = get_storefront()
+        for start in range(0, len(wanted), _ISRC_BATCH_SIZE):
+            batch = wanted[start : start + _ISRC_BATCH_SIZE]
+            response = requests.get(
+                f"{BASE_URL}/catalog/{storefront}/songs",
+                headers=headers,
+                params={"filter[isrc]": ",".join(batch)},
+                timeout=REQUEST_TIMEOUT,
+            )
+            requests_made += 1
+            amp_api.note_status(response.status_code)
+            if response.status_code == 429:
+                # Stop immediately: further batches can only extend the window.
+                # Whatever resolved before this point is still good, so report it
+                # rather than throwing the partial work away.
+                throttled = True
+                break
+            response.raise_for_status()
+            asked.extend(batch)
+
+            for song in response.json().get("data", []):
+                # extract_track_data also populates the track cache (name/artist/ISRC
+                # → catalog id), so a later lookup for the same track is free.
+                data = extract_track_data(song, full)
+                isrc = _normalize_isrc(song.get("attributes", {}).get("isrc", ""))
+                if not isrc:
+                    continue  # pragma: no cover  # Apple always echoes the filtered ISRC
+                if isrc in resolved:
+                    resolved[isrc]["matches"] += 1
+                else:
+                    resolved[isrc] = {**data, "isrc": isrc, "matches": 1}
+
+    except requests.exceptions.RequestException as e:
+        return _api_error(e)
+    except (FileNotFoundError, ValueError) as e:
+        return str(e)
+
+    # "Asked and not returned" is a real absence; "never asked" is unknown. Folding
+    # the second into the first would recreate the exact false-negative this whole
+    # change exists to kill (#42), so they stay separate.
+    unmatched = [i for i in asked if i not in resolved]
+    never_asked = [i for i in wanted if i not in asked]
+
+    if format == "json":
+        return json.dumps(
+            {
+                "resolved": resolved,
+                "unmatched": unmatched,
+                "never_asked": never_asked,
+                "invalid": invalid,
+                "requests": requests_made,
+                "throttled": throttled,
+            },
+            indent=2,
+        )
+
+    lines = [f"=== Resolved {len(resolved)}/{len(wanted)} ISRCs in {requests_made} request(s) ==="]
+    for isrc, song in resolved.items():
+        ambiguous = f"  [{song['matches']} catalog matches]" if song["matches"] > 1 else ""
+        lines.append(f"{isrc} -> {song['id']}  {song['name']} - {song['artist']}{ambiguous}")
+    if unmatched:
+        lines.append(f"\n=== Not in the {get_storefront()} catalog ({len(unmatched)}) ===")
+        lines.append(", ".join(unmatched))
+    if invalid:
+        lines.append(f"\n=== Malformed, not sent ({len(invalid)}) ===")
+        lines.append(", ".join(invalid))
+    if throttled:
+        lines.append(f"\n{_SESSION_THROTTLED_MSG}")
+        lines.append(
+            f"Stopped after {requests_made} request(s); {len(never_asked)} ISRC(s) were "
+            "never asked about — their status is UNKNOWN, not 'not in the catalog'. "
+            "Re-run with just those once the window clears."
+        )
+    return "\n".join(lines)
+
+
 def _catalog_album_tracks(
     album: str = "",
     artist: str = "",
@@ -6717,6 +6863,7 @@ def catalog(
     song_id: str = "",
     chart_type: str = "songs",
     term: str = "",
+    isrcs: str = "",
     limit: int = 15,
     offset: int = 0,
     format: str = "text",
@@ -6724,7 +6871,13 @@ def catalog(
     full: bool = False,
     clean_only: Optional[bool] = None,
 ) -> str:
-    """Apple Music catalog. Actions: search, album_tracks, album_details, song_details, artist_details, genres, suggestions."""
+    """Apple Music catalog. Actions: search, resolve_isrc, album_tracks, album_details, song_details, artist_details, genres, suggestions.
+
+    Use `resolve_isrc` (not repeated `search`) to turn a batch of tracks into catalog
+    IDs when you have ISRCs — it matches exactly and resolves 25 per request instead
+    of one per track, which is what keeps a large import under Apple's rate limit.
+    Pass the resulting IDs straight to `playlist(action="add", track=...)`.
+    """
     action = action.lower().strip().replace("-", "_")
 
     if action == "search":
@@ -6751,6 +6904,8 @@ def catalog(
                 if why:
                     return f"Error: UI search failed — {why}"
             return "Error: API token required for catalog search. Set up API access or use UI search on macOS."
+    elif action in ("resolve_isrc", "resolve"):
+        return _catalog_resolve_isrc(isrcs or query, format, full)
     elif action == "album_tracks":
         return _catalog_album_tracks(album, artist, limit, offset, format, export, full)
     elif action == "album_details":
@@ -6772,7 +6927,7 @@ def catalog(
             return "Error: term required for suggestions"
         return _catalog_suggestions(term)
     else:
-        return f"Unknown action: {action}. Use: search, album_tracks, album_details, song_details, artist_details, genres, suggestions"
+        return f"Unknown action: {action}. Use: search, resolve_isrc, album_tracks, album_details, song_details, artist_details, genres, suggestions"
 
 
 # ============ SYSTEM MANAGEMENT ============

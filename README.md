@@ -161,7 +161,7 @@ Seven action-based tools keep the MCP context small. Each takes an `action` and 
 |---|---|
 | `playlist` | list, folders, tracks, search, create, add, copy, move, remove, delete, rename, path (playlists and folders) |
 | `library` | search, add, browse, favorites, recently_played, recently_added, rate, remove, snapshot |
-| `catalog` | search, album_tracks, album_details, song_details, artist_details, genres, suggestions |
+| `catalog` | search, resolve_isrc, album_tracks, album_details, song_details, artist_details, genres, suggestions |
 | `discover` | recommendations, heavy_rotation, charts, top_songs, similar_artists, personal_station, song_station |
 | `playback` | play (track / album / playlist / URL), control, now_playing, settings, reveal, airplay |
 | `queue` | list, set, play_next, play_last, remove, jump, clear, autoplay (Up Next — Safari on macOS, Chrome elsewhere; `engine=` to pick) |
@@ -171,6 +171,7 @@ Seven action-based tools keep the MCP context small. Each takes an `action` and 
 <summary>Common patterns</summary>
 
 - **`track` is one parameter that batches.** Pass a single name or ID, a comma- or newline-separated list, or a JSON array (`["A","B"]` or `[{"name":"A","artist":"X"}]`). Whole albums via `album`.
+- **Importing a playlist from elsewhere? Use `catalog(action="resolve_isrc", …)`.** Spotify, Rekordbox, and Plex exports all carry ISRCs. One `resolve_isrc` call turns up to 25 of them into catalog IDs *exactly* — no fuzzy title matching — where a search-per-track costs one request each and is what puts a large import into `429` territory. Feed the resulting IDs straight to `playlist(action="add", track=…)`. It reports which ISRCs weren't in your storefront separately from any it never got to ask about.
 - **Adding to a playlist** auto-searches the catalog and skips duplicates. Set the `auto_add` preference to `true` for "fill this playlist" workflows (default `false`). `track` also accepts a **catalog song id** (e.g. `1440857781`) to pin an exact edition when a name would be version-ambiguous.
 - **Adding a not-yet-owned catalog track to a *Music.app-made* playlist is two-step.** The dev-token API can't write those playlists, so the tool adds the track to your library over the API, then attaches it locally once iCloud syncs it down (usually seconds). If the sync is slow you'll get "added to your library — re-run to attach"; just re-run the same add. Rarely, if the sync stalls past ~20s, Music.app briefly flashes as a last-resort sync nudge (focus returns to your previous app) — expected, not a glitch.
 - **Output format** on list tools: `format` (`text` / `json` / `csv` / `none`), `export` (writes a file readable as an MCP resource via `exports://`), `full` (all metadata).

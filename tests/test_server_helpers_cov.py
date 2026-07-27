@@ -2762,3 +2762,266 @@ class TestRateLimitSurfacing:
             lambda: pytest.fail("_catalog_miss_reason must not spend a request"),
         )
         assert server._catalog_miss_reason("Not found in catalog") == "Not found in catalog"
+
+
+# ---------------------------------------------------------------------------
+# ISRC batch resolve (#42, suggestion 3)
+# ---------------------------------------------------------------------------
+
+_ISRC_URL = "https://api.music.apple.com/v1/catalog/us/songs"
+
+
+def _isrc_song(isrc: str, sid: str, name: str, artist: str = "Oasis") -> dict:
+    return {
+        "id": sid,
+        "attributes": {
+            "name": name,
+            "artistName": artist,
+            "albumName": "Morning Glory",
+            "isrc": isrc,
+            "durationInMillis": 258773,
+            "releaseDate": "1995-10-02",
+            "genreNames": ["Alternative"],
+        },
+    }
+
+
+class TestParseIsrcList:
+    def test_comma_separated_and_normalized(self):
+        valid, invalid = server._parse_isrc_list("gbaym9500001, US-ABC-12-34567")
+        assert valid == ["GBAYM9500001", "USABC1234567"]
+        assert invalid == []
+
+    def test_json_array(self):
+        valid, invalid = server._parse_isrc_list('["GBAYM9500001", "USABC1234567"]')
+        assert valid == ["GBAYM9500001", "USABC1234567"]
+        assert invalid == []
+
+    def test_broken_json_is_reported_not_sent(self):
+        valid, invalid = server._parse_isrc_list('["GBAYM9500001",')
+        assert valid == []
+        assert invalid == ['["GBAYM9500001",']
+
+    def test_malformed_entries_are_rejected(self):
+        """Garbage in a batch still costs a request, so it never gets sent."""
+        valid, invalid = server._parse_isrc_list("GBAYM9500001, notanisrc, 12345")
+        assert valid == ["GBAYM9500001"]
+        assert invalid == ["notanisrc", "12345"]
+
+    def test_duplicates_collapse(self):
+        valid, _ = server._parse_isrc_list("GBAYM9500001, gbaym9500001, GB-AYM-95-00001")
+        assert valid == ["GBAYM9500001"]
+
+    def test_whitespace_separated_and_blank_entries(self):
+        valid, invalid = server._parse_isrc_list("GBAYM9500001\n\n USABC1234567 ")
+        assert valid == ["GBAYM9500001", "USABC1234567"]
+        assert invalid == []
+
+    def test_blank_entries_are_skipped_not_flagged(self):
+        """An empty slot in an export is noise, not a malformed ISRC."""
+        valid, invalid = server._parse_isrc_list('["GBAYM9500001", "", "  ", "USABC1234567"]')
+        assert valid == ["GBAYM9500001", "USABC1234567"]
+        assert invalid == []
+
+
+class TestCatalogResolveIsrc:
+    def test_requires_input(self):
+        assert "isrcs required" in server.catalog(action="resolve_isrc")
+
+    def test_all_invalid_input(self):
+        result = server.catalog(action="resolve_isrc", isrcs="nope, also-nope")
+        assert "no valid ISRCs" in result
+
+    @responses.activate
+    def test_resolves_in_one_request(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        responses.add(
+            responses.GET,
+            _ISRC_URL,
+            json={"data": [_isrc_song("GBAYM9500001", "1234567890", "Wonderwall")]},
+            status=200,
+        )
+        result = server.catalog(action="resolve_isrc", isrcs="GB-AYM-95-00001")
+        assert "Resolved 1/1 ISRCs in 1 request(s)" in result
+        assert "GBAYM9500001 -> 1234567890  Wonderwall - Oasis" in result
+        assert "filter%5Bisrc%5D=GBAYM9500001" in responses.calls[0].request.url
+
+    @responses.activate
+    def test_batches_at_25_per_request(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """The whole point: 30 tracks cost 2 requests, not 30."""
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        isrcs = [f"GBAYM95{i:05d}" for i in range(30)]
+        for chunk_start in (0, 25):
+            chunk = isrcs[chunk_start : chunk_start + 25]
+            responses.add(
+                responses.GET,
+                _ISRC_URL,
+                json={"data": [_isrc_song(i, f"id{i}", f"Track {i}") for i in chunk]},
+                status=200,
+            )
+        result = server.catalog(action="resolve_isrc", isrcs=",".join(isrcs), format="json")
+        payload = json.loads(result)
+        assert payload["requests"] == 2
+        assert len(payload["resolved"]) == 30
+        assert payload["unmatched"] == []
+
+    @responses.activate
+    def test_unmatched_isrcs_are_reported(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """filter[isrc] silently omits misses — they only exist as a diff."""
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        responses.add(
+            responses.GET,
+            _ISRC_URL,
+            json={"data": [_isrc_song("GBAYM9500001", "1234567890", "Wonderwall")]},
+            status=200,
+        )
+        result = server.catalog(action="resolve_isrc", isrcs="GBAYM9500001,USZZZ9900001")
+        assert "Resolved 1/2" in result
+        assert "Not in the us catalog (1)" in result
+        assert "USZZZ9900001" in result
+
+    @responses.activate
+    def test_multiple_catalog_matches_are_flagged(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """One ISRC can map to several releases — don't hide that behind 'the first'."""
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        responses.add(
+            responses.GET,
+            _ISRC_URL,
+            json={
+                "data": [
+                    _isrc_song("GBAYM9500001", "111", "Wonderwall"),
+                    _isrc_song("GBAYM9500001", "222", "Wonderwall (Remastered)"),
+                ]
+            },
+            status=200,
+        )
+        result = server.catalog(action="resolve_isrc", isrcs="GBAYM9500001")
+        assert "-> 111" in result
+        assert "[2 catalog matches]" in result
+
+    @responses.activate
+    def test_malformed_input_surfaces_alongside_results(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        responses.add(
+            responses.GET,
+            _ISRC_URL,
+            json={"data": [_isrc_song("GBAYM9500001", "1234567890", "Wonderwall")]},
+            status=200,
+        )
+        result = server.catalog(action="resolve_isrc", isrcs="GBAYM9500001, junk")
+        assert "Malformed, not sent (1)" in result
+        assert "junk" in result
+
+    @responses.activate
+    def test_429_stops_early_and_keeps_partial_results(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """Later batches can only extend the window — stop, but don't throw away
+        the work that already succeeded."""
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        isrcs = [f"GBAYM95{i:05d}" for i in range(75)]
+        responses.add(
+            responses.GET,
+            _ISRC_URL,
+            json={"data": [_isrc_song(i, f"id{i}", f"Track {i}") for i in isrcs[:25]]},
+            status=200,
+        )
+        responses.add(responses.GET, _ISRC_URL, json={"errors": []}, status=429)
+        result = server.catalog(action="resolve_isrc", isrcs=",".join(isrcs))
+        assert "Resolved 25/75" in result
+        assert "429" in result
+        # 50 unknown: the batch that 429'd, plus the batch never sent.
+        assert "50 ISRC(s) were never asked about" in result
+        assert "UNKNOWN, not 'not in the catalog'" in result
+        assert "Not in the us catalog" not in result  # never-asked != absent
+        assert len(responses.calls) == 2  # stopped; did not attempt the third batch
+        assert server.amp_api.throttled_recently() is True
+
+    @responses.activate
+    def test_429_in_json_format_sets_the_flag(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        responses.add(responses.GET, _ISRC_URL, json={"errors": []}, status=429)
+        payload = json.loads(
+            server.catalog(action="resolve_isrc", isrcs="GBAYM9500001", format="json")
+        )
+        assert payload["throttled"] is True
+        assert payload["resolved"] == {}
+
+    @responses.activate
+    def test_http_error_is_reported(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        responses.add(responses.GET, _ISRC_URL, json={"errors": []}, status=500)
+        result = server.catalog(action="resolve_isrc", isrcs="GBAYM9500001")
+        assert "API Error" in result
+
+    def test_missing_credentials_is_reported(self, mock_config_dir):
+        result = server.catalog(action="resolve_isrc", isrcs="GBAYM9500001")
+        assert "Error" in result or "token" in result.lower()
+
+    @responses.activate
+    def test_resolve_alias_and_query_fallback(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """`action="resolve"` works, and the ISRCs may arrive in `query`."""
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        responses.add(
+            responses.GET,
+            _ISRC_URL,
+            json={"data": [_isrc_song("GBAYM9500001", "1234567890", "Wonderwall")]},
+            status=200,
+        )
+        result = server.catalog(action="resolve", query="GBAYM9500001")
+        assert "Resolved 1/1" in result
+
+    @responses.activate
+    def test_resolved_ids_feed_straight_into_playlist_add(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """The output is only useful if the IDs are directly addable."""
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        responses.add(
+            responses.GET,
+            _ISRC_URL,
+            json={"data": [_isrc_song("GBAYM9500001", "1234567890", "Wonderwall")]},
+            status=200,
+        )
+        payload = json.loads(
+            server.catalog(action="resolve_isrc", isrcs="GBAYM9500001", format="json")
+        )
+        catalog_id = payload["resolved"]["GBAYM9500001"]["id"]
+        added = []
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda pid, items: (added.extend(items), (True, "ok"))[1]
+        )
+        result = server._playlist_add_api("p.abc123", catalog_id, "", auto_add=True)
+        assert "Added" in result
+        assert added == [catalog_id]
+
+    @responses.activate
+    def test_unknown_action_lists_resolve_isrc(self, mock_config_dir):
+        assert "resolve_isrc" in server.catalog(action="bogus")
