@@ -12,6 +12,18 @@ _LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "0.0.0.0"}
 
 
 @pytest.fixture(autouse=True)
+def _reset_throttle_state():
+    """The 429 marker is module-level process state (it has to be — it outlives a
+    single call). Clear it between tests so a throttle asserted in one test can't
+    make the next one's genuine "not found" report as rate-limited."""
+    from applemusic_mcp import amp_api
+
+    amp_api.reset_throttle_state()
+    yield
+    amp_api.reset_throttle_state()
+
+
+@pytest.fixture(autouse=True)
 def _block_external_network(request):
     """Hard guarantee: no test outside the explicit live gates (`ui` / `ui_live`)
     may open a real external socket. Apple's API is external, so this proves the

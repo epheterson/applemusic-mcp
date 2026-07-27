@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import applemusic_mcp.browser as _browser_module  # ensure module is loaded for patching
 import pytest
+import requests
 import responses
 
 from applemusic_mcp import server
@@ -2698,3 +2699,66 @@ def test_id_based_add_classifies_catalog_id():
 
     assert _resolve_track("1440857781", "")[0].input_type == InputType.CATALOG_ID
     assert _resolve_track("Hey Jude", "")[0].input_type == InputType.NAME
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit surfacing (#42)
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimitSurfacing:
+    """Apple returns no Retry-After on the web-player path and the internal
+    resolvers swallow non-200 into [], so a 429 has to be surfaced explicitly or
+    it reads as "no such song"."""
+
+    def test_api_error_maps_429_to_the_real_explanation(self):
+        """A raw "429 Client Error" implies retrying works. It doesn't."""
+        resp = requests.Response()
+        resp.status_code = 429
+        exc = requests.exceptions.HTTPError("429 Client Error: Too Many Requests", response=resp)
+        msg = server._api_error(exc)
+        assert "rolling" in msg and "--dev" in msg
+        assert "Client Error" not in msg
+        assert server.amp_api.throttled_recently() is True
+
+    def test_api_error_passes_other_failures_through(self):
+        resp = requests.Response()
+        resp.status_code = 500
+        exc = requests.exceptions.HTTPError("500 Server Error", response=resp)
+        msg = server._api_error(exc)
+        assert msg == "API Error: 500 Server Error"
+        assert server.amp_api.throttled_recently() is False
+
+    def test_api_error_without_a_response_still_renders(self):
+        msg = server._api_error(requests.exceptions.ConnectionError("connection refused"))
+        assert msg == "API Error: connection refused"
+
+    @responses.activate
+    def test_catalog_search_429_tells_the_user_it_is_throttled(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        responses.add(
+            responses.GET,
+            "https://api.music.apple.com/v1/catalog/us/search",
+            json={"errors": [{"status": "429", "code": "42900"}]},
+            status=429,
+        )
+        result = server.catalog(action="search", query="Money")
+        assert "429" in result and "rolling" in result
+
+    def test_catalog_miss_reason_prefers_the_throttle(self):
+        assert server._catalog_miss_reason("Not found in catalog") == "Not found in catalog"
+        server.amp_api.note_status(429)
+        assert "429" in server._catalog_miss_reason("Not found in catalog")
+
+    def test_catalog_miss_reason_costs_no_request(self, monkeypatch):
+        """On the miss path of a bulk loop, a probe per miss is exactly what you
+        can't afford while throttled — so it must not call session_status()."""
+        monkeypatch.setattr(
+            server.amp_api,
+            "session_status",
+            lambda: pytest.fail("_catalog_miss_reason must not spend a request"),
+        )
+        assert server._catalog_miss_reason("Not found in catalog") == "Not found in catalog"

@@ -565,6 +565,32 @@ Music-User-Token: {user_music_token}
 
 **Base URL:** `https://api.music.apple.com/v1`
 
+## Rate Limits (read this before any bulk loop)
+
+Apple throttles with `HTTP 429` / code `42900` on a **rolling ~60-minute window**, and
+sends **no `Retry-After` and no `X-Rate-Limit` header** — remaining quota is unobservable,
+so you only find out by getting blocked.
+
+| Token | Practical ceiling | Notes |
+|---|---|---|
+| Your own developer token (`login --dev`, your `.p8`) | ~3600 requests/hour, Apple's documented figure | Your quota alone |
+| Apple's public web-player token (plain `login`, tokenless/Safari path) | a few hundred/hour, measured | Shared, not per-user — the ceiling is far lower and not yours to spend |
+
+Consequences that bite:
+
+- **Waiting briefly does nothing.** A 15-minute zero-traffic cooldown still 429s. It clears
+  roughly an hour after the burst ends, then re-throttles after a few more requests.
+  Every retry inside the window adds to the count keeping you blocked.
+- **A 429 can look like an empty result, not an error.** One search per track ("resolve
+  title+artist → catalog id") is the standard import shape and the fastest way to hit this;
+  if the caller treats an empty search as "song not found", a throttle silently produces
+  false negatives. Treat empty-after-429 as *unknown*, never as *absent*, and never cache it.
+- **For bulk work, use `login --dev`.** Your own developer token gets its own, much larger
+  quota. Reported and measured in [#42](https://github.com/epheterson/applemusic-mcp/issues/42).
+
+To cut request count where the caller has ISRCs, `GET /v1/catalog/{storefront}/songs?filter[isrc]=ISRC1,ISRC2,…`
+resolves many tracks in one request and matches exactly, instead of one fuzzy search per track.
+
 ## Available Endpoints
 
 ### Catalog (Public - dev token only)

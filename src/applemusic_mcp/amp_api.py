@@ -16,6 +16,7 @@ once the user has signed in. The server routes here in ``api`` mode (and in
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 import requests
@@ -30,6 +31,55 @@ _OK = (200, 201, 202, 204)
 logger = logging.getLogger(__name__)
 
 
+# --- rate-limit state ------------------------------------------------------
+#
+# Apple throttles on a ROLLING 60-MINUTE window and returns no ``Retry-After``
+# or ``X-Rate-Limit`` header on the web-player path, so remaining quota is
+# unobservable — you only learn you're over by getting a 429 (#42). Two
+# consequences this state exists to handle:
+#
+#   1. The reads below swallow non-200 and return empty, so a throttle looks
+#      exactly like "no such song". Callers that would otherwise report a
+#      false "not found" ask ``throttled_recently()`` instead.
+#   2. Probing to find out (``session_status()``) costs a REQUEST, and every
+#      request inside a rolling window pushes the recovery further out. So a
+#      known-recent 429 short-circuits the probe rather than spending one.
+
+_THROTTLE_STICKY_SECONDS = 120.0
+_last_429_at = 0.0
+
+
+def note_status(code: int) -> None:
+    """Record an HTTP status seen by any API call, so an empty result can later
+    be attributed to a throttle rather than to "not found".
+
+    The marker means "the last thing Apple told us was 429" — any successful
+    response clears it, so a genuine no-such-song is never mislabelled just
+    because a throttle happened a minute ago."""
+    global _last_429_at
+    if 200 <= code < 300:
+        _last_429_at = 0.0
+    elif code == 429:
+        _last_429_at = time.monotonic()
+        logger.warning(
+            "Apple Music returned HTTP 429 (rate limited). Apple's window is rolling "
+            "and ~60 min long, and no Retry-After header is sent. Results may come back "
+            "EMPTY rather than as errors until it clears. For bulk catalog work use "
+            "`applemusic-mcp login --dev` (your own developer token gets its own quota)."
+        )
+
+
+def throttled_recently(within: float = _THROTTLE_STICKY_SECONDS) -> bool:
+    """True if a 429 was seen in the last ``within`` seconds."""
+    return _last_429_at > 0 and (time.monotonic() - _last_429_at) < within
+
+
+def reset_throttle_state() -> None:
+    """Clear the sticky 429 marker (tests, and after a confirmed-good call)."""
+    global _last_429_at
+    _last_429_at = 0.0
+
+
 def _err(r: requests.Response, action: str) -> str:
     """Format a failed amp-api response into a user-facing reason — and log the
     full status + response body so failures are debuggable from the MCP logs
@@ -38,9 +88,12 @@ def _err(r: requests.Response, action: str) -> str:
     what you need to tell a transient 500 from a bad request."""
     body = (r.text or "").strip()
     logger.warning("amp-api %s: HTTP %s — %s", action, r.status_code, body[:2000] or "(empty body)")
+    note_status(r.status_code)
     reason = f"status {r.status_code}"
     if r.status_code in (401, 403):
         reason += " — not authorized, re-run `applemusic-mcp login`"
+    if r.status_code == 429:
+        reason += " — rate limited; wait (Apple's window is rolling, up to ~60 min)"
     snippet = body[:200].replace("\n", " ").strip()
     return f"{reason}: {snippet}" if snippet else reason
 
@@ -66,11 +119,18 @@ def session_status() -> str:
     ``throttled`` | ``error``. The reads below swallow errors and return empty,
     so a resolver can't tell "genuinely not found" from "your token expired".
     Call this on the failure path to turn a misleading "not found" into the
-    real cause (an expired session or a 429), at the cost of one extra GET."""
+    real cause (an expired session or a 429), at the cost of one extra GET.
+
+    A 429 seen in the last couple of minutes answers without spending that GET:
+    during a rolling-window throttle the probe would both fail and add to the
+    very count that's keeping us throttled."""
+    if throttled_recently():
+        return "throttled"
     try:
         r = requests.get(
             f"{AMP}/me/library/playlists", headers=_headers(), params={"limit": 1}, timeout=TIMEOUT
         )
+        note_status(r.status_code)
         if r.status_code == 200:
             return "ok"
         if r.status_code in (401, 403):
@@ -94,6 +154,7 @@ def list_playlists() -> list[dict]:
         h = _headers()
         while url:
             r = requests.get(url, headers=h, timeout=TIMEOUT)
+            note_status(r.status_code)
             if r.status_code != 200:
                 break
             data = r.json()
@@ -184,6 +245,7 @@ def get_tracks(playlist_id: str) -> list[dict]:
         h = _headers()
         while url:
             r = requests.get(url, headers=h, timeout=TIMEOUT)
+            note_status(r.status_code)
             if r.status_code != 200:
                 break
             data = r.json()
@@ -215,6 +277,7 @@ def search_library_songs(term: str, limit: int = 25) -> list[dict]:
             params={"term": term, "types": "library-songs", "limit": min(limit, 25)},
             timeout=TIMEOUT,
         )
+        note_status(r.status_code)
         if r.status_code != 200:
             return []
         songs = r.json().get("results", {}).get("library-songs", {}).get("data", [])
@@ -245,6 +308,10 @@ def search_catalog_songs(term: str, limit: int = 5) -> list[dict]:
             params={"term": term, "types": "songs", "limit": min(limit, 25)},
             timeout=TIMEOUT,
         )
+        # An empty return on failure is indistinguishable from "no such song",
+        # which is how a throttle turns into a bulk run full of false negatives
+        # (#42). Record the status so the caller can name the real cause.
+        note_status(r.status_code)
         if r.status_code != 200:
             return []
         songs = r.json().get("results", {}).get("songs", {}).get("data", [])

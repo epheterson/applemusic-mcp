@@ -824,3 +824,75 @@ def test_err_empty_body_yields_bare_reason(caplog):
         ok, msg = amp_api.delete_playlist("p.1")
     assert not ok and msg == "status 500"  # no ": snippet" tail
     assert any("(empty body)" in r.getMessage() for r in caplog.records)
+
+
+# --- 429 / rate-limit state (#42) ------------------------------------------
+#
+# Apple's tokenless web-player path throttles on a rolling ~60-min window with
+# NO Retry-After header, and the reads above swallow non-200 into an empty list
+# — so without this state a throttle is indistinguishable from "no such song",
+# and a bulk import silently records false negatives.
+
+
+@responses.activate
+def test_catalog_search_429_records_throttle():
+    """A throttled catalog search still returns [], but says so out of band."""
+    responses.add(responses.GET, f"{amp_api.AMP}/catalog/us/search", status=429)
+    assert amp_api.search_catalog_songs("x") == []
+    assert amp_api.throttled_recently() is True
+
+
+@responses.activate
+def test_success_clears_throttle_marker():
+    """The marker means 'the last thing Apple said was 429' — a 200 clears it, so
+    a genuine miss a minute later isn't mislabelled as rate-limited."""
+    amp_api.note_status(429)
+    assert amp_api.throttled_recently() is True
+    responses.add(
+        responses.GET,
+        f"{amp_api.AMP}/catalog/us/search",
+        json={"results": {"songs": {"data": []}}},
+        status=200,
+    )
+    assert amp_api.search_catalog_songs("nonexistent") == []
+    assert amp_api.throttled_recently() is False
+
+
+@responses.activate
+def test_session_status_throttled_short_circuits_without_a_request():
+    """Probing while throttled would fail AND add to the count keeping us
+    throttled — a known-recent 429 answers without spending a request."""
+    amp_api.note_status(429)
+    assert amp_api.session_status() == "throttled"
+    assert len(responses.calls) == 0
+
+
+@responses.activate
+def test_session_status_429_sets_marker():
+    responses.add(responses.GET, f"{amp_api.AMP}/me/library/playlists", status=429)
+    assert amp_api.session_status() == "throttled"
+    assert amp_api.throttled_recently() is True
+
+
+def test_throttled_recently_window_and_reset():
+    amp_api.note_status(429)
+    assert amp_api.throttled_recently(within=60) is True
+    assert amp_api.throttled_recently(within=0) is False  # outside the window
+    amp_api.reset_throttle_state()
+    assert amp_api.throttled_recently() is False
+
+
+def test_note_status_ignores_other_errors():
+    """A 404/500 is a real answer, not a throttle — don't claim rate limiting."""
+    amp_api.note_status(404)
+    amp_api.note_status(500)
+    assert amp_api.throttled_recently() is False
+
+
+@responses.activate
+def test_err_429_explains_the_rolling_window():
+    responses.add(responses.DELETE, f"{amp_api.AMP}/me/library/playlists/p.1", body="", status=429)
+    ok, msg = amp_api.delete_playlist("p.1")
+    assert not ok
+    assert "rate limited" in msg and "rolling" in msg
+    assert amp_api.throttled_recently() is True

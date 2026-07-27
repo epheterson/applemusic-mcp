@@ -5711,3 +5711,50 @@ def test_action_folders_shows_tree(monkeypatch):
     assert "[My Folder]" in out and "Boom Boom" in out
     # `tree` is an accepted alias
     assert "[My Folder]" in server.playlist(action="tree")
+
+
+# ---------------------------------------------------------------------------
+# Rate-limit honesty in the bulk add path (#42)
+# ---------------------------------------------------------------------------
+
+
+class TestPlaylistAddThrottled:
+    """A throttled catalog search returns EMPTY, not an error. Reporting that as
+    "not found in catalog" is how a 200-track import silently records false
+    negatives — the exact failure reported in #42."""
+
+    def test_throttle_is_not_reported_as_not_found(self, monkeypatch):
+        monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
+
+        def throttled_search(q, n):
+            server.amp_api.note_status(429)
+            return []
+
+        monkeypatch.setattr(server.amp_api, "search_catalog_songs", throttled_search)
+        result = server._playlist_add_api("p.abc123", "Hey Jude", "Beatles", auto_add=True)
+        assert "not found in catalog" not in result
+        assert "429" in result
+        assert "--dev" in result
+
+    def test_throttle_stops_resolving_the_rest_of_the_batch(self, monkeypatch):
+        """More requests inside Apple's rolling window push recovery further out,
+        so the loop stops at the first 429 instead of burning the whole batch."""
+        calls = []
+
+        def throttled_search(q, n):
+            calls.append(q)
+            server.amp_api.note_status(429)
+            return []
+
+        monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
+        monkeypatch.setattr(server.amp_api, "search_catalog_songs", throttled_search)
+        tracks = json.dumps([f"Track {i}" for i in range(10)])
+        server._playlist_add_api("p.abc123", tracks, "", auto_add=True)
+        assert len(calls) == 1
+
+    def test_genuine_miss_still_says_not_found(self, monkeypatch):
+        """No 429 seen → an empty search really does mean no such song."""
+        monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
+        monkeypatch.setattr(server.amp_api, "search_catalog_songs", lambda q, n: [])
+        result = server._playlist_add_api("p.abc123", "Zzzz Nonexistent", "", auto_add=True)
+        assert "not found in catalog" in result

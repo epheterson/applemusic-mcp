@@ -104,6 +104,8 @@ See the [appendix](#appendix-developer-token) for getting the MusicKit key.
   applemusic-mcp login            # opens Chrome to music.apple.com; sign in once
   ```
 
+**Bulk work wants `--dev`.** Web sign-in uses Apple's *public* web-player token, and its request quota is shared rather than yours alone. Interactive use never gets near it, but a few hundred catalog searches in an hour — a playlist import, a library migration — will hit `HTTP 429`. Apple sends no `Retry-After` on this path and the window is **rolling and ~60 minutes long**, so a short cooldown doesn't clear it and retrying extends it. `applemusic-mcp login --dev` uses your own MusicKit key, which gets its own much larger quota. When you are throttled the tool says so explicitly, rather than letting the empty results read as "song not found."
+
 <details>
 <summary>Config locations, mode, and source install</summary>
 

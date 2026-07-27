@@ -1246,9 +1246,42 @@ _SESSION_EXPIRED_MSG = (
     "Error: your Apple Music session has expired — re-run `applemusic-mcp login` "
     "(browser) or `applemusic-mcp login --dev` (developer-token path)."
 )
-_SESSION_THROTTLED_MSG = (
-    "Error: Apple Music is rate-limiting requests (HTTP 429) — wait a moment and retry."
+# Apple's throttle is a ROLLING ~60-minute window with no Retry-After header, so
+# "wait a moment" was wrong advice: a short cooldown still 429s, and each retry
+# adds to the very count keeping you throttled (#42).
+_THROTTLED_REASON = (
+    "Apple Music is rate-limiting requests (HTTP 429). Apple's window is rolling and "
+    "up to ~60 minutes long — a short wait won't clear it, and retrying extends it. "
+    "For bulk work (playlist imports, library migrations), `applemusic-mcp login --dev` "
+    "uses your own Apple Developer token, which gets its own much larger quota instead "
+    "of sharing Apple's public web-player one."
 )
+_SESSION_THROTTLED_MSG = f"Error: {_THROTTLED_REASON}"
+
+
+def _api_error(e: Exception) -> str:
+    """Render a failed ``requests`` call for the user, and record its status.
+
+    A raw ``429 Client Error: Too Many Requests`` tells the user nothing useful
+    and implies an immediate retry will work — it won't, and it makes things
+    worse. Swap it for the real explanation, and note the 429 so the reads that
+    swallow errors into empty lists can be attributed correctly (#42)."""
+    resp = getattr(e, "response", None)
+    code = getattr(resp, "status_code", None)
+    if code is not None:
+        amp_api.note_status(code)
+        if code == 429:
+            return _SESSION_THROTTLED_MSG
+    return f"API Error: {e}"
+
+
+def _catalog_miss_reason(not_found_msg: str) -> str:
+    """An empty catalog search normally means "no such song" — unless a 429 just
+    came back, in which case the search never really ran and "not found" is a
+    false negative (#42). Unlike ``_resolve_failure_msg`` this costs no request:
+    on the miss path of a bulk loop, a probe per miss is exactly what you can't
+    afford while throttled."""
+    return _THROTTLED_REASON if amp_api.throttled_recently() else not_found_msg
 
 
 def _resolve_failure_msg(not_found_msg: str) -> str:
@@ -1438,6 +1471,14 @@ def _playlist_add_api(
                     )
             if hit is None:
                 if auto_add:
+                    # A rate-limited search returns EMPTY, not an error — reporting
+                    # "not found in catalog" here is how a throttle silently becomes
+                    # a run full of false negatives (#42). Name the real cause, and
+                    # stop resolving: more requests inside Apple's rolling window
+                    # only push the recovery further out.
+                    if amp_api.throttled_recently():
+                        errors.append(_THROTTLED_REASON)
+                        break
                     errors.append(f"{r.value}: not found in catalog")
             elif _dup(cid=hit.get("id"), nm=hit.get("name")):
                 skipped.append(f"{hit.get('name')} - {hit.get('artist')}")
@@ -2105,7 +2146,7 @@ def _find_matching_catalog_song(
     songs = _search_catalog_songs(search_term, limit=5)  # Get more results for fuzzy
 
     if not songs:
-        return None, "Not found in catalog", None
+        return None, _catalog_miss_reason("Not found in catalog"), None
 
     # Filter by artist first if provided
     def artist_matches(song: dict) -> bool:
@@ -2167,7 +2208,9 @@ def _search_catalog_songs(query: str, limit: int = 5) -> list[dict]:
 
     Returns:
         List of song dicts with 'id', 'attributes' (name, artistName, etc.)
-        Empty list on error.
+        Empty list on error — including a 429, which is recorded via
+        ``amp_api.note_status`` so callers can say "rate limited" instead of
+        the false "not found" an empty list would otherwise imply (#42).
     """
     try:
         headers = get_headers()
@@ -2177,6 +2220,7 @@ def _search_catalog_songs(query: str, limit: int = 5) -> list[dict]:
             params={"term": query, "types": "songs", "limit": min(limit, 25)},
             timeout=REQUEST_TIMEOUT,
         )
+        amp_api.note_status(response.status_code)
         if response.status_code == 200:
             data = response.json()
             return data.get("results", {}).get("songs", {}).get("data", [])
@@ -2204,6 +2248,7 @@ def _search_catalog_albums(query: str, limit: int = 5) -> list[dict]:
             params={"term": query, "types": "albums", "limit": min(limit, 25)},
             timeout=REQUEST_TIMEOUT,
         )
+        amp_api.note_status(response.status_code)
         if response.status_code == 200:
             data = response.json()
             return data.get("results", {}).get("albums", {}).get("data", [])
@@ -3002,7 +3047,7 @@ def _playlist_list(
         return prefix + format_output(playlist_data, format, export, full, "playlists")
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -3392,7 +3437,7 @@ def _playlist_tracks(
         return result + fuzzy_info + stats_line
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -3568,7 +3613,7 @@ def _playlist_create(name: str, description: str = "") -> str:
         return f"Created playlist '{name}' (ID: {playlist_id})"
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -3626,7 +3671,7 @@ def _playlist_create_folder(path: str) -> str:
     except FileNotFoundError:
         return "Error: API credentials required for folder creation on non-macOS"
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
 
 
 def _playlist_tree() -> str:
@@ -4506,7 +4551,7 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
         return f"Created '{new_name}' (ID: {new_id}) with {len(all_tracks)} tracks{fuzzy_info}"
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -5248,7 +5293,7 @@ def _library_recently_played(
         return format_output(track_data, format, export, full, "recently_played")
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -5411,7 +5456,7 @@ def _catalog_search(
         return ("\n".join(output) + export_msg) if output else "No results found"
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -5525,7 +5570,7 @@ def _catalog_album_tracks(
         )
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -5632,7 +5677,7 @@ def _catalog_album_details(
         return "\n".join(output_lines)
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -5835,7 +5880,7 @@ def _library_browse(
         )
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -5922,7 +5967,7 @@ def _discover_recommendations(limit: int, format: str, export: str, full: bool) 
         return format_output(all_items, format, export, full, "recommendations")
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -5967,7 +6012,7 @@ def _discover_heavy_rotation(format: str, export: str, full: bool) -> str:
         return format_output(item_data, format, export, full, "heavy_rotation")
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -6026,7 +6071,7 @@ def _library_recently_added(limit: int, format: str, export: str, full: bool) ->
         return format_output(item_data, format, export, full, "recently_added")
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -6064,7 +6109,7 @@ def _discover_personal_station() -> str:
         return "\n".join(output)
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -6181,7 +6226,7 @@ def _discover_top_songs(artist: str, storefront: str = "") -> str:
         return "\n".join(output) if len(output) > 1 else "No top songs found"
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -6249,7 +6294,7 @@ def _discover_similar_artists(artist: str, storefront: str = "") -> str:
         return "\n".join(output) if len(output) > 1 else "No similar artists found"
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -6280,7 +6325,7 @@ def _discover_song_station(song_id: str, storefront: str = "") -> str:
         return f"Station: {name}\nStation ID: {station_id}\n\nUse this station to discover music similar to this song."
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -6443,7 +6488,7 @@ def _library_rate(
                     return f"{action.capitalize()}d: {song_name} by {song_artist}"
                 return f"Error: {msg}"
 
-    return f"Track not found: {track_name}"
+    return _catalog_miss_reason(f"Track not found: {track_name}")
 
 
 # ============ CATALOG DETAILS ============
@@ -6481,7 +6526,7 @@ def _catalog_song_details(song_id: str) -> str:
         return "\n".join(output)
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -6557,7 +6602,7 @@ def _catalog_artist_details(artist: str) -> str:
         return "\n".join(output)
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -6596,7 +6641,7 @@ def _discover_charts(chart_type: str = "songs", storefront: str = "") -> str:
         return "\n".join(output) if output else "No chart data available"
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -6624,7 +6669,7 @@ def _catalog_genres() -> str:
         return "\n".join(output) if output else "No genres found"
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
@@ -6653,7 +6698,7 @@ def _catalog_suggestions(term: str) -> str:
         return "\n".join(output) if len(output) > 1 else "No suggestions found"
 
     except requests.exceptions.RequestException as e:
-        return f"API Error: {str(e)}"
+        return _api_error(e)
     except (FileNotFoundError, ValueError) as e:
         return str(e)
 
