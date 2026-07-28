@@ -46,7 +46,9 @@ fi
 for t in test_native_play_album_clicks_play_button \
          test_native_play_specific_track_double_clicks_row \
          test_native_play_library_track; do
-  if ! echo "$out" | grep -q "$t PASSED"; then
+  # Herestring, not a pipe: under `set -o pipefail`, grep -q exits on match and
+  # echo takes SIGPIPE, so the pipeline returns 141 and a PASS reads as a fail.
+  if ! grep -q "$t PASSED" <<<"$out"; then
     echo
     echo "❌ $t did not PASS (skipped or failed) — UI NOT validated on this machine."
     echo "   Run from an UNLOCKED console session (Screen Sharing GUI login, not SSH),"

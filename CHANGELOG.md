@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.18.1] - 2026-07-28
 
 ### Fixed
 
@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by [@Design-UU](https://github.com/Design-UU) in
   [#42](https://github.com/epheterson/applemusic-mcp/issues/42) while running a
   961-track import.
+- **The pre-release gate could reject a passing run.** Its "did the live tests
+  actually PASS" guard used `echo "$out" | grep -q`, and under `set -o pipefail`
+  `grep -q` exits on the first match, closing the pipe; `echo` then takes SIGPIPE
+  and the pipeline reports 141, so a successful match read as a failure. It is a
+  race between the write and the exit, so it passed for months and then blocked a
+  release. Both `preflight.sh` and `preflight-ui.sh` now use a herestring. The bug
+  was fail-closed — it could block a good release but never pass a bad one.
 
 ## [0.18.0] - 2026-07-27
 

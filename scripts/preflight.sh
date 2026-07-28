@@ -66,8 +66,13 @@ fi
 # Guard: the gate is only satisfied if the core mutation flows actually PASSED.
 # A run where they SKIPPED (no tokens / storefront didn't resolve) but pytest
 # still exited 0 must NOT read as green — that's a false-green worse than no gate.
+# NOTE: a herestring, not `echo "$out" | grep -q`. Under `set -o pipefail`,
+# grep -q exits on the first match and closes the pipe, echo takes SIGPIPE, and
+# the pipeline reports 141 — so a SUCCESSFUL match read as a failure and blocked
+# the release. It is a race between echo's write and grep's exit, so it passed
+# for months and then started failing.
 for t in test_full_mutation_lifecycle test_rating_roundtrip; do
-  if ! echo "$out" | grep -q "$t PASSED"; then
+  if ! grep -q "$t PASSED" <<<"$out"; then
     echo
     echo "❌ $t did not PASS (skipped or failed) — gate NOT satisfied."
     echo "   Ensure the account is signed in (tokens configured) with an ACTIVE"
