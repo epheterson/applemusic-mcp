@@ -41,6 +41,10 @@ jobs:
             echo "Tag $TAG does not exist - will create release."
           fi
 
+      - name: Verify version surfaces agree
+        if: steps.check.outputs.exists == 'false'
+        run: python3 scripts/check_versions.py
+
       - name: Extract this version's CHANGELOG section
         id: notes
         env:

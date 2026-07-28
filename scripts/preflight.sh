@@ -24,15 +24,23 @@ echo " applemusic-mcp · pre-release gate"
 echo "──────────────────────────────────────────────────────────"
 
 echo
-echo "[1/3] Fast suite (mocked logic — same as CI)…"
+echo "[1/4] Version surfaces agree…"
+"$PY" scripts/check_versions.py || {
+  echo
+  echo "❌ Version surfaces disagree — fix before releasing."
+  exit 1
+}
+
+echo
+echo "[2/4] Fast suite (mocked logic — same as CI)…"
 "$PY" -m pytest -q
 
 echo
-echo "[2/3] Live API environment check…"
+echo "[3/4] Live API environment check…"
 "$PY" scripts/check_live_env.py
 
 echo
-echo "[3/3] Live API integration suite (real account, TEST_API=1)…"
+echo "[4/4] Live API integration suite (real account, TEST_API=1)…"
 # The hermetic conftest points APPLEMUSIC_MCP_HOME at a temp dir so unit tests never
 # touch real creds — but that also hides the real (file-stored) media-user-token from
 # the live gate, which would then SKIP. Inject it via APPLEMUSIC_USER_TOKEN (the same

@@ -28,6 +28,12 @@ make preflight
 
 This runs, in order:
 
+0. a version-surface check (`scripts/check_versions.py`) — the repo carries the
+   version in seven places, and two of them do not follow an edit to
+   `pyproject.toml`: `server.json` (nothing automates it; it once sat at `1.0.0`
+   while the package shipped 0.16.0) and `uv.lock` (only updates when `uv` runs,
+   so a bump can commit without it). `release.yml` runs the same check before
+   tagging, so a mismatched release is blocked rather than published,
 1. the fast/mocked suite (same as CI),
 2. a live-environment check (developer token + media-user-token + catalog
    reachable) that **fails loudly** instead of letting the live tests silently
