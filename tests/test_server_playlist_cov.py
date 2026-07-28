@@ -5806,7 +5806,7 @@ class TestPlaylistAddDryRun:
             song={"id": "111", "attributes": {"name": "Yesterday", "artistName": "The Beatles"}},
         )
         result = server.playlist(
-            action="add", playlist="My Playlist", track="Yesterday", dry_run=True
+            action="add", playlist="My Playlist", track="Yesterday", dry_run=True, auto_add=True
         )
         assert "Would skip (1)" in result
         assert "already in" in result
@@ -5833,7 +5833,11 @@ class TestPlaylistAddDryRun:
             fuzzy=fuzzy,
         )
         result = server.playlist(
-            action="add", playlist="My Playlist", track="Dont Let Me Down", dry_run=True
+            action="add",
+            playlist="My Playlist",
+            track="Dont Let Me Down",
+            dry_run=True,
+            auto_add=True,
         )
         assert "didn't match the title outright" in result
         assert "The Chainsmokers" in result
@@ -5868,7 +5872,9 @@ class TestPlaylistAddDryRun:
         monkeypatch.setattr(
             server, "_find_matching_catalog_song", lambda n, a: (None, "Not found in catalog", None)
         )
-        result = server.playlist(action="add", playlist="My Playlist", track="Zzz", dry_run=True)
+        result = server.playlist(
+            action="add", playlist="My Playlist", track="Zzz", dry_run=True, auto_add=True
+        )
         assert "Would fail (1)" in result
 
     def test_throttle_stops_the_preview(self, monkeypatch):
@@ -5881,7 +5887,9 @@ class TestPlaylistAddDryRun:
             return None, server._THROTTLED_REASON, None
 
         monkeypatch.setattr(server, "_find_matching_catalog_song", throttled)
-        result = server.playlist(action="add", playlist="P", track="A,B,C", dry_run=True)
+        result = server.playlist(
+            action="add", playlist="P", track="A,B,C", dry_run=True, auto_add=True
+        )
         assert len(calls) == 1
         assert "429" in result
 
@@ -5956,3 +5964,180 @@ class TestCatalogResolveNaming:
         assert "resolve," in result
         assert "resolve_isrc" not in result
         assert "match," not in result
+
+
+class TestPickResolvedSong:
+    """Regression guard for a shipped silent-wrong-data bug: Apple's library search
+    returns `Renaissance Fair (Single Version)` by The Byrds as the FIRST hit for
+    "Yesterday", and the add path took [0] blindly — so it added a song the user
+    never asked for, and said "Added"."""
+
+    LIB = [
+        {"name": "Renaissance Fair (Single Version)", "artist": "The Byrds", "catalog_id": "1"},
+        {
+            "name": "So You Want To Be a Rock 'n' Roll Star",
+            "artist": "The Byrds",
+            "catalog_id": "2",
+        },
+        {"name": "Yesterday", "artist": "The Beatles", "catalog_id": "3"},
+        {"name": "Yesterday", "artist": "Atmosphere", "catalog_id": "4"},
+    ]
+
+    def test_skips_an_unrelated_first_hit(self):
+        pick, conf = server._pick_resolved_song(self.LIB, "Yesterday")
+        assert pick["artist"] == "The Beatles"
+        assert conf == "exact"
+
+    def test_artist_hint_disambiguates_same_title(self):
+        pick, _ = server._pick_resolved_song(self.LIB, "Yesterday", "Atmosphere")
+        assert pick["catalog_id"] == "4"
+
+    def test_partial_title_match(self):
+        pick, conf = server._pick_resolved_song(self.LIB, "Renaissance Fair")
+        assert pick["catalog_id"] == "1"
+        assert conf == "partial"
+
+    def test_no_defensible_match_returns_nothing(self):
+        """Returning None (caller says 'not found') beats adding the wrong song."""
+        pick, conf = server._pick_resolved_song(self.LIB, "Zzz Nonexistent Song")
+        assert pick is None and conf == ""
+
+    def test_unmatchable_artist_falls_back_to_title(self):
+        pick, _ = server._pick_resolved_song(self.LIB, "Yesterday", "Nobody At All")
+        assert pick is not None and pick["name"] == "Yesterday"
+
+    def test_empty_candidates(self):
+        assert server._pick_resolved_song([], "Anything") == (None, "")
+
+    def test_add_does_not_plant_the_wrong_library_song(self, monkeypatch):
+        """End-to-end version of the same bug, through the real add path."""
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+        monkeypatch.setattr(server.amp_api, "search_library_songs", lambda q, n: self.LIB)
+        added = []
+        monkeypatch.setattr(
+            server.amp_api,
+            "add_tracks",
+            lambda pid, items: (added.extend(items), (True, "ok"))[1],
+        )
+        result = server._playlist_add_api("p.1", "Yesterday", "", auto_add=False)
+        assert "The Byrds" not in result
+        assert added == ["3"]  # Yesterday - The Beatles, not the first row
+
+
+class TestDryRunFidelity:
+    """A dry run that doesn't predict the real run is worse than no dry run."""
+
+    def test_replace_plus_dry_run_never_mutates(self, monkeypatch):
+        """Ordering bug: `if replace:` ran BEFORE the dry_run check, so previewing a
+        swap performed a real add AND a real destructive remove."""
+        for name in ("add_tracks", "remove_track"):
+            monkeypatch.setattr(
+                server.amp_api, name, lambda *a, **k: pytest.fail(f"dry_run called {name}")
+            )
+        monkeypatch.setattr(
+            server, "_playlist_swap", lambda *a, **k: pytest.fail("dry_run reached the swap")
+        )
+        monkeypatch.setattr(
+            server,
+            "_resolve_playlist",
+            lambda p: server.ResolvedPlaylist(raw_input=p, api_id="p.1", applescript_name="P"),
+        )
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+        monkeypatch.setattr(server.amp_api, "search_library_songs", lambda q, n: [])
+        result = server.playlist(
+            action="add", playlist="P", track="New", replace="Old", dry_run=True
+        )
+        assert "DRY RUN" in result
+        assert "Old" in result and "ONLY after the add is confirmed" in result
+
+    def _preview_stub(self, monkeypatch, existing=None, lib=None, catalog=None):
+        monkeypatch.setattr(
+            server,
+            "_resolve_playlist",
+            lambda p: server.ResolvedPlaylist(raw_input=p, api_id="p.1", applescript_name="P"),
+        )
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: existing or [])
+        monkeypatch.setattr(server.amp_api, "search_library_songs", lambda q, n: lib or [])
+        if catalog is not None:
+            monkeypatch.setattr(
+                server, "_find_matching_catalog_song", lambda n, a: (catalog, None, None)
+            )
+
+    def test_honours_auto_add_false_like_the_real_add(self, monkeypatch):
+        """auto_add defaults to False, and the real add then attaches ONLY what's
+        already in your library. The preview used to catalog-search regardless, so
+        it promised adds the real run skips — wrong in the DEFAULT configuration."""
+        self._preview_stub(monkeypatch, lib=[])
+        monkeypatch.setattr(
+            server,
+            "_find_matching_catalog_song",
+            lambda n, a: pytest.fail("auto_add=False must not reach the catalog"),
+        )
+        result = server.playlist(
+            action="add", playlist="P", track="Yesterday", dry_run=True, auto_add=False
+        )
+        assert "not in your library" in result
+
+    def test_honours_allow_duplicates(self, monkeypatch):
+        """With allow_duplicates the real add re-adds; reporting 'would skip' lies."""
+        self._preview_stub(
+            monkeypatch,
+            existing=[{"catalog_id": "111", "name": "Yesterday", "artist": "The Beatles"}],
+            catalog={"id": "111", "attributes": {"name": "Yesterday", "artistName": "The Beatles"}},
+        )
+        result = server.playlist(
+            action="add",
+            playlist="P",
+            track="Yesterday",
+            dry_run=True,
+            auto_add=True,
+            allow_duplicates=True,
+        )
+        assert "Would add" in result
+        assert "Would skip" not in result
+        assert "duplicates are NOT being filtered out" in result
+
+    def test_reports_truncation_instead_of_silently_capping(self, monkeypatch):
+        """Silent truncation reads as 'that's everything'."""
+        self._preview_stub(
+            monkeypatch,
+            catalog={"id": "1", "attributes": {"name": "X", "artistName": "Y"}},
+        )
+        tracks = ",".join(f"Track {i}" for i in range(40))
+        result = server.playlist(
+            action="add", playlist="P", track=tracks, dry_run=True, auto_add=True
+        )
+        assert "Not previewed (15)" in result
+
+    def test_cap_message_names_the_parameter_that_works(self, monkeypatch):
+        monkeypatch.setattr(
+            server,
+            "_find_matching_catalog_song",
+            lambda n, a: ({"id": "1", "attributes": {"name": n, "artistName": "X"}}, None, None),
+        )
+        result = server.catalog(action="resolve", tracks=",".join(f"T{i}" for i in range(30)))
+        assert "max_tracks" in result
+        assert "raise `limit`" not in result
+
+    def test_exact_library_match_is_not_flagged_for_review(self, monkeypatch):
+        """Over-flagging trains people to ignore the warning. An exact title hit
+        from the library carries the picker's real confidence, not a blanket '?'."""
+        self._preview_stub(
+            monkeypatch,
+            lib=[{"name": "Yesterday", "artist": "The Beatles", "catalog_id": "3"}],
+        )
+        result = server.playlist(
+            action="add", playlist="P", track="Yesterday", dry_run=True, auto_add=False
+        )
+        assert "= 'Yesterday'" in result
+        assert "didn't match the title outright" not in result
+
+    def test_inexact_library_match_is_still_flagged(self, monkeypatch):
+        self._preview_stub(
+            monkeypatch,
+            lib=[{"name": "Yesterday Once More", "artist": "Carpenters", "catalog_id": "9"}],
+        )
+        result = server.playlist(
+            action="add", playlist="P", track="Yesterday", dry_run=True, auto_add=False
+        )
+        assert "didn't match the title outright" in result

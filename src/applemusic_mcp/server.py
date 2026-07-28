@@ -1401,6 +1401,41 @@ def _playlist_move_api(playlist: str, folder: str) -> str:
     return f"Error: {msg}"
 
 
+def _pick_resolved_song(
+    candidates: list[dict], name: str, artist: str = ""
+) -> tuple[Optional[dict], str]:
+    """Pick a DEFENSIBLE match from resolver candidates, or nothing.
+
+    Apple's library search is loose: `search_library_songs("Yesterday", limit=1)`
+    returns "Renaissance Fair (Single Version)" by The Byrds — a title with no
+    relationship to the query — and taking ``[0]`` blindly put that in the playlist.
+    Silent wrong data, same class as the throttle reading as "not found" (#42).
+
+    So: require the title to actually correspond, and honour an artist hint when one
+    is given. Returning ``None`` (caller reports "not found") is strictly better than
+    adding a song the user did not ask for.
+
+    Candidates are the flat ``{name, artist, ...}`` dicts the amp_api searches return.
+    Returns (chosen, confidence) where confidence is "exact" | "partial" | "".
+    """
+    nl = name.strip().lower()
+    al = artist.strip().lower()
+
+    def artist_ok(c: dict) -> bool:
+        return not al or al in (c.get("artist", "") or "").strip().lower()
+
+    for want_artist in (True, False) if al else (False,):
+        pool = [c for c in candidates if artist_ok(c)] if want_artist else candidates
+        for c in pool:
+            if (c.get("name", "") or "").strip().lower() == nl:
+                return c, "exact"
+        for c in pool:
+            cn = (c.get("name", "") or "").strip().lower()
+            if cn and (nl in cn or cn in nl):
+                return c, "partial"
+    return None, ""
+
+
 def _playlist_add_api(
     playlist: str,
     track: str,
@@ -1466,13 +1501,18 @@ def _playlist_add_api(
             # from the catalog (parity with native): off → only add it if it's already
             # in your library; on → search the catalog. Either way, de-dup.
             hit = None
+            want_artist = r.artist or artist
+            # Fetch several and pick one whose title actually corresponds, rather
+            # than trusting the search's first row — see _pick_resolved_song.
             if auto_add:
-                songs = amp_api.search_catalog_songs(q, 1)
-                hit = {"id": songs[0]["id"], **songs[0]} if songs else None
+                songs = amp_api.search_catalog_songs(q, 5)
+                pick, _conf = _pick_resolved_song(songs, r.value, want_artist)
+                hit = {"id": pick["id"], **pick} if pick else None
             else:
-                libs = amp_api.search_library_songs(q, 1)
-                if libs:
-                    hit = {"id": libs[0].get("catalog_id"), **libs[0]}
+                libs = amp_api.search_library_songs(q, 5)
+                pick, _conf = _pick_resolved_song(libs, r.value, want_artist)
+                if pick:
+                    hit = {"id": pick.get("catalog_id"), **pick}
                 else:
                     skipped.append(
                         f"{r.value} (not in your library — set auto_add=True to add it from the catalog)"
@@ -3808,7 +3848,12 @@ def _playlist_rename_folder(folder_name: str, new_name: str) -> str:
 
 
 def _playlist_add_preview(
-    playlist: str, track: str, artist: str = "", auto_add: Optional[bool] = None
+    playlist: str,
+    track: str,
+    artist: str = "",
+    auto_add: Optional[bool] = None,
+    allow_duplicates: bool = False,
+    replace: str = "",
 ) -> str:
     """``dry_run=True``: what would this add put in the playlist? Writes nothing.
 
@@ -3850,18 +3895,52 @@ def _playlist_add_preview(
     would_skip: list[str] = []
     problems: list[str] = []
 
-    for r in _resolve_track(track, artist)[:_MATCH_DEFAULT_CAP]:
+    all_inputs = _resolve_track(track, artist)
+    considered, deferred = all_inputs[:_MATCH_DEFAULT_CAP], all_inputs[_MATCH_DEFAULT_CAP:]
+    for r in considered:
         if r.error:
             problems.append(f"{r.raw or r.value}: {r.error}")
             continue
         if r.input_type == InputType.CATALOG_ID:
-            if str(r.value) in existing_ids:
+            if not allow_duplicates and str(r.value) in existing_ids:
                 would_skip.append(f"track {r.value} (already in {dest!r})")
             else:
                 would_add.append({"input": r.value, "id": r.value, "confidence": "id"})
             continue
         if r.input_type not in (InputType.NAME, InputType.JSON_OBJECT):
             problems.append(f"{r.raw or r.value}: {r.input_type.value} can't be name-matched")
+            continue
+
+        if not auto_add:
+            # Mirror the real add: with auto_add off it attaches only what's ALREADY
+            # in your library and never pulls from the catalog. Searching the catalog
+            # here would promise adds that the real run skips.
+            libs = amp_api.search_library_songs(f"{r.value} {r.artist or artist}".strip(), 5)
+            pick, lib_conf = _pick_resolved_song(libs, r.value, r.artist or artist)
+            libs = [pick] if pick else []
+            if not libs:
+                would_skip.append(
+                    f"{r.value} (not in your library — set auto_add=True to add it "
+                    "from the catalog)"
+                )
+                continue
+            name = libs[0].get("name", r.value)
+            cid = libs[0].get("catalog_id") or ""
+            if not allow_duplicates and (
+                (cid and str(cid) in existing_ids) or name.strip().lower() in existing_names
+            ):
+                would_skip.append(f"{name} - {libs[0].get('artist', '')} (already in {dest!r})")
+                continue
+            would_add.append(
+                {
+                    "input": r.value,
+                    "id": cid,
+                    "name": name,
+                    "artist": libs[0].get("artist", ""),
+                    "album": "",
+                    "confidence": lib_conf or "partial",
+                }
+            )
             continue
 
         song, err, fuzzy = _find_matching_catalog_song(r.value, r.artist or artist)
@@ -3874,7 +3953,9 @@ def _playlist_add_preview(
         attrs = song.get("attributes", {})
         name = attrs.get("name", "")
         cid = song.get("id", "")
-        if str(cid) in existing_ids or name.strip().lower() in existing_names:
+        if not allow_duplicates and (
+            str(cid) in existing_ids or name.strip().lower() in existing_names
+        ):
             would_skip.append(f"{name} - {attrs.get('artistName', '')} (already in {dest!r})")
             continue
         would_add.append(
@@ -3889,6 +3970,11 @@ def _playlist_add_preview(
         )
 
     lines = [f"=== DRY RUN for {dest!r} — nothing was added ==="]
+    if replace:
+        lines.append(
+            f"(Swap preview: {replace!r} would be removed ONLY after the add is "
+            "confirmed to have landed. Nothing is removed by this dry run.)"
+        )
     if would_add:
         lines.append(f"\nWould add ({len(would_add)}):")
         for m in would_add:
@@ -3906,6 +3992,14 @@ def _playlist_add_preview(
     if problems:
         lines.append(f"\nWould fail ({len(problems)}):")
         lines.extend(f"  x {p}" for p in problems)
+    if deferred:
+        lines.append(
+            f"\nNot previewed ({len(deferred)}): capped at {_MATCH_DEFAULT_CAP} because this "
+            "costs one request per track. Resolve large lists with "
+            "catalog(action='resolve', isrcs=...) instead."
+        )
+    if allow_duplicates:
+        lines.append("\nallow_duplicates=True — duplicates are NOT being filtered out.")
     if not dup_known:
         lines.append(
             "\nNote: couldn't read the playlist's current contents, so duplicates "
@@ -4831,16 +4925,19 @@ def playlist(
         else:
             return "Error: name and/or folder required for create"
     elif action == "add":
+        # dry_run intercepts FIRST — before the swap branch and before the rail
+        # split. Ordering matters: with `replace` handled first, a caller asking to
+        # preview a swap got a real add AND a real delete.
+        if dry_run:
+            return _playlist_add_preview(
+                playlist, track, artist, auto_add, allow_duplicates, replace
+            )
         # Transactional swap: add the new track, confirm it persisted, and only then
         # remove the old one — so a silently-reverted add never costs you the old track.
         if replace:
             return _playlist_swap(
                 playlist, track, album, artist, replace, allow_duplicates, auto_add
             )
-        # dry_run intercepts BEFORE the rail split: resolution is rail-independent,
-        # so one preview covers both, and nothing can write past this point.
-        if dry_run:
-            return _playlist_add_preview(playlist, track, artist, auto_add)
         # macOS: the native path attaches via AppleScript, which edits ANY playlist
         # — including Music.app-made ones the dev-token API can't (it library-adds
         # catalog tracks over the API first, then attaches). So prefer it on a Mac.
@@ -5876,7 +5973,7 @@ def _catalog_match_tracks(
         lines.append(
             f"\n{len(deferred)} more not attempted (cap {cap}). This action costs one request "
             "PER TRACK — for a large import use catalog(action='resolve_isrc') instead "
-            "(25 per request, exact), or raise `limit` deliberately."
+            "(25 per request, exact), or raise `max_tracks` deliberately."
         )
     if matched:
         ids = ",".join(m["id"] for m in matched)

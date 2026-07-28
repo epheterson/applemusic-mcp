@@ -3303,7 +3303,9 @@ class TestThrottleHonesty:
             server.amp_api, "add_tracks", lambda pid, items: (False, "status 403 — nope")
         )
         monkeypatch.setattr(
-            server.amp_api, "search_catalog_songs", lambda q, n: [{"id": "1", "name": "X"}]
+            server.amp_api,
+            "search_catalog_songs",
+            lambda q, n: [{"id": "1", "name": "Some Song", "artist": "A"}],
         )
         server.amp_api.note_status(429, server.amp_api.WEB)
         result = server._playlist_add_api("p.abc123", "Some Song", "", auto_add=True)
@@ -3316,7 +3318,9 @@ class TestThrottleHonesty:
             server.amp_api, "add_tracks", lambda pid, items: (False, "status 403 — nope")
         )
         monkeypatch.setattr(
-            server.amp_api, "search_catalog_songs", lambda q, n: [{"id": "1", "name": "X"}]
+            server.amp_api,
+            "search_catalog_songs",
+            lambda q, n: [{"id": "1", "name": "Some Song", "artist": "A"}],
         )
         monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
         result = server._playlist_add_api("p.abc123", "Some Song", "", auto_add=True)

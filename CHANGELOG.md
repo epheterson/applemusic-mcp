@@ -20,6 +20,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`resolve` rather than `lookup` deliberately: "search" and "lookup" are near-synonyms,
   and picking `search` for a bulk import is the failure mode 0.17.0 exists to prevent.)
 
+### Fixed
+
+- **Adding by name could plant a song you never asked for.** Apple's library search is
+  loose — `search_library_songs("Yesterday", limit=1)` returns *"Renaissance Fair (Single
+  Version)"* by The Byrds, a title with no relationship to the query — and the add path
+  took the first row blindly. With the default `auto_add=False`, off-macOS
+  `playlist(action="add", track="Yesterday")` silently added The Byrds and reported
+  success. Resolution now requires the title to actually correspond and honours an artist
+  hint, and reports "not in your library" rather than adding something unrelated. Same
+  discipline the catalog rail already applied; the two rails were inconsistent.
+
 ### Added
 
 - **`playlist(action="add", …, dry_run=True)` — preview an add before it writes.**
@@ -32,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   catalog track and only then attaches it, so the attach isn't knowable without
   performing the library add first — predicting it would be a guess dressed as a
   preview. One implementation covers both rails, since resolution is rail-independent.
+  It mirrors `auto_add` and `allow_duplicates` rather than assuming defaults, reports
+  when it truncates a long list, and previews a `replace=` swap without performing it.
 
 ## [0.17.0] - 2026-07-27
 
