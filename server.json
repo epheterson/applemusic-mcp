@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.json",
   "name": "io.github.epheterson/applemusic-mcp",
-  "description": "Cross-platform Apple Music control — library, playlists, catalog, playback, and the Up Next queue — on macOS, Windows, and Linux. No Apple Developer account required.",
+  "description": "Cross-platform Apple Music control \u2014 library, playlists, catalog, playback, and the Up Next queue \u2014 on macOS, Windows, and Linux. No Apple Developer account required.",
   "repository": {
     "url": "https://github.com/epheterson/applemusic-mcp",
     "source": "github"
   },
-  "version": "1.0.0",
+  "version": "0.17.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "applemusic-mcp",
-      "version": "1.0.0",
+      "version": "0.17.0",
       "transport": {
         "type": "stdio"
       },

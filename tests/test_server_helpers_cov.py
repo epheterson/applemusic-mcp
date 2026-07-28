@@ -3265,3 +3265,79 @@ class TestCatalogMatchTracks:
         assert "= exact" in result
         assert "Yesterday - The Beatles" in result
         assert "111" in result
+
+
+class TestThrottleHonesty:
+    """Fixing the advice in one place and leaving it stale elsewhere would have the
+    tool contradicting its own docs."""
+
+    def test_server_search_records_the_api_rail(self, monkeypatch, mock_config_dir):
+        """server.py talks to api.music.apple.com, not amp-api."""
+        server.amp_api.note_status(429, server.amp_api.API)
+        assert server.amp_api.throttled_recently(rail=server.amp_api.API) is True
+        assert server.amp_api.throttled_recently(rail=server.amp_api.WEB) is False
+
+    def test_no_stale_wait_a_moment_advice_anywhere(self):
+        """Apple's window is rolling; 'wait a moment and retry' is wrong AND makes
+        it worse. Guard against it creeping back in."""
+        import pathlib
+
+        src = pathlib.Path(server.__file__).parent
+        offenders = [
+            f"{f.name}:{n}"
+            for f in src.glob("*.py")
+            for n, line in enumerate(f.read_text().splitlines(), 1)
+            if "wait a moment and retry" in line or "try again shortly" in line
+        ]
+        assert offenders == []
+
+    def test_401_while_throttled_admits_it_cannot_tell(self, monkeypatch):
+        """session_status() short-circuits to 'throttled' without a probe, so the
+        expired-vs-unwritable check genuinely can't run — say that instead of
+        confidently blaming the playlist's origin."""
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda pid, items: (False, "status 403 — nope")
+        )
+        monkeypatch.setattr(
+            server.amp_api, "search_catalog_songs", lambda q, n: [{"id": "1", "name": "X"}]
+        )
+        server.amp_api.note_status(429, server.amp_api.WEB)
+        result = server._playlist_add_api("p.abc123", "Some Song", "", auto_add=True)
+        assert "Can't tell whether your session expired" in result
+        assert "created in Music.app" not in result
+
+    def test_401_when_not_throttled_still_diagnoses(self, monkeypatch):
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda pid, items: (False, "status 403 — nope")
+        )
+        monkeypatch.setattr(
+            server.amp_api, "search_catalog_songs", lambda q, n: [{"id": "1", "name": "X"}]
+        )
+        monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
+        result = server._playlist_add_api("p.abc123", "Some Song", "", auto_add=True)
+        assert "created in Music.app" in result
+
+    def test_titles_sent_to_resolve_isrc_point_at_match(self):
+        result = server.catalog(action="resolve_isrc", isrcs="Yesterday, Wonderwall")
+        assert "action='match'" in result
+        assert "USABC1234567" in result  # shows what an ISRC looks like
+
+    def test_remove_path_401_while_throttled_admits_it_cannot_tell(self, monkeypatch):
+        """Same ambiguity as add — the remove path got the same fix."""
+        monkeypatch.setattr(
+            server.amp_api, "resolve_playlist_id", lambda n, api_created_only: "p.1"
+        )
+        monkeypatch.setattr(
+            server.amp_api,
+            "get_tracks",
+            lambda pid: [{"relationship_id": "i.1", "name": "Some Song", "artist": "X"}],
+        )
+        monkeypatch.setattr(
+            server.amp_api, "remove_track", lambda pid, rid: (False, "status 401 — nope")
+        )
+        server.amp_api.note_status(429, server.amp_api.WEB)
+        result = server._playlist_remove_api("My Playlist", "Some Song")
+        assert "Can't tell whether your session expired" in result
+        assert "created in Music.app" not in result

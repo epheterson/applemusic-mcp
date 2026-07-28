@@ -259,7 +259,8 @@ def cmd_status(args):
                 {
                     "ok": "API: ok (web session)",
                     "expired": "API: session expired (run `applemusic-mcp login`)",
-                    "throttled": "API: rate-limited (try again shortly)",
+                    "throttled": "API: rate-limited (429) — Apple's window is rolling and up to "
+                    "~60 min; retrying extends it. Use `login --dev` for bulk work.",
                 }.get(st, "API: not configured (run `applemusic-mcp login`)")
             )
         else:

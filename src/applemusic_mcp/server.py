@@ -1269,7 +1269,7 @@ def _api_error(e: Exception) -> str:
     resp = getattr(e, "response", None)
     code = getattr(resp, "status_code", None)
     if code is not None:
-        amp_api.note_status(code)
+        amp_api.note_status(code, amp_api.API)
         if code == 429:
             return _SESSION_THROTTLED_MSG
     return f"API Error: {e}"
@@ -1332,7 +1332,15 @@ def _playlist_remove_api(playlist: str, track: str, artist: str = "") -> str:
         # playlist the web API can't modify. Surface the real cause, not a flat
         # "remove failed."
         if msg.startswith("status 401") or msg.startswith("status 403"):
-            if amp_api.session_status() == "expired":
+            st = amp_api.session_status()
+            if st == "throttled":
+                return (
+                    f"Error: {msg}. Can't tell whether your session expired or this "
+                    "playlist just isn't writable over the web API — you're rate-limited "
+                    "right now, so the check that would distinguish them can't run. "
+                    "Retry once the window clears."
+                )
+            if st == "expired":
                 return f"Error: your web session expired — re-run `applemusic-mcp login`. ({msg})"
             return (
                 f"Error: couldn't remove from '{playlist}' over the web API ({msg}). This "
@@ -1509,7 +1517,15 @@ def _playlist_add_api(
         # with a cheap session probe before blaming origin — otherwise an expired
         # session gets the wrong cause and the wrong fix.
         if msg.startswith("status 401") or msg.startswith("status 403"):
-            if amp_api.session_status() == "expired":
+            st = amp_api.session_status()
+            if st == "throttled":
+                return (
+                    f"Error: {msg}. Can't tell whether your session expired or this "
+                    "playlist just isn't writable over the web API — you're rate-limited "
+                    "right now, so the check that would distinguish them can't run. "
+                    "Retry once the window clears."
+                )
+            if st == "expired":
                 return f"Error: your web session expired — re-run `applemusic-mcp login`. ({msg})"
             return (
                 f"Error: couldn't add to '{playlist}' over the web API ({msg}). This "
@@ -2220,7 +2236,7 @@ def _search_catalog_songs(query: str, limit: int = 5) -> list[dict]:
             params={"term": query, "types": "songs", "limit": min(limit, 25)},
             timeout=REQUEST_TIMEOUT,
         )
-        amp_api.note_status(response.status_code)
+        amp_api.note_status(response.status_code, amp_api.API)
         if response.status_code == 200:
             data = response.json()
             return data.get("results", {}).get("songs", {}).get("data", [])
@@ -2248,7 +2264,7 @@ def _search_catalog_albums(query: str, limit: int = 5) -> list[dict]:
             params={"term": query, "types": "albums", "limit": min(limit, 25)},
             timeout=REQUEST_TIMEOUT,
         )
-        amp_api.note_status(response.status_code)
+        amp_api.note_status(response.status_code, amp_api.API)
         if response.status_code == 200:
             data = response.json()
             return data.get("results", {}).get("albums", {}).get("data", [])
@@ -5522,7 +5538,13 @@ def _catalog_resolve_isrc(isrcs: str, format: str = "text", full: bool = False) 
 
     wanted, invalid = _parse_isrc_list(isrcs)
     if not wanted:
-        return f"Error: no valid ISRCs in input (rejected: {', '.join(invalid[:5])})"
+        # Easy to land here by passing titles to the wrong action — say so, rather
+        # than leaving the caller to guess what a "valid ISRC" is.
+        return (
+            f"Error: no valid ISRCs in input (rejected: {', '.join(invalid[:5])}). "
+            "An ISRC looks like USABC1234567. If these are titles, use "
+            "catalog(action='match', tracks=...) instead."
+        )
 
     resolved: dict[str, dict] = {}
     asked: list[str] = []  # only batches that actually came back
@@ -5541,7 +5563,7 @@ def _catalog_resolve_isrc(isrcs: str, format: str = "text", full: bool = False) 
                 timeout=REQUEST_TIMEOUT,
             )
             requests_made += 1
-            amp_api.note_status(response.status_code)
+            amp_api.note_status(response.status_code, amp_api.API)
             if response.status_code == 429:
                 # Stop immediately: further batches can only extend the window.
                 # Whatever resolved before this point is still good, so report it
@@ -7480,7 +7502,8 @@ def _config_auth_status(mutation_status: "Optional[str]" = None) -> str:
                     "`applemusic-mcp login` (browser) or `applemusic-mcp login --dev` (dev token)."
                 )
             elif response.status_code == 429:
-                status.append("API Connection: RATE-LIMITED (429) — wait a moment and retry.")
+                amp_api.note_status(429, amp_api.API)
+                status.append(f"API Connection: RATE-LIMITED (429) — {_THROTTLED_REASON}")
             else:
                 status.append(f"API Connection: FAILED ({response.status_code})")
         except Exception as e:
@@ -7498,8 +7521,7 @@ def _config_auth_status(mutation_status: "Optional[str]" = None) -> str:
                     "session expired. Re-run `applemusic-mcp login`."
                 ),
                 "throttled": (
-                    "Web fallback writes (amp-api): RATE-LIMITED (429) — wait a "
-                    "moment and retry."
+                    f"Web fallback writes (amp-api): RATE-LIMITED (429) — {_THROTTLED_REASON}"
                 ),
                 "error": (
                     "Web fallback writes (amp-api): ERROR reaching amp-api "
@@ -7855,7 +7877,7 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
         elif mut == "ok":
             nxt = "✅ Ready — catalog, playlists, add, and rate all work."
         elif mut == "throttled":
-            nxt = "⚠️ Rate-limited (429) right now — auth looks fine; wait and retry."
+            nxt = f"⚠️ Rate-limited (429) right now — auth looks fine. {_THROTTLED_REASON}"
         elif mut == "expired":
             nxt = (
                 "⚠️ Reads may work, but add/playlist/rate are unauthorized — the "

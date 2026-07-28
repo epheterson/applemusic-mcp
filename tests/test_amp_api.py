@@ -896,3 +896,44 @@ def test_err_429_explains_the_rolling_window():
     assert not ok
     assert "rate limited" in msg and "rolling" in msg
     assert amp_api.throttled_recently() is True
+
+
+# --- per-rail throttle isolation -------------------------------------------
+
+
+def test_rails_do_not_clear_each_other():
+    """With a generated dev token the two hosts have separate quotas, so a 200 on
+    api.music.apple.com must not clear a live 429 on amp-api — doing so would
+    resurrect the false 'not found' this whole mechanism exists to prevent."""
+    amp_api.note_status(429, amp_api.WEB)
+    assert amp_api.throttled_recently(rail=amp_api.WEB) is True
+
+    amp_api.note_status(200, amp_api.API)  # success on the OTHER rail
+    assert amp_api.throttled_recently(rail=amp_api.WEB) is True
+    assert amp_api.throttled_recently() is True  # either-rail default
+
+    amp_api.note_status(200, amp_api.WEB)  # success on the SAME rail
+    assert amp_api.throttled_recently(rail=amp_api.WEB) is False
+    assert amp_api.throttled_recently() is False
+
+
+def test_either_rail_default_sees_an_api_throttle():
+    amp_api.note_status(429, amp_api.API)
+    assert amp_api.throttled_recently() is True
+    assert amp_api.throttled_recently(rail=amp_api.WEB) is False
+    assert amp_api.throttled_recently(rail=amp_api.API) is True
+
+
+def test_reset_clears_every_rail():
+    amp_api.note_status(429, amp_api.WEB)
+    amp_api.note_status(429, amp_api.API)
+    amp_api.reset_throttle_state()
+    assert amp_api.throttled_recently() is False
+
+
+@responses.activate
+def test_amp_api_reads_record_the_web_rail():
+    responses.add(responses.GET, f"{amp_api.AMP}/catalog/us/search", status=429)
+    amp_api.search_catalog_songs("x")
+    assert amp_api.throttled_recently(rail=amp_api.WEB) is True
+    assert amp_api.throttled_recently(rail=amp_api.API) is False

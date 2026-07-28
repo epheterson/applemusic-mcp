@@ -46,38 +46,55 @@ logger = logging.getLogger(__name__)
 #      known-recent 429 short-circuits the probe rather than spending one.
 
 _THROTTLE_STICKY_SECONDS = 120.0
-_last_429_at = 0.0
+
+# Tracked PER RAIL, because the two hosts don't share a quota: the public
+# ``api.music.apple.com`` path uses whichever developer token is resolved, while
+# amp-api uses the harvested web-player token. With a generated dev token those
+# are genuinely separate budgets, so a 200 on one rail must NOT clear a live 429
+# on the other — that would resurrect the false "not found" this exists to kill.
+# (On the tokenless path both rails ride the same shared token and throttle
+# together, which the per-rail split handles correctly by coincidence.)
+WEB = "web"  # amp-api.music.apple.com, harvested web-player token
+API = "api"  # api.music.apple.com, developer token
+_last_429_at: dict[str, float] = {WEB: 0.0, API: 0.0}
 
 
-def note_status(code: int) -> None:
-    """Record an HTTP status seen by any API call, so an empty result can later
-    be attributed to a throttle rather than to "not found".
+def note_status(code: int, rail: str = WEB) -> None:
+    """Record an HTTP status seen on ``rail``, so an empty result can later be
+    attributed to a throttle rather than to "not found".
 
-    The marker means "the last thing Apple told us was 429" — any successful
-    response clears it, so a genuine no-such-song is never mislabelled just
-    because a throttle happened a minute ago."""
-    global _last_429_at
+    The marker means "the last thing Apple told us on this rail was 429" — a
+    success on the SAME rail clears it, so a genuine no-such-song is never
+    mislabelled just because a throttle happened a minute ago."""
     if 200 <= code < 300:
-        _last_429_at = 0.0
+        _last_429_at[rail] = 0.0
     elif code == 429:
-        _last_429_at = time.monotonic()
+        _last_429_at[rail] = time.monotonic()
         logger.warning(
-            "Apple Music returned HTTP 429 (rate limited). Apple's window is rolling "
-            "and ~60 min long, and no Retry-After header is sent. Results may come back "
-            "EMPTY rather than as errors until it clears. For bulk catalog work use "
-            "`applemusic-mcp login --dev` (your own developer token gets its own quota)."
+            "Apple Music returned HTTP 429 (rate limited) on the %s rail. Apple's window "
+            "is rolling and ~60 min long, and no Retry-After header is sent. Results may "
+            "come back EMPTY rather than as errors until it clears. For bulk catalog work "
+            "use `applemusic-mcp login --dev` (your own developer token gets its own "
+            "quota), or resolve by ISRC to spend 25x fewer requests.",
+            rail,
         )
 
 
-def throttled_recently(within: float = _THROTTLE_STICKY_SECONDS) -> bool:
-    """True if a 429 was seen in the last ``within`` seconds."""
-    return _last_429_at > 0 and (time.monotonic() - _last_429_at) < within
+def throttled_recently(
+    within: float = _THROTTLE_STICKY_SECONDS, rail: Optional[str] = None
+) -> bool:
+    """True if a 429 was seen in the last ``within`` seconds — on ``rail`` if
+    given, otherwise on either rail (the caller doesn't always know which rail
+    produced the empty result it's trying to explain)."""
+    now = time.monotonic()
+    rails = [rail] if rail else list(_last_429_at)
+    return any(_last_429_at[r] > 0 and (now - _last_429_at[r]) < within for r in rails)
 
 
 def reset_throttle_state() -> None:
-    """Clear the sticky 429 marker (tests, and after a confirmed-good call)."""
-    global _last_429_at
-    _last_429_at = 0.0
+    """Clear the sticky 429 markers (tests, and after a confirmed-good call)."""
+    for r in _last_429_at:
+        _last_429_at[r] = 0.0
 
 
 def _err(r: requests.Response, action: str) -> str:
