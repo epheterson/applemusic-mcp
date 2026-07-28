@@ -41,3 +41,37 @@ jobs:
         # floor (fail_under in pyproject); the live TEST_API/TEST_UI gates and
         # macOS-only branches aren't exercised here, so this is a floor, not 100%.
         run: uv run pytest tests/ -q --tb=short --cov=applemusic_mcp --cov-report=term-missing
+
+  fresh-install:
+    name: fresh pip install (unpinned resolution)
+    runs-on: ubuntu-latest
+    steps:
+      # The pytest job installs via `uv sync`, which resolves from uv.lock — a
+      # dependency set users never get. When mcp 2.0.0 moved mcp.server.fastmcp,
+      # the lock still held 1.28.1, so CI stayed green while EVERY fresh install
+      # died on import (0.18.2). This job resolves dependencies the way pip does
+      # for a user, with no lockfile, so an upstream major bump breaks CI before
+      # it breaks installs.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install from source with unpinned resolution
+        run: |
+          python -m venv /tmp/fresh
+          /tmp/fresh/bin/pip install --upgrade pip
+          /tmp/fresh/bin/pip install .
+
+      - name: Import the server (the thing that actually broke)
+        run: |
+          /tmp/fresh/bin/python - <<'PY'
+          import applemusic_mcp
+          from applemusic_mcp import server, amp_api, cli  # noqa: F401
+          print("imported OK:", applemusic_mcp.__version__)
+          PY
+
+      - name: Show what was resolved
+        # Printed so a future breakage names the culprit version in the log.
+        run: /tmp/fresh/bin/pip list
