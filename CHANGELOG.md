@@ -7,44 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.18.0] - 2026-07-27
 
+### Added
+
+- **`playlist(action="add", ..., dry_run=True)`** — reports what an add would do,
+  without writing. Runs the same resolution as the real add, diffs against the
+  playlist's current contents, and lists would-add / would-skip / would-fail entries
+  with a match-confidence marker on each. Honours `auto_add` and `allow_duplicates`,
+  states when a long list was truncated, and previews a `replace=` swap without
+  performing it.
+
+  Scope: it previews track matching and duplicate detection. It does not predict
+  whether the write itself succeeds — on macOS the native path adds a catalog track to
+  the library before attaching it to the playlist, so the attach result is not
+  knowable in advance.
+
 ### Changed
 
-- **`catalog(action="resolve")` replaces `resolve_isrc` and `match`.** They were one
-  operation wearing two names — "turn identifiers I already have into catalog IDs,
-  writing nothing" — and one of those names made you learn an acronym to find the
-  feature. The action is now the verb and the input type lives in the parameter:
-  `resolve(isrcs=…)` for exact batched lookups, `resolve(tracks=…)` for fuzzy
-  title matching with confidence reporting. `resolve_isrc`, `match`, `match_tracks`,
-  and `resolve_tracks` keep working as unadvertised aliases; nothing breaks.
+- **`catalog(action="resolve")` supersedes `resolve_isrc` and `match`.** Both were the
+  same operation — resolving identifiers to catalog IDs without writing — and are now
+  a single action routed by parameter:
 
-  (`resolve` rather than `lookup` deliberately: "search" and "lookup" are near-synonyms,
-  and picking `search` for a bulk import is the failure mode 0.17.0 exists to prevent.)
+  - `resolve(isrcs=...)` — exact matching, 25 ISRCs per request.
+  - `resolve(tracks=...)` — title/artist matching, with per-track match confidence.
+
+  `resolve_isrc`, `match`, `match_tracks`, and `resolve_tracks` continue to work as
+  aliases. No caller changes are required.
 
 ### Fixed
 
-- **Adding by name could plant a song you never asked for.** Apple's library search is
-  loose — `search_library_songs("Yesterday", limit=1)` returns *"Renaissance Fair (Single
-  Version)"* by The Byrds, a title with no relationship to the query — and the add path
-  took the first row blindly. With the default `auto_add=False`, off-macOS
-  `playlist(action="add", track="Yesterday")` silently added The Byrds and reported
-  success. Resolution now requires the title to actually correspond and honours an artist
-  hint, and reports "not in your library" rather than adding something unrelated. Same
-  discipline the catalog rail already applied; the two rails were inconsistent.
-
-### Added
-
-- **`playlist(action="add", …, dry_run=True)` — preview an add before it writes.**
-  Runs the same resolution the real add would, diffs against what's already in the
-  target playlist, and reports *would add* / *would skip* / *would fail* with a
-  confidence marker on every match. Nothing is written.
-
-  Scoped honestly: it previews **matching and duplicates**, and says outright that it
-  does not predict whether the write succeeds. On macOS the native path library-adds a
-  catalog track and only then attaches it, so the attach isn't knowable without
-  performing the library add first — predicting it would be a guess dressed as a
-  preview. One implementation covers both rails, since resolution is rail-independent.
-  It mirrors `auto_add` and `allow_duplicates` rather than assuming defaults, reports
-  when it truncates a long list, and previews a `replace=` swap without performing it.
+- **Adding a track by name could add an unrelated song.** Apple's library search is
+  loose: `search_library_songs("Yesterday", limit=1)` returns "Renaissance Fair
+  (Single Version)" by The Byrds, and the add path used that first result without
+  checking it. With the default `auto_add=False`, `playlist(action="add",
+  track="Yesterday")` added The Byrds and reported success. Name resolution now
+  requires the title to correspond to the query and honours an artist hint, and
+  reports "not in your library" instead of adding an unrelated track. This matches
+  the matching already applied on the catalog path.
+- **`catalog(action="resolve", tracks=...)` named the wrong parameter** when a list
+  exceeded the per-call cap: it suggested raising `limit`, which does not affect the
+  cap. It now names `max_tracks`.
 
 ## [0.17.0] - 2026-07-27
 
