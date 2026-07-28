@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.2] - 2026-07-28
+
+### Fixed
+
+- **Fresh installs were broken by `mcp` 2.0.0.** The dependency was declared as
+  `mcp>=1.0.0` with no upper bound. `mcp` 2.0.0 (published 2026-07-28) moved
+  `mcp.server.fastmcp`, so a new `pip install applemusic-mcp` resolved 2.x and died
+  on import with `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. This
+  affected every published version, not just the most recent. Now pinned to
+  `mcp>=1.0.0,<2`.
+
+  Existing installs that already resolved `mcp` 1.x were unaffected. Supporting
+  `mcp` 2.x is a migration rather than a constraint change, and is not attempted
+  here.
+
 ## [0.18.1] - 2026-07-28
 
 ### Fixed

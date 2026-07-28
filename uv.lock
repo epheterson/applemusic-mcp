@@ -27,7 +27,7 @@ wheels = [
 
 [[package]]
 name = "applemusic-mcp"
-version = "0.18.1"
+version = "0.18.2"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -58,7 +58,7 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "cryptography", specifier = ">=41.0.0" },
     { name = "keyring", specifier = ">=24.0.0" },
-    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "mcp", specifier = ">=1.0.0,<2" },
     { name = "playwright", marker = "sys_platform != 'darwin'", specifier = ">=1.44.0" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.44.0" },
     { name = "pyjwt", extras = ["crypto"], specifier = ">=2.8.0" },
