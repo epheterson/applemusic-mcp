@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A playlist add reported tracks it did not actually add.** Apple answers the add
+  request with a 2xx and silently drops recordings it will not store, so the count
+  came from what was *requested* rather than what landed: asking for three tracks
+  with one unusable id reported "Added 3 track(s)" while two were in the playlist.
+  The add now re-reads the playlist and reports what actually landed, listing
+  anything Apple dropped. Costs one extra request per add, not per track. Surfaced
+  by [@Design-UU](https://github.com/Design-UU) in
+  [#42](https://github.com/epheterson/applemusic-mcp/issues/42) while running a
+  961-track import.
+
 ## [0.18.0] - 2026-07-27
 
 ### Added

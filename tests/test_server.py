@@ -2634,11 +2634,19 @@ class TestApiModeReadRouting:
             "https://amp-api.music.apple.com/v1/me/library/playlists/p.rock/tracks",
             status=204,
         )
+        # The add now re-reads the playlist to report what actually landed.
+        responses.add(
+            responses.GET,
+            "https://amp-api.music.apple.com/v1/me/library/playlists/p.rock/tracks",
+            json={"data": []},
+            status=200,
+        )
         result = server.playlist(action="add", playlist="p.rock", track="i.lib1")
         assert "Added 1 track" in result
         import json as _json
 
-        body = _json.loads(responses.calls[-1].request.body)
+        post = [c for c in responses.calls if c.request.method == "POST"][-1]
+        body = _json.loads(post.request.body)
         assert body["data"][0] == {"id": "i.lib1", "type": "library-songs"}
 
     @responses.activate

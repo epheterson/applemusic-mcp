@@ -1585,12 +1585,36 @@ def _playlist_add_api(
                 "add to these playlists."
             )
         return f"Error: {msg}"
+    # Apple answers 2xx and SILENTLY DROPS ids it won't accept, so len(items) is a
+    # request, not a receipt — reporting it as "Added N" is the #42 pattern again:
+    # a failure presenting as success. Re-read and say what actually landed.
+    # (One extra GET per add, not per track.)
+    dropped: list[str] = []
+    after = {str(t["catalog_id"]) for t in amp_api.get_tracks(pid) if t.get("catalog_id")}
+    if after:  # empty means the re-read itself failed; don't cry wolf on that
+        for it, nm in zip(items, added_names):
+            # Only catalog ids are checkable: a (id, "library-songs") item is a
+            # LIBRARY id, which never equals the catalogId the re-read reports, so
+            # verifying it here would flag every such add as dropped.
+            if isinstance(it, tuple):
+                continue
+            if str(it) not in after:
+                dropped.append(nm)
+    landed = [n for n in added_names if n not in dropped]
+
     # Surface the playlist fuzzy match (parity with the native path) so the user
     # knows if "Rock" landed in "Rock & Roll Classics".
     dest = f"'{fuzzy.matched_name}'" if fuzzy and fuzzy.matched_name else f"'{playlist}'"
-    out = f"Added {len(items)} track(s) to {dest}:\n" + "\n".join(
-        f"  + {n} (added to library + playlist via the Apple Music web API)" for n in added_names
+    out = f"Added {len(landed)} track(s) to {dest}:\n" + "\n".join(
+        f"  + {n} (added to library + playlist via the Apple Music web API)" for n in landed
     )
+    if dropped:
+        out += (
+            f"\n\n⚠️ {len(dropped)} track(s) were NOT added — Apple accepted the request "
+            "but did not store them. This is Apple-side (an unavailable or region-locked "
+            "recording), not a bad id, and it is silent unless checked:\n"
+            + "\n".join(f"  ✗ {n}" for n in dropped)
+        )
     if fuzzy:
         out += f"\n{_format_fuzzy_match(fuzzy)}"
     if skipped:

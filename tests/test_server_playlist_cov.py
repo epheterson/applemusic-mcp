@@ -6141,3 +6141,56 @@ class TestDryRunFidelity:
             action="add", playlist="P", track="Yesterday", dry_run=True, auto_add=False
         )
         assert "didn't match the title outright" in result
+
+
+class TestAddReportsWhatLanded:
+    """Apple answers 2xx and silently drops ids it won't store, so the requested
+    count is a request, not a receipt. Verified live: asking for 3 with one
+    unusable id reported "Added 3 track(s)" while 2 landed."""
+
+    def test_dropped_tracks_are_reported_not_counted_as_added(self, monkeypatch):
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: "p.1")
+        monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
+        calls = {"n": 0}
+
+        def get_tracks(pid):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return []  # pre-add contents
+            return [{"catalog_id": "1111111111", "name": "A", "artist": "X"}]  # only one landed
+
+        monkeypatch.setattr(server.amp_api, "get_tracks", get_tracks)
+        result = server._playlist_add_api("p.1", "1111111111,2222222222", "", auto_add=True)
+        assert "Added 1 track(s)" in result
+        assert "were NOT added" in result
+        assert "2222222222" in result
+
+    def test_full_success_says_nothing_extra(self, monkeypatch):
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: "p.1")
+        monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
+        calls = {"n": 0}
+
+        def get_tracks(pid):
+            calls["n"] += 1
+            return (
+                []
+                if calls["n"] == 1
+                else [
+                    {"catalog_id": "1111111111", "name": "A"},
+                    {"catalog_id": "2222222222", "name": "B"},
+                ]
+            )
+
+        monkeypatch.setattr(server.amp_api, "get_tracks", get_tracks)
+        result = server._playlist_add_api("p.1", "1111111111,2222222222", "", auto_add=True)
+        assert "Added 2 track(s)" in result
+        assert "NOT added" not in result
+
+    def test_failed_reread_does_not_claim_everything_dropped(self, monkeypatch):
+        """An empty re-read means the read failed, not that Apple dropped it all."""
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: "p.1")
+        monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+        result = server._playlist_add_api("p.1", "1111111111,2222222222", "", auto_add=True)
+        assert "Added 2 track(s)" in result
+        assert "NOT added" not in result
