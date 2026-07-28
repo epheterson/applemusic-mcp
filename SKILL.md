@@ -1,6 +1,6 @@
 ---
 name: apple-music
-version: 0.16.0
+version: 0.17.0
 description: Apple Music integration — AppleScript (local Music.app) and the Apple Music API / web player (cross-platform library, playlists, playback, and queue)
 ---
 
@@ -606,6 +606,15 @@ Two things to get right, because `filter[isrc]` is a *filter*, not a search:
 
 One ISRC can map to several catalog songs (regional releases, remasters), so carry the
 match count rather than silently taking the first.
+
+**Without ISRCs, dry-run before you write.** Title matching is fuzzy, and its failures are
+silent: `Dont Let Me Down` with no artist resolves to The Chainsmokers, not The Beatles.
+Resolve the whole list first, show the proposed matches with a confidence marker (exact vs.
+fuzzy), and only write once they've been reviewed — never interleave "search, then add"
+per track. Via the tool: `catalog(action="match", tracks=..., format="json")`, which adds
+nothing and returns `ids` ready for `playlist(action="add")`. Note this costs one request
+per track (Apple has no batch title+artist endpoint), so it is *not* a rate-limit fix —
+use ISRCs for that.
 
 Manually:
 

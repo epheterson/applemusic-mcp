@@ -3025,3 +3025,243 @@ class TestCatalogResolveIsrc:
     @responses.activate
     def test_unknown_action_lists_resolve_isrc(self, mock_config_dir):
         assert "resolve_isrc" in server.catalog(action="bogus")
+
+
+# ---------------------------------------------------------------------------
+# Dry-run track matching
+# ---------------------------------------------------------------------------
+
+
+def _cat_song(sid: str, name: str, artist: str, album: str = "Help!", year: str = "1965") -> dict:
+    return {
+        "id": sid,
+        "attributes": {
+            "name": name,
+            "artistName": artist,
+            "albumName": album,
+            "releaseDate": f"{year}-01-01",
+        },
+    }
+
+
+class TestCatalogMatchTracks:
+    """The dry run exists so a bulk add's fuzzy matches get reviewed BEFORE they're
+    written — the wrong-edition/wrong-artist case is silent and hard to undo."""
+
+    def test_requires_input(self):
+        assert "tracks required" in server.catalog(action="match")
+
+    def test_exact_match_is_not_flagged(self, monkeypatch):
+        monkeypatch.setattr(
+            server,
+            "_find_matching_catalog_song",
+            lambda n, a: (_cat_song("111", "Yesterday", "The Beatles"), None, None),
+        )
+        result = server.catalog(action="match", tracks="Yesterday")
+        assert "Matched 1/1" in result
+        assert "DRY RUN, nothing was added" in result
+        assert "= exact" in result
+        assert "NOT an outright title match" not in result
+
+    def test_fuzzy_match_is_flagged_for_review(self, monkeypatch):
+        """The case that motivated this: a missing apostrophe lands on another act."""
+        fuzzy = server.FuzzyMatchResult(
+            matched_name="Don't Let Me Down (feat. Daya)",
+            query="Dont Let Me Down",
+            normalized_query="dont let me down",
+            normalized_match="dont let me down",
+            transformations=["apostrophe"],
+            match_type="fuzzy_partial",
+        )
+        monkeypatch.setattr(
+            server,
+            "_find_matching_catalog_song",
+            lambda n, a: (
+                _cat_song("222", "Don't Let Me Down (feat. Daya)", "The Chainsmokers"),
+                None,
+                fuzzy,
+            ),
+        )
+        result = server.catalog(action="match", tracks="Dont Let Me Down")
+        assert "? fuzzy_partial" in result
+        assert "NOT an outright title match" in result
+        assert "The Chainsmokers" in result
+
+    def test_catalog_id_costs_no_request(self, monkeypatch):
+        monkeypatch.setattr(
+            server,
+            "_find_matching_catalog_song",
+            lambda n, a: pytest.fail("a catalog id is already exact; don't spend a request"),
+        )
+        result = server.catalog(action="match", tracks="1441134128")
+        assert "# id" in result
+        assert "1441134128" in result
+
+    def test_no_match_is_reported(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_find_matching_catalog_song", lambda n, a: (None, "Not found in catalog", None)
+        )
+        result = server.catalog(action="match", tracks="Zzzz Nonexistent")
+        assert "Matched 0/1" in result
+        assert "No match (1)" in result
+        assert "Add them with" not in result  # nothing to add
+
+    def test_unmatchable_id_type_is_reported(self, monkeypatch):
+        result = server.catalog(action="match", tracks="i.ABC123DEF")
+        assert "can't be name-matched" in result
+
+    def test_ids_are_emitted_ready_to_paste(self, monkeypatch):
+        songs = {
+            "Yesterday": _cat_song("111", "Yesterday", "The Beatles"),
+            "Help": _cat_song("222", "Help!", "The Beatles"),
+        }
+        monkeypatch.setattr(
+            server, "_find_matching_catalog_song", lambda n, a: (songs[n], None, None)
+        )
+        result = server.catalog(action="match", tracks="Yesterday, Help")
+        assert "playlist(action='add', playlist='<name>', track='111,222')" in result
+
+    def test_caps_at_25_and_points_at_isrc(self, monkeypatch):
+        """Uncapped, this action is a fresh way to recreate the #42 rate limit —
+        it costs one request per track."""
+        calls = []
+
+        def one_match(n, a):
+            calls.append(n)
+            return _cat_song(str(len(calls)), n, "X"), None, None
+
+        monkeypatch.setattr(server, "_find_matching_catalog_song", one_match)
+        tracks = ",".join(f"Track {i}" for i in range(40))
+        result = server.catalog(action="match", tracks=tracks)
+        assert len(calls) == 25
+        assert "15 more not attempted (cap 25)" in result
+        assert "resolve_isrc" in result
+
+    def test_limit_raises_the_cap_deliberately(self, monkeypatch):
+        calls = []
+
+        def one_match(n, a):
+            calls.append(n)
+            return _cat_song(str(len(calls)), n, "X"), None, None
+
+        monkeypatch.setattr(server, "_find_matching_catalog_song", one_match)
+        tracks = ",".join(f"Track {i}" for i in range(30))
+        server.catalog(action="match", tracks=tracks, max_tracks=30)
+        assert len(calls) == 30
+
+    def test_max_tracks_is_independent_of_the_search_limit(self, monkeypatch):
+        """`limit` means 'how many search results'; reusing it as the cap silently
+        capped this at 15."""
+        calls = []
+        monkeypatch.setattr(
+            server,
+            "_find_matching_catalog_song",
+            lambda n, a: (calls.append(n), (_cat_song("1", n, "X"), None, None))[1],
+        )
+        tracks = ",".join(f"Track {i}" for i in range(40))
+        server.catalog(action="match", tracks=tracks, limit=5)
+        assert len(calls) == 25
+
+    def test_explicit_small_cap_is_clamped_not_crashing(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_find_matching_catalog_song", lambda n, a: (_cat_song("1", n, "X"), None, None)
+        )
+        result = server.catalog(action="match", tracks="A,B,C", max_tracks=1)
+        assert "Matched 1/1" in result
+
+    def test_throttle_stops_and_marks_the_rest_unknown(self, monkeypatch):
+        """Never-asked is UNKNOWN, not 'not in the catalog' — the whole point of #42."""
+        calls = []
+
+        def throttled(n, a):
+            calls.append(n)
+            server.amp_api.note_status(429)
+            return None, server._THROTTLED_REASON, None
+
+        monkeypatch.setattr(server, "_find_matching_catalog_song", throttled)
+        result = server.catalog(action="match", tracks="A Song,B Song,C Song")
+        assert len(calls) == 1  # stopped immediately
+        assert "Never asked (3)" in result
+        assert "UNKNOWN, not absent" in result
+        assert "429" in result
+
+    def test_json_format(self, monkeypatch):
+        monkeypatch.setattr(
+            server,
+            "_find_matching_catalog_song",
+            lambda n, a: (_cat_song("111", "Yesterday", "The Beatles"), None, None),
+        )
+        payload = json.loads(server.catalog(action="match", tracks="Yesterday", format="json"))
+        assert payload["ids"] == ["111"]
+        assert payload["matched"][0]["confidence"] == "exact"
+        assert payload["requests"] == 1
+        assert payload["throttled"] is False
+        assert payload["unmatched"] == []
+
+    def test_artist_hint_is_passed_through(self, monkeypatch):
+        seen = {}
+
+        def capture(n, a):
+            seen["name"], seen["artist"] = n, a
+            return _cat_song("111", n, a), None, None
+
+        monkeypatch.setattr(server, "_find_matching_catalog_song", capture)
+        server.catalog(action="match", tracks="Dont Let Me Down", artist="The Beatles")
+        assert seen == {"name": "Dont Let Me Down", "artist": "The Beatles"}
+
+    def test_per_item_artist_from_json_wins(self, monkeypatch):
+        seen = []
+        monkeypatch.setattr(
+            server,
+            "_find_matching_catalog_song",
+            lambda n, a: (seen.append((n, a)), (_cat_song("1", n, a), None, None))[1],
+        )
+        server.catalog(action="match", tracks='[{"name":"Yesterday","artist":"The Beatles"}]')
+        assert seen == [("Yesterday", "The Beatles")]
+
+    def test_bad_json_entry_is_reported_not_matched(self, monkeypatch):
+        monkeypatch.setattr(
+            server,
+            "_find_matching_catalog_song",
+            lambda n, a: pytest.fail("a malformed entry must not cost a request"),
+        )
+        result = server.catalog(action="match", tracks='[{"artist":"The Beatles"}]')
+        assert "No match (1)" in result
+        assert "name" in result.lower()
+
+    def test_action_aliases(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_find_matching_catalog_song", lambda n, a: (_cat_song("1", n, "X"), None, None)
+        )
+        for action in ("match", "match_tracks", "resolve_tracks"):
+            assert "Matched 1/1" in server.catalog(action=action, tracks="Yesterday")
+
+    def test_bare_resolve_dispatches_on_which_param_is_set(self, monkeypatch):
+        """`resolve` is ambiguous by name, so it routes on the argument given."""
+        monkeypatch.setattr(
+            server, "_find_matching_catalog_song", lambda n, a: (_cat_song("1", n, "X"), None, None)
+        )
+        assert "Matched 1/1" in server.catalog(action="resolve", tracks="Yesterday")
+        monkeypatch.setattr(server, "_catalog_resolve_isrc", lambda i, f, fu: f"ISRC PATH: {i}")
+        assert "ISRC PATH" in server.catalog(action="resolve", isrcs="GBAYM9500001")
+
+    def test_unknown_action_lists_match(self, mock_config_dir):
+        assert "match" in server.catalog(action="bogus")
+
+    @responses.activate
+    def test_end_to_end_against_a_mocked_catalog(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """Exercise the real matcher, not a stubbed one."""
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(server, "get_storefront", lambda: "us")
+        responses.add(
+            responses.GET,
+            "https://api.music.apple.com/v1/catalog/us/search",
+            json={"results": {"songs": {"data": [_cat_song("111", "Yesterday", "The Beatles")]}}},
+            status=200,
+        )
+        result = server.catalog(action="match", tracks="Yesterday", artist="The Beatles")
+        assert "= exact" in result
+        assert "Yesterday - The Beatles" in result
+        assert "111" in result

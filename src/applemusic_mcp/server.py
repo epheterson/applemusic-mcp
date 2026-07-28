@@ -5607,6 +5607,148 @@ def _catalog_resolve_isrc(isrcs: str, format: str = "text", full: bool = False) 
     return "\n".join(lines)
 
 
+# ============ DRY-RUN TRACK MATCHING ============
+#
+# Adding by name resolves each title through the fuzzy matcher and writes
+# immediately, so a 150-track import is 150 unreviewed judgement calls — and the
+# wrong-edition case is common (one ISRC routinely maps to 2-4 catalog releases).
+# This runs the SAME matcher and reports what it would pick, without touching the
+# library, so the choice can be reviewed before it's committed.
+#
+# Unlike resolve_isrc this costs one request PER TRACK (Apple has no batch
+# title+artist endpoint), which is exactly the shape that hits the rate limit —
+# hence the cap and the nudge toward ISRCs.
+
+_MATCH_DEFAULT_CAP = 25
+
+
+def _catalog_match_tracks(
+    tracks: str, artist: str = "", max_tracks: int = 0, format: str = "text"
+) -> str:
+    """Dry-run: what would these names resolve to? Adds nothing.
+
+    Reports the proposed catalog song per input plus how confident the match is
+    — ``exact`` (title matched outright), ``partial``/``fuzzy`` (the matcher had
+    to work for it, so it's worth a look), or ``id`` (already a catalog id, no
+    lookup needed). The ids come back ready to paste into ``playlist(action="add")``.
+    """
+    if not tracks.strip():
+        return "Error: tracks required (comma-separated, newline-separated, or a JSON array)"
+
+    inputs = _resolve_track(tracks, artist)
+    # Deliberately NOT the tool's `limit` — that one means "how many search results",
+    # and quietly reusing it here capped this at 15 instead of 25.
+    cap = max(1, max_tracks or _MATCH_DEFAULT_CAP)
+    considered, deferred = inputs[:cap], inputs[cap:]
+
+    matched: list[dict] = []
+    unmatched: list[dict] = []
+    never_asked: list[str] = []
+    requests_made = 0
+    throttled = False
+
+    for i, r in enumerate(considered):
+        if r.error:
+            unmatched.append({"input": r.raw or r.value, "reason": r.error})
+            continue
+        if r.input_type == InputType.CATALOG_ID:
+            # Already an exact reference — spending a request to confirm it would
+            # be the same wasted probe the 429 work just removed elsewhere.
+            matched.append({"input": r.value, "id": r.value, "confidence": "id"})
+            continue
+        if r.input_type not in (InputType.NAME, InputType.JSON_OBJECT):
+            unmatched.append(
+                {"input": r.raw or r.value, "reason": f"{r.input_type.value} can't be name-matched"}
+            )
+            continue
+
+        song, err, fuzzy = _find_matching_catalog_song(r.value, r.artist or artist)
+        requests_made += 1
+        if song is None:
+            # A throttle surfaces here as the rate-limit reason, not "not found"
+            # (#42) — stop, and mark the remainder UNKNOWN rather than absent.
+            if amp_api.throttled_recently():
+                throttled = True
+                never_asked.extend(x.value or x.raw for x in considered[i:])
+                break
+            unmatched.append({"input": r.value, "reason": err or "Not found in catalog"})
+            continue
+
+        attrs = song.get("attributes", {})
+        matched.append(
+            {
+                "input": r.value,
+                "id": song.get("id", ""),
+                "name": attrs.get("name", ""),
+                "artist": attrs.get("artistName", ""),
+                "album": attrs.get("albumName", ""),
+                "year": (attrs.get("releaseDate", "") or "")[:4],
+                "confidence": fuzzy.match_type if fuzzy else "exact",
+            }
+        )
+
+    if format == "json":
+        return json.dumps(
+            {
+                "matched": matched,
+                "unmatched": unmatched,
+                "never_asked": never_asked,
+                "deferred": [x.value or x.raw for x in deferred],
+                "requests": requests_made,
+                "throttled": throttled,
+                "ids": [m["id"] for m in matched],
+            },
+            indent=2,
+        )
+
+    total = len(considered)
+    lines = [
+        f"=== Matched {len(matched)}/{total} — DRY RUN, nothing was added ===",
+    ]
+    # Anything the matcher had to work for gets flagged; only an outright title
+    # match (or an id the caller supplied) is trusted silently.
+    marks = {"exact": "=", "id": "#", "partial": "~", "fuzzy": "?", "fuzzy_partial": "?"}
+    for m in matched:
+        mark = marks.get(m["confidence"], "?")
+        if m["confidence"] == "id":
+            lines.append(f"{mark} {'id':<13} {m['id']} (already a catalog id)")
+            continue
+        year = f", {m['year']}" if m["year"] else ""
+        arrow = " -> " if m["confidence"] != "exact" else " == "
+        lines.append(
+            f"{mark} {m['confidence']:<13} {m['input']!r}{arrow}{m['name']} - {m['artist']} "
+            f"[{m['album']}{year}]  {m['id']}"
+        )
+    if unmatched:
+        lines.append(f"\n=== No match ({len(unmatched)}) ===")
+        lines.extend(f"x {u['input']!r}: {u['reason']}" for u in unmatched)
+    if never_asked:
+        lines.append(f"\n=== Never asked ({len(never_asked)}) — UNKNOWN, not absent ===")
+        lines.append(", ".join(never_asked))
+        lines.append(_SESSION_THROTTLED_MSG)
+    if deferred:
+        lines.append(
+            f"\n{len(deferred)} more not attempted (cap {cap}). This action costs one request "
+            "PER TRACK — for a large import use catalog(action='resolve_isrc') instead "
+            "(25 per request, exact), or raise `limit` deliberately."
+        )
+    if matched:
+        ids = ",".join(m["id"] for m in matched)
+        lines.append(
+            f"\nReviewed and happy? Add them with:\n"
+            f"  playlist(action='add', playlist='<name>', track='{ids}')"
+        )
+    inexact = [m for m in matched if m["confidence"] not in ("exact", "id")]
+    if inexact:
+        lines.append(
+            f"\n!! {len(inexact)} match(es) were NOT an outright title match — check these "
+            "before adding. A missing apostrophe or a title without an artist can land on a "
+            "different act entirely, and one title often maps to several catalog editions:"
+        )
+        lines.extend(f"   {m['input']!r} -> {m['name']} - {m['artist']}" for m in inexact)
+    return "\n".join(lines)
+
+
 def _catalog_album_tracks(
     album: str = "",
     artist: str = "",
@@ -6864,6 +7006,8 @@ def catalog(
     chart_type: str = "songs",
     term: str = "",
     isrcs: str = "",
+    tracks: str = "",
+    max_tracks: int = 0,
     limit: int = 15,
     offset: int = 0,
     format: str = "text",
@@ -6871,12 +7015,19 @@ def catalog(
     full: bool = False,
     clean_only: Optional[bool] = None,
 ) -> str:
-    """Apple Music catalog. Actions: search, resolve_isrc, album_tracks, album_details, song_details, artist_details, genres, suggestions.
+    """Apple Music catalog. Actions: search, resolve_isrc, match, album_tracks, album_details, song_details, artist_details, genres, suggestions.
 
-    Use `resolve_isrc` (not repeated `search`) to turn a batch of tracks into catalog
-    IDs when you have ISRCs — it matches exactly and resolves 25 per request instead
-    of one per track, which is what keeps a large import under Apple's rate limit.
-    Pass the resulting IDs straight to `playlist(action="add", track=...)`.
+    For turning a list of tracks into catalog IDs, prefer these over repeated `search`:
+
+    - `resolve_isrc` (isrcs=...) when you have ISRCs — exact, 25 per request. This is
+      the one that keeps a large import under Apple's rate limit.
+    - `match` (tracks=...) for titles/artists — a DRY RUN that reports what each name
+      would resolve to and how confident the match is, without adding anything. Costs
+      one request per track, so it's capped at 25 by default (raise with `max_tracks`,
+      not `limit`). Use it to review before a bulk add, especially since one title can
+      map to several catalog editions.
+
+    Both hand back IDs ready for `playlist(action="add", track=...)`.
     """
     action = action.lower().strip().replace("-", "_")
 
@@ -6904,8 +7055,10 @@ def catalog(
                 if why:
                     return f"Error: UI search failed — {why}"
             return "Error: API token required for catalog search. Set up API access or use UI search on macOS."
-    elif action in ("resolve_isrc", "resolve"):
+    elif action == "resolve_isrc" or (action == "resolve" and (isrcs or not tracks)):
         return _catalog_resolve_isrc(isrcs or query, format, full)
+    elif action in ("match", "match_tracks", "resolve_tracks", "resolve"):
+        return _catalog_match_tracks(tracks or query, artist, max_tracks, format)
     elif action == "album_tracks":
         return _catalog_album_tracks(album, artist, limit, offset, format, export, full)
     elif action == "album_details":
@@ -6927,7 +7080,7 @@ def catalog(
             return "Error: term required for suggestions"
         return _catalog_suggestions(term)
     else:
-        return f"Unknown action: {action}. Use: search, resolve_isrc, album_tracks, album_details, song_details, artist_details, genres, suggestions"
+        return f"Unknown action: {action}. Use: search, resolve_isrc, match, album_tracks, album_details, song_details, artist_details, genres, suggestions"
 
 
 # ============ SYSTEM MANAGEMENT ============
