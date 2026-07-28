@@ -3023,8 +3023,10 @@ class TestCatalogResolveIsrc:
         assert added == [catalog_id]
 
     @responses.activate
-    def test_unknown_action_lists_resolve_isrc(self, mock_config_dir):
-        assert "resolve_isrc" in server.catalog(action="bogus")
+    def test_unknown_action_lists_the_canonical_name(self, mock_config_dir):
+        """0.18.0 collapsed resolve_isrc + match into `resolve`; the advertised
+        list follows the canonical name, not the aliases."""
+        assert "resolve," in server.catalog(action="bogus")
 
 
 # ---------------------------------------------------------------------------
@@ -3245,8 +3247,9 @@ class TestCatalogMatchTracks:
         monkeypatch.setattr(server, "_catalog_resolve_isrc", lambda i, f, fu: f"ISRC PATH: {i}")
         assert "ISRC PATH" in server.catalog(action="resolve", isrcs="GBAYM9500001")
 
-    def test_unknown_action_lists_match(self, mock_config_dir):
-        assert "match" in server.catalog(action="bogus")
+    def test_unknown_action_no_longer_advertises_match(self, mock_config_dir):
+        result = server.catalog(action="bogus")
+        assert "resolve," in result and "match" not in result
 
     @responses.activate
     def test_end_to_end_against_a_mocked_catalog(

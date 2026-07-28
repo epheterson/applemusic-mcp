@@ -5758,3 +5758,201 @@ class TestPlaylistAddThrottled:
         monkeypatch.setattr(server.amp_api, "search_catalog_songs", lambda q, n: [])
         result = server._playlist_add_api("p.abc123", "Zzzz Nonexistent", "", auto_add=True)
         assert "not found in catalog" in result
+
+
+class TestPlaylistAddDryRun:
+    """dry_run previews resolution + duplicates and writes NOTHING. The guarantee
+    that matters most is the second half."""
+
+    def _stub(self, monkeypatch, existing=None, song=None, fuzzy=None):
+        monkeypatch.setattr(
+            server,
+            "_resolve_playlist",
+            lambda p: server.ResolvedPlaylist(
+                raw_input=p, api_id="p.1", applescript_name="My Playlist"
+            ),
+        )
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: existing or [])
+        if song is not None:
+            monkeypatch.setattr(
+                server, "_find_matching_catalog_song", lambda n, a: (song, None, fuzzy)
+            )
+
+    def test_writes_nothing(self, monkeypatch):
+        """The one guarantee dry_run makes. Any write here is a total failure."""
+        for name in ("add_tracks", "create_playlist", "remove_track"):
+            monkeypatch.setattr(
+                server.amp_api, name, lambda *a, **k: pytest.fail(f"dry_run called {name}")
+            )
+        monkeypatch.setattr(
+            server.asc,
+            "add_track_to_playlist",
+            lambda *a, **k: pytest.fail("dry_run called AppleScript add"),
+        )
+        self._stub(
+            monkeypatch,
+            song={"id": "111", "attributes": {"name": "Yesterday", "artistName": "The Beatles"}},
+        )
+        result = server.playlist(
+            action="add", playlist="My Playlist", track="Yesterday", dry_run=True
+        )
+        assert "DRY RUN" in result
+        assert "nothing was added" in result
+
+    def test_reports_duplicates_against_the_real_playlist(self, monkeypatch):
+        self._stub(
+            monkeypatch,
+            existing=[{"catalog_id": "111", "name": "Yesterday", "artist": "The Beatles"}],
+            song={"id": "111", "attributes": {"name": "Yesterday", "artistName": "The Beatles"}},
+        )
+        result = server.playlist(
+            action="add", playlist="My Playlist", track="Yesterday", dry_run=True
+        )
+        assert "Would skip (1)" in result
+        assert "already in" in result
+        assert "Would add" not in result
+
+    def test_flags_inexact_matches(self, monkeypatch):
+        fuzzy = server.FuzzyMatchResult(
+            matched_name="Don't Let Me Down (feat. Daya)",
+            query="Dont Let Me Down",
+            normalized_query="dont let me down",
+            normalized_match="dont let me down",
+            transformations=["apostrophe"],
+            match_type="fuzzy_partial",
+        )
+        self._stub(
+            monkeypatch,
+            song={
+                "id": "222",
+                "attributes": {
+                    "name": "Don't Let Me Down (feat. Daya)",
+                    "artistName": "The Chainsmokers",
+                },
+            },
+            fuzzy=fuzzy,
+        )
+        result = server.playlist(
+            action="add", playlist="My Playlist", track="Dont Let Me Down", dry_run=True
+        )
+        assert "didn't match the title outright" in result
+        assert "The Chainsmokers" in result
+
+    def test_says_so_when_duplicates_are_unknowable(self, monkeypatch):
+        """No api_id means no diff — claiming 'no duplicates' would be a lie."""
+        monkeypatch.setattr(
+            server,
+            "_resolve_playlist",
+            lambda p: server.ResolvedPlaylist(
+                raw_input=p, api_id=None, applescript_name="My Playlist"
+            ),
+        )
+        monkeypatch.setattr(
+            server,
+            "_find_matching_catalog_song",
+            lambda n, a: ({"id": "1", "attributes": {"name": "X", "artistName": "Y"}}, None, None),
+        )
+        result = server.playlist(
+            action="add", playlist="My Playlist", track="Anything", dry_run=True
+        )
+        assert "duplicates aren't accounted for" in result
+
+    def test_does_not_claim_to_predict_the_write(self, monkeypatch):
+        """On macOS the attach can't be known without doing the library add first."""
+        self._stub(monkeypatch, song={"id": "1", "attributes": {"name": "X", "artistName": "Y"}})
+        result = server.playlist(action="add", playlist="My Playlist", track="X", dry_run=True)
+        assert "does not predict whether the write itself succeeds" in result
+
+    def test_unmatched_tracks_land_in_would_fail(self, monkeypatch):
+        self._stub(monkeypatch)
+        monkeypatch.setattr(
+            server, "_find_matching_catalog_song", lambda n, a: (None, "Not found in catalog", None)
+        )
+        result = server.playlist(action="add", playlist="My Playlist", track="Zzz", dry_run=True)
+        assert "Would fail (1)" in result
+
+    def test_throttle_stops_the_preview(self, monkeypatch):
+        self._stub(monkeypatch)
+        calls = []
+
+        def throttled(n, a):
+            calls.append(n)
+            server.amp_api.note_status(429, server.amp_api.API)
+            return None, server._THROTTLED_REASON, None
+
+        monkeypatch.setattr(server, "_find_matching_catalog_song", throttled)
+        result = server.playlist(action="add", playlist="P", track="A,B,C", dry_run=True)
+        assert len(calls) == 1
+        assert "429" in result
+
+    def test_requires_a_track(self, monkeypatch):
+        assert "dry_run needs" in server.playlist(
+            action="add", playlist="My Playlist", album="Abbey Road", dry_run=True
+        )
+
+    def test_requires_a_playlist(self):
+        assert "playlist parameter required" in server.playlist(
+            action="add", track="Yesterday", dry_run=True
+        )
+
+    def test_catalog_ids_pass_through_and_dedup(self, monkeypatch):
+        self._stub(monkeypatch, existing=[{"catalog_id": "1441164805", "name": "Yesterday"}])
+        result = server.playlist(
+            action="add", playlist="My Playlist", track="1441164805,1234567890", dry_run=True
+        )
+        assert "already in" in result
+        assert "+ track 1234567890" in result
+
+    def test_unmatchable_id_type_lands_in_would_fail(self, monkeypatch):
+        self._stub(monkeypatch)
+        result = server.playlist(
+            action="add", playlist="My Playlist", track="i.ABC123DEF", dry_run=True
+        )
+        assert "can't be name-matched" in result
+
+    def test_bad_input_lands_in_would_fail(self, monkeypatch):
+        self._stub(monkeypatch)
+        result = server.playlist(
+            action="add", playlist="My Playlist", track='[{"artist":"X"}]', dry_run=True
+        )
+        assert "Would fail (1)" in result
+
+    def test_auto_add_defaults_from_preferences(self, monkeypatch):
+        self._stub(monkeypatch, song={"id": "1", "attributes": {"name": "X", "artistName": "Y"}})
+        monkeypatch.setattr(server, "get_user_preferences", lambda: {"auto_add": True})
+        result = server.playlist(action="add", playlist="P", track="X", dry_run=True)
+        assert "DRY RUN" in result
+
+
+class TestCatalogResolveNaming:
+    """`resolve` is the one documented action; the 0.17.0 names still work."""
+
+    def test_resolve_routes_on_the_parameter(self, monkeypatch):
+        monkeypatch.setattr(server, "_catalog_resolve_isrc", lambda i, f, fu: f"ISRC:{i}")
+        monkeypatch.setattr(server, "_catalog_match_tracks", lambda t, a, m, f: f"TRACKS:{t}")
+        assert server.catalog(action="resolve", isrcs="GBAYM9500001") == "ISRC:GBAYM9500001"
+        assert server.catalog(action="resolve", tracks="Yesterday") == "TRACKS:Yesterday"
+
+    def test_old_names_still_work(self, monkeypatch):
+        monkeypatch.setattr(server, "_catalog_resolve_isrc", lambda i, f, fu: f"ISRC:{i}")
+        monkeypatch.setattr(server, "_catalog_match_tracks", lambda t, a, m, f: f"TRACKS:{t}")
+        assert server.catalog(action="resolve_isrc", isrcs="GBAYM9500001") == "ISRC:GBAYM9500001"
+        assert server.catalog(action="match", tracks="Yesterday") == "TRACKS:Yesterday"
+        assert server.catalog(action="match_tracks", tracks="Yesterday") == "TRACKS:Yesterday"
+        assert server.catalog(action="resolve_tracks", tracks="Yesterday") == "TRACKS:Yesterday"
+
+    def test_old_names_still_accept_query(self, monkeypatch):
+        monkeypatch.setattr(server, "_catalog_resolve_isrc", lambda i, f, fu: f"ISRC:{i}")
+        monkeypatch.setattr(server, "_catalog_match_tracks", lambda t, a, m, f: f"TRACKS:{t}")
+        assert server.catalog(action="resolve_isrc", query="GBAYM9500001") == "ISRC:GBAYM9500001"
+        assert server.catalog(action="match", query="Yesterday") == "TRACKS:Yesterday"
+
+    def test_bare_resolve_with_nothing_gives_the_isrc_guidance(self):
+        result = server.catalog(action="resolve")
+        assert "isrcs required" in result
+
+    def test_action_list_advertises_resolve_not_the_old_names(self):
+        result = server.catalog(action="bogus")
+        assert "resolve," in result
+        assert "resolve_isrc" not in result
+        assert "match," not in result

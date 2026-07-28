@@ -1,6 +1,6 @@
 ---
 name: apple-music
-version: 0.17.0
+version: 0.18.0
 description: Apple Music integration — AppleScript (local Music.app) and the Apple Music API / web player (cross-platform library, playlists, playback, and queue)
 ---
 
@@ -593,7 +593,7 @@ Consequences that bite:
 Where the caller has ISRCs (Spotify / Rekordbox / Plex exports all carry them),
 `GET /v1/catalog/{storefront}/songs?filter[isrc]=ISRC1,ISRC2,…` resolves **25 per request**
 and matches **exactly** — ~25x fewer requests than a search per track, and no fuzzy-match
-errors. Via the tool: `catalog(action="resolve_isrc", isrcs="…", format="json")`.
+errors. Via the tool: `catalog(action="resolve", isrcs="…", format="json")`.
 
 Two things to get right, because `filter[isrc]` is a *filter*, not a search:
 
@@ -611,8 +611,10 @@ match count rather than silently taking the first.
 silent: `Dont Let Me Down` with no artist resolves to The Chainsmokers, not The Beatles.
 Resolve the whole list first, show the proposed matches with a confidence marker (exact vs.
 fuzzy), and only write once they've been reviewed — never interleave "search, then add"
-per track. Via the tool: `catalog(action="match", tracks=..., format="json")`, which adds
-nothing and returns `ids` ready for `playlist(action="add")`. Note this costs one request
+per track. Via the tool: `catalog(action="resolve", tracks=..., format="json")`, which adds
+nothing and returns `ids` ready for `playlist(action="add")` — or
+`playlist(action="add", ..., dry_run=True)` to preview against a specific playlist,
+which also diffs against what's already in it. Note this costs one request
 per track (Apple has no batch title+artist endpoint), so it is *not* a rate-limit fix —
 use ISRCs for that.
 

@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.0] - 2026-07-27
+
+### Changed
+
+- **`catalog(action="resolve")` replaces `resolve_isrc` and `match`.** They were one
+  operation wearing two names — "turn identifiers I already have into catalog IDs,
+  writing nothing" — and one of those names made you learn an acronym to find the
+  feature. The action is now the verb and the input type lives in the parameter:
+  `resolve(isrcs=…)` for exact batched lookups, `resolve(tracks=…)` for fuzzy
+  title matching with confidence reporting. `resolve_isrc`, `match`, `match_tracks`,
+  and `resolve_tracks` keep working as unadvertised aliases; nothing breaks.
+
+  (`resolve` rather than `lookup` deliberately: "search" and "lookup" are near-synonyms,
+  and picking `search` for a bulk import is the failure mode 0.17.0 exists to prevent.)
+
+### Added
+
+- **`playlist(action="add", …, dry_run=True)` — preview an add before it writes.**
+  Runs the same resolution the real add would, diffs against what's already in the
+  target playlist, and reports *would add* / *would skip* / *would fail* with a
+  confidence marker on every match. Nothing is written.
+
+  Scoped honestly: it previews **matching and duplicates**, and says outright that it
+  does not predict whether the write succeeds. On macOS the native path library-adds a
+  catalog track and only then attaches it, so the attach isn't knowable without
+  performing the library add first — predicting it would be a guess dressed as a
+  preview. One implementation covers both rails, since resolution is rail-independent.
+
 ## [0.17.0] - 2026-07-27
 
 ### Added
