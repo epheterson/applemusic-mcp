@@ -734,21 +734,42 @@ class TestToolAnnotations:
         tools = asyncio.run(server.mcp.list_tools())
         return {t.name: t.annotations for t in tools}
 
+    @staticmethod
+    def _hint(ann, camel: str):
+        """Read an annotation hint under either mcp major.
+
+        mcp 1.x exposes `readOnlyHint`; 2.x renamed the field to `read_only_hint`.
+        Both accept the camelCase constructor kwarg and both emit camelCase on the
+        wire, so this is purely about reading the Python object."""
+        snake = "".join(f"_{c.lower()}" if c.isupper() else c for c in camel)
+        for attr in (camel, snake):
+            if hasattr(ann, attr):
+                return getattr(ann, attr)
+        raise AttributeError(f"no {camel}/{snake} on {type(ann).__name__}")
+
     def test_reads_are_readonly(self):
         ann = self._annotations()
         for name in ("catalog", "discover"):
-            assert ann[name].readOnlyHint is True
-            assert ann[name].destructiveHint is False
+            assert self._hint(ann[name], "readOnlyHint") is True
+            assert self._hint(ann[name], "destructiveHint") is False
 
     def test_destructive_tools_flagged(self):
         ann = self._annotations()
         for name in ("playlist", "library", "config"):
-            assert ann[name].destructiveHint is True
-            assert ann[name].readOnlyHint is False
+            assert self._hint(ann[name], "destructiveHint") is True
+            assert self._hint(ann[name], "readOnlyHint") is False
 
     def test_all_tools_hit_open_world(self):
         ann = self._annotations()
-        assert all(a.openWorldHint is True for a in ann.values())
+        assert all(self._hint(a, "openWorldHint") is True for a in ann.values())
+
+    def test_annotations_reach_the_wire_as_camelcase(self):
+        """The field rename is internal to mcp; clients must see no difference."""
+        ann = self._annotations()["playlist"]
+        wire = ann.model_dump(by_alias=True, exclude_none=True)
+        assert wire["readOnlyHint"] is False
+        assert wire["destructiveHint"] is True
+        assert wire["title"] == "Playlists & folders"
 
 
 class TestFormatDuration:

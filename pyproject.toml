@@ -30,11 +30,11 @@ classifiers = [
 ]
 
 dependencies = [
-    # Upper bound is deliberate: mcp 2.0.0 (2026-07-28) moved `mcp.server.fastmcp`,
-    # so an unbounded requirement resolved to 2.x and every fresh install died on
-    # import. Supporting 2.x is a real migration, not a constraint change — until
-    # then, pin. CI installs from uv.lock and therefore never saw this.
-    "mcp>=1.0.0,<2",
+    # Both majors are supported (see the import alias in server.py). The upper
+    # bound stays: mcp 2.0.0 moved `mcp.server.fastmcp` with no deprecation, and an
+    # unbounded requirement is what let that break every fresh install. Raise the
+    # ceiling deliberately after testing, never by leaving it open.
+    "mcp>=1.0.0,<3",
     "pyjwt[crypto]>=2.8.0",
     "requests>=2.31.0",
     "cryptography>=41.0.0",

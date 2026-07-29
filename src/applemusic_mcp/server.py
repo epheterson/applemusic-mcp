@@ -18,7 +18,16 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import requests
-from mcp.server.fastmcp import FastMCP
+
+# mcp 2.0 (2026-07-28) renamed the module and the class; everything we use of it
+# — the constructor's positional name, `.tool(annotations=...)`, `.resource(uri)`,
+# and `.run()` — is signature-compatible, so one alias covers both majors. Verified
+# with a real JSON-RPC handshake against each: identical tool list, identical
+# annotation wire format.
+try:  # mcp 1.x
+    from mcp.server.fastmcp import FastMCP
+except ModuleNotFoundError:  # mcp 2.x
+    from mcp.server.mcpserver import MCPServer as FastMCP
 from mcp.types import ToolAnnotations
 
 from .auth import (
@@ -38,6 +47,7 @@ from . import applescript as asc
 from . import amp_api
 from .track_cache import get_track_cache, get_cache_dir
 from . import audit_log
+from . import __version__ as _pkg_version
 from . import paths
 
 # Check if AppleScript is available (macOS only)
@@ -848,7 +858,14 @@ def get_storefront() -> str:
     return prefs.get("storefront", DEFAULT_STOREFRONT)
 
 
-mcp = FastMCP("Apple Music")
+# `serverInfo.version` should be OUR version. mcp 1.x has no `version` parameter
+# and reports the mcp library's own version there instead (a client would show
+# "Apple Music 1.25.0"); 2.x accepts one but leaves it blank if unset. Pass it
+# where it is supported.
+try:
+    mcp = FastMCP("Apple Music", version=_pkg_version)
+except TypeError:  # mcp 1.x
+    mcp = FastMCP("Apple Music")
 
 
 # ============ MCP RESOURCES ============

@@ -75,3 +75,30 @@ jobs:
       - name: Show what was resolved
         # Printed so a future breakage names the culprit version in the log.
         run: /tmp/fresh/bin/pip list
+
+  mcp-2x:
+    name: pytest against mcp 2.x
+    runs-on: ubuntu-latest
+    steps:
+      # The pytest job resolves mcp from uv.lock, which holds a 1.x release. Both
+      # majors are supported (server.py aliases the renamed module), so one of them
+      # would otherwise go untested and rot silently — which is exactly how the 2.0
+      # rename reached users in the first place.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install with mcp 2.x forced
+        run: |
+          python -m venv /tmp/mcp2
+          /tmp/mcp2/bin/pip install --upgrade pip
+          /tmp/mcp2/bin/pip install . pytest pytest-mock responses
+          /tmp/mcp2/bin/pip install "mcp>=2,<3"
+          /tmp/mcp2/bin/pip list | grep -i "^mcp "
+
+      - name: Run the suite
+        # Browser tests need Playwright, which is a darwin-optional extra and not
+        # installed here; they are covered by the main pytest matrix.
+        run: /tmp/mcp2/bin/python -m pytest tests/ -q --tb=short --ignore=tests/test_browser_cov.py
