@@ -1704,7 +1704,7 @@ def _browser_play(
     if track:
         resolved = _resolve_catalog_track_itunes(track, artist)
         if not resolved:
-            return f"Error: '{track}' not found in catalog"
+            return _catalog_miss_reason(f"Error: '{track}' not found in catalog")
         ok, msg = wp.play_url(resolved["url"], shuffle)
         return msg if ok else f"Error: {msg}"
     return "Error: provide track, playlist, album, or url"
@@ -8293,14 +8293,21 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
 
 def _queue_resolve_catalog_id(track: str, artist: str = "") -> Optional[str]:
     """Resolve a track param to a catalog song id: a bare catalog id passes
-    through; a name is resolved via catalog search."""
+    through; a name is resolved via catalog search.
+
+    Fetches several candidates and requires the title to correspond, rather than
+    trusting the search's first row — the same guard the playlist add needed after
+    `search_library_songs("Yesterday", limit=1)` turned out to return "Renaissance
+    Fair" by The Byrds. Queueing the wrong song is recoverable where adding it to a
+    playlist is not, but it is the same silent-wrong-data shape either way."""
     t = (track or "").strip()
     if not t:
         return None
     if t.isdigit():
         return t
-    songs = amp_api.search_catalog_songs(f"{t} {artist}".strip(), 1)
-    return songs[0]["id"] if songs else None
+    songs = amp_api.search_catalog_songs(f"{t} {artist}".strip(), 5)
+    pick, _conf = _pick_resolved_song(songs, t, artist)
+    return pick["id"] if pick else None
 
 
 def _format_queue(data: dict, limit: Optional[int] = None) -> str:
@@ -8400,7 +8407,9 @@ def queue(
             cid = _queue_resolve_catalog_id(t, artist)
             (ids.append(cid) if cid else misses.append(t))
         if not ids:
-            return f"Error: none of those resolved to catalog tracks: {', '.join(misses)}"
+            return _catalog_miss_reason(
+                f"Error: none of those resolved to catalog tracks: {', '.join(misses)}"
+            )
         ok, msg = wp.queue_set(ids)
         if not ok:
             return f"Error: {msg}"
@@ -8411,7 +8420,7 @@ def queue(
     if action in ("play_next", "play_last"):
         cid = _queue_resolve_catalog_id(track, artist)
         if not cid:
-            return f"Error: '{track}' not found in catalog"
+            return _catalog_miss_reason(f"Error: '{track}' not found in catalog")
         ok, msg = wp.queue_play_next(cid) if action == "play_next" else wp.queue_play_later(cid)
         if not ok:
             return f"Error: {msg}"
@@ -8432,7 +8441,7 @@ def queue(
         if track:
             cid = _queue_resolve_catalog_id(track, artist)
             if not cid:
-                return f"Error: '{track}' not found to jump to"
+                return _catalog_miss_reason(f"Error: '{track}' not found to jump to")
             ok, msg = wp.queue_jump_id(cid)
         elif index >= 0:
             ok, msg = wp.queue_jump(index)

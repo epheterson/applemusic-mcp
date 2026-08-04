@@ -26,6 +26,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Queueing a track by name could queue an unrelated song.** `queue(action=
+  "play_next"/"play_last"/"jump"/"set")` resolved a name by taking the first row of
+  a catalog search without checking it corresponded — the same shape as the playlist
+  bug fixed in 0.18.0, where `"Yesterday"` matched "Renaissance Fair" by The Byrds.
+  Resolution now requires the title to correspond and honours an artist hint, and
+  resolves to nothing rather than queueing something the user did not ask for. A
+  throttled search in this path also reported "not found in catalog"; it now names
+  the rate limit.
 - **`serverInfo.version` reported the wrong version.** On `mcp` 1.x it reported the
   mcp library's version (a client would show "Apple Music 1.25.0"); on 2.x it was
   blank. It now reports this package's version where the runtime supports it. `mcp`

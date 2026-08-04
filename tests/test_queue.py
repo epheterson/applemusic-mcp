@@ -63,7 +63,9 @@ def test_resolve_catalog_id_passthrough_for_digits(monkeypatch):
 
 def test_resolve_catalog_id_searches_for_name(monkeypatch):
     monkeypatch.setattr(
-        server.amp_api, "search_catalog_songs", lambda q, n=1: [{"id": "999", "name": "x"}]
+        server.amp_api,
+        "search_catalog_songs",
+        lambda q, n=1: [{"id": "999", "name": "Some Song", "artist": "Some Artist"}],
     )
     assert server._queue_resolve_catalog_id("Some Song", "Some Artist") == "999"
 
@@ -82,7 +84,11 @@ def test_queue_list_routes_to_browser(monkeypatch):
 
 
 def test_queue_play_next_resolves_and_calls(monkeypatch):
-    monkeypatch.setattr(server.amp_api, "search_catalog_songs", lambda q, n=1: [{"id": "555"}])
+    monkeypatch.setattr(
+        server.amp_api,
+        "search_catalog_songs",
+        lambda q, n=1: [{"id": "555", "name": "Strobe", "artist": "deadmau5"}],
+    )
     spy = MagicMock(return_value=(True, "Queued to Up Next (2 in queue)"))
     monkeypatch.setattr(browser, "queue_play_next", spy)
     out = server.queue(action="play_next", track="Strobe", artist="deadmau5", engine="chrome")
@@ -91,7 +97,11 @@ def test_queue_play_next_resolves_and_calls(monkeypatch):
 
 
 def test_queue_play_last_uses_play_later(monkeypatch):
-    monkeypatch.setattr(server.amp_api, "search_catalog_songs", lambda q, n=1: [{"id": "777"}])
+    monkeypatch.setattr(
+        server.amp_api,
+        "search_catalog_songs",
+        lambda q, n=1: [{"id": "777", "name": "Ghosts", "artist": "A"}],
+    )
     spy = MagicMock(return_value=(True, "Queued to end of Up Next (3 in queue)"))
     monkeypatch.setattr(browser, "queue_play_later", spy)
     out = server.queue(action="play_last", track="Ghosts", engine="chrome")
@@ -228,3 +238,55 @@ def test_queue_surfaces_browser_error(monkeypatch):
     )
     out = server.queue(action="list", engine="chrome")
     assert out.startswith("Error:") and "signin" in out
+
+
+# --- resolution: don't queue a song the user didn't ask for -----------------
+
+_LIB = [
+    {"id": "1", "name": "Renaissance Fair (Single Version)", "artist": "The Byrds"},
+    {"id": "2", "name": "So You Want To Be a Rock 'n' Roll Star", "artist": "The Byrds"},
+    {"id": "3", "name": "Yesterday", "artist": "The Beatles"},
+    {"id": "4", "name": "Yesterday", "artist": "Atmosphere"},
+]
+
+
+def test_queue_skips_an_unrelated_first_hit(monkeypatch):
+    """Apple's search returns loosely-related rows first; taking [0] blindly is how
+    the playlist add ended up queueing The Byrds for "Yesterday"."""
+    monkeypatch.setattr(server.amp_api, "search_catalog_songs", lambda q, n: _LIB)
+    assert server._queue_resolve_catalog_id("Yesterday") == "3"
+
+
+def test_queue_artist_hint_disambiguates(monkeypatch):
+    monkeypatch.setattr(server.amp_api, "search_catalog_songs", lambda q, n: _LIB)
+    assert server._queue_resolve_catalog_id("Yesterday", "Atmosphere") == "4"
+
+
+def test_queue_no_defensible_match_resolves_to_nothing(monkeypatch):
+    """Callers turn None into "not found", which beats queueing the wrong track."""
+    monkeypatch.setattr(server.amp_api, "search_catalog_songs", lambda q, n: _LIB)
+    assert server._queue_resolve_catalog_id("Zzz Nonexistent") is None
+
+
+def test_queue_bare_catalog_id_costs_no_request(monkeypatch):
+    monkeypatch.setattr(
+        server.amp_api,
+        "search_catalog_songs",
+        lambda q, n: pytest.fail("a bare catalog id must not trigger a search"),
+    )
+    assert server._queue_resolve_catalog_id("1441164805") == "1441164805"
+
+
+def test_queue_throttle_is_not_reported_as_not_found(monkeypatch):
+    """A 429 empties the search, so "not found in catalog" was the #42 bug
+    surviving in the queue path."""
+
+    def throttled(q, n):
+        server.amp_api.note_status(429, server.amp_api.API)
+        return []
+
+    monkeypatch.setattr(server.amp_api, "search_catalog_songs", throttled)
+    monkeypatch.setattr(server, "_engine", lambda **k: "chrome")
+    result = server.queue(action="play_next", track="Anything")
+    assert "429" in result
+    assert "not found in catalog" not in result
