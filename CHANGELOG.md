@@ -7,12 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.19.0] - 2026-08-04
 
-Two resolution fixes, plus compatibility with `mcp` 2.x.
-
-The minor version reflects the dependency constraint widening from `<2` to `<3`,
-which changes what gets installed. It does not indicate new functionality — the
-tool surface is unchanged.
-
 ### Fixed
 
 - **Queueing a track by name could queue an unrelated song.** `queue(action=
@@ -21,29 +15,18 @@ tool surface is unchanged.
   returns loosely-related rows first — `"Yesterday"` matched "Renaissance Fair (Single
   Version)" by The Byrds. Resolution now requires the title to correspond and honours
   an artist hint, and resolves to nothing rather than queueing a track that was not
-  asked for. This is the same fix applied to playlist adds in 0.18.0.
+  asked for.
 - **A rate-limited queue lookup reported "not found in catalog".** A 429 empties the
-  search results, so the throttle read as a missing track. It now names the rate
-  limit.
-- **`serverInfo.version` reported the wrong version.** On `mcp` 1.x it reported the
-  mcp library's own version, so a client displayed "Apple Music 1.25.0"; on 2.x it was
-  blank. It now reports this package's version where the runtime accepts one. `mcp`
-  1.x has no `version` parameter, so that path is unchanged.
+  search results, so the throttle read as a missing track. It now names the rate limit.
+- **`serverInfo.version` reported the wrong version.** On `mcp` 1.x it reported the mcp
+  library's own version, so a client displayed "Apple Music 1.25.0"; on 2.x it was
+  blank. It now reports this package's version where the runtime accepts one.
 
 ### Changed
 
-- **`mcp` 2.x is now supported alongside 1.x**, and the requirement is `mcp>=1.0.0,<3`.
-  `mcp` 2.0 renamed `mcp.server.fastmcp` to `mcp.server.mcpserver` and `FastMCP` to
-  `MCPServer`. Everything this server uses of the library is signature-compatible, so
-  a single import alias covers both majors.
-
-  **Nothing about the MCP interface changes.** The tool list is identical and
-  `ToolAnnotations` still emits camelCase on the wire under both majors — verified by
-  a JSON-RPC handshake against each. No client or configuration change is needed.
-
-  The upper bound is deliberate. `mcp` 2.0 moved a module with no deprecation path,
-  and an unbounded requirement is what broke every fresh install in 0.18.2. CI runs
-  the suite against both majors so neither rots unnoticed.
+- **`mcp` 2.x is now supported alongside 1.x.** The requirement is `mcp>=1.0.0,<3`.
+  The MCP interface is unchanged: same tools, same annotations on the wire, no client
+  or configuration change needed.
 
 ## [0.18.2] - 2026-07-28
 
