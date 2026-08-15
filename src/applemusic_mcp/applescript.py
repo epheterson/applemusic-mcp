@@ -696,19 +696,24 @@ def _get_playlist_tracks_bulk(safe_name: str, limit: int) -> tuple[bool, str]:
         set trackCount to count of allTracks
         if trackCount is 0 then return ""
 
+        -- Bound the slice to `limit` BEFORE reading any properties, so cost
+        -- is O(limit) instead of O(playlist size) -- large playlists must
+        -- not pay for tracks beyond what was requested.
+        set maxTracks to {limit}
+        if trackCount < maxTracks then set maxTracks to trackCount
+        set sliceTracks to items 1 thru maxTracks of allTracks
+
         -- Bulk fetch all properties at once (much faster than per-track)
-        set allNames to name of allTracks
-        set allArtists to artist of allTracks
-        set allAlbums to album of allTracks
-        set allDurations to duration of allTracks
-        set allGenres to genre of allTracks
-        set allYears to year of allTracks
-        set allIds to persistent ID of allTracks
+        set allNames to name of sliceTracks
+        set allArtists to artist of sliceTracks
+        set allAlbums to album of sliceTracks
+        set allDurations to duration of sliceTracks
+        set allGenres to genre of sliceTracks
+        set allYears to year of sliceTracks
+        set allIds to persistent ID of sliceTracks
 
         -- Combine into output
         set output to ""
-        set maxTracks to {limit}
-        if trackCount < maxTracks then set maxTracks to trackCount
         repeat with i from 1 to maxTracks
             set tName to item i of allNames
             set tArtist to item i of allArtists

@@ -309,6 +309,37 @@ def test_get_playlist_tracks_bulk_and_slow(monkeypatch):
     assert ok and tracks[0]["duration"] == "2:05"
 
 
+def test_get_playlist_tracks_bulk_limits_property_fetch_to_slice(monkeypatch):
+    """Regression test: the bulk fast-path must bound its property reads to
+    (at most) `limit` tracks, not pull properties for the whole playlist.
+
+    Before the fix, `_get_playlist_tracks_bulk` unconditionally read every
+    property (name/artist/album/duration/genre/year/persistent ID) for
+    *all* tracks in the playlist via `<property> of allTracks`, and only
+    applied `limit` afterward when formatting the output string. That makes
+    the AppleScript call cost O(playlist size) instead of O(limit), which is
+    what caused timeouts on multi-thousand-track playlists even when only a
+    handful of tracks were requested.
+    """
+    recorder = Recorder(True, "")
+    setrun(monkeypatch, recorder)
+
+    asc._get_playlist_tracks_bulk("PL", 5)
+
+    assert len(recorder.calls) == 1
+    script = recorder.calls[0]
+
+    # None of the bulk property reads should be taken against the full,
+    # unsliced `allTracks` list -- they must be bounded to (at most) `limit`
+    # tracks first.
+    for prop in ("name", "artist", "album", "duration", "genre", "year", "persistent ID"):
+        assert f"{prop} of allTracks" not in script, (
+            f"bulk fetch reads '{prop}' from the full playlist track list "
+            "instead of a slice bounded by `limit` -- this is O(playlist "
+            "size) instead of O(limit) and will time out on large playlists"
+        )
+
+
 def test_create_playlist(monkeypatch):
     r = setrun(monkeypatch, Recorder(True, "PID"))
     assert asc.create_playlist("X") == (True, "PID")
