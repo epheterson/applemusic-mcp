@@ -87,6 +87,15 @@ def const(ok, text=""):
     return lambda *args: (ok, text)
 
 
+def code_only(script):
+    """Strip `--` comment lines so assertions test generated code, not prose.
+
+    Without this, a comment explaining which idiom to avoid trips any test
+    asserting that idiom is absent.
+    """
+    return "\n".join(ln for ln in script.splitlines() if not ln.strip().startswith("--"))
+
+
 def proc(returncode=0, stdout="", stderr=""):
     return types.SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
 
@@ -299,14 +308,87 @@ def test_get_playlist_tracks_bulk_and_slow(monkeypatch):
     ok, msg = asc.get_playlist_tracks("PL")
     assert ok is False and msg == "Playlist not found"
 
-    # hard failure not matching Can't get
+    # both paths failing reports the error rather than hanging on
     setrun(monkeypatch, const(False, "boom"))
     assert asc.get_playlist_tracks("PL") == (False, "boom")
+
+
+@pytest.mark.parametrize(
+    "bulk_error, retries, why",
+    [
+        (
+            "Music got an error: Can't get name of {x}. (-1728)",
+            True,
+            "logic-level: the case the per-track loop survives",
+        ),
+        ("Cannot connect to target", True, "unclassified -> cascade, as classify_error intends"),
+        (
+            "AppleScript timed out after 30 seconds",
+            False,
+            "slow path sends ~7x more events; it would time out too",
+        ),
+        (
+            "Not authorized to send Apple events to Music. (-1743)",
+            False,
+            "permission denied is not per-track",
+        ),
+        ("Music got an error: Application isn't running. (-600)", False, "nothing to talk to"),
+        (
+            "syntax error: Expected end of line but found identifier.",
+            False,
+            "our bug; retrying hides it",
+        ),
+    ],
+)
+def test_get_playlist_tracks_retries_only_logic_level_failures(
+    monkeypatch, bulk_error, retries, why
+):
+    """Only a failure that could plausibly be per-track earns the slow path.
+
+    What changed is the axis of the decision. The old gate matched English
+    error text (`"Can" in output and "get" in output`) -- so it retried a
+    timeout never (no such words) and "Cannot connect to target" always
+    ("tar-get"), neither for a reason connected to the failure. The gate is
+    now the error's CLASS: an environmental failure is not retried, because
+    the slow path issues ~7x more Apple Events, so a Music that already
+    timed out fails again and the user waits 60s for the same error.
+    Unclassified errors still cascade, which is what classify_error's
+    `unknown` category exists for.
+    """
+    seq = Seq([(False, bulk_error), (True, "N|||Ar|||Al|||125|||G|||2020|||PID")])
+    setrun(monkeypatch, seq)
+    ok, result = asc.get_playlist_tracks("PL")
+
+    assert len(seq.calls) == (2 if retries else 1), why
+    if retries:
+        assert ok and result[0]["id"] == "PID"
+    else:
+        assert (ok, result) == (False, bulk_error)
+
+
+def test_get_playlist_tracks_bulk_rejects_non_numeric_limit(monkeypatch):
+    """`limit` is interpolated into the script, so it must be an int -- but a
+    bad one has to come back as (False, message), not raise out of a function
+    whose whole contract is a tuple."""
+    recorder = Recorder(True, "")
+    setrun(monkeypatch, recorder)
+    ok, msg = asc._get_playlist_tracks_bulk("PL", "; do evil")
+    assert ok is False and "must be an integer" in msg
+    assert recorder.calls == [], "nothing should reach osascript"
 
     # success bulk with good duration
     setrun(monkeypatch, const(True, "N|||Ar|||Al|||125|||G|||2020|||PID"))
     ok, tracks = asc.get_playlist_tracks("PL")
     assert ok and tracks[0]["duration"] == "2:05"
+
+    # Music reports an unset year as 0. The bulk read has no per-track
+    # try/catch to blank it, and ~12% of a real library hits this, so a
+    # passthrough would have consumers reporting a release year of 0.
+    setrun(monkeypatch, const(True, "N|||Ar|||Al|||125|||G|||0|||PID"))
+    ok, tracks = asc.get_playlist_tracks("PL")
+    assert ok and tracks[0]["year"] == ""
+    setrun(monkeypatch, const(True, "N|||Ar|||Al|||125|||G|||2020|||PID"))
+    assert asc.get_playlist_tracks("PL")[1][0]["year"] == "2020", "real years survive"
 
 
 def test_get_playlist_tracks_bulk_limits_property_fetch_to_slice(monkeypatch):
@@ -338,6 +420,66 @@ def test_get_playlist_tracks_bulk_limits_property_fetch_to_slice(monkeypatch):
             "instead of a slice bounded by `limit` -- this is O(playlist "
             "size) instead of O(limit) and will time out on large playlists"
         )
+
+
+def test_get_playlist_tracks_bulk_uses_reference_form(monkeypatch):
+    """The bulk read must address the tracks as a range OF THE PLAYLIST.
+
+    `set allTracks to tracks of targetPlaylist` materializes a plain
+    AppleScript list, and `<property> of <plain list>` does not distribute:
+    Music raises -1728 and names every track in the error, so the fast path
+    failed 100% of the time on Music 1.5.6 and every call silently served
+    from the slow path (which skips genre/year). Only the collection-reference
+    form -- `name of tracks 1 thru N of targetPlaylist` -- is evaluated by the
+    app, and it is the idiom SKILL.md has documented all along.
+    """
+    recorder = Recorder(True, "")
+    setrun(monkeypatch, recorder)
+    asc._get_playlist_tracks_bulk("PL", 5)
+    script = code_only(recorder.calls[0])
+
+    for prop in ("name", "artist", "album", "duration", "genre", "year", "persistent ID"):
+        assert f"{prop} of tracks 1 thru maxTracks of targetPlaylist" in script, (
+            f"'{prop}' must be read as a range of targetPlaylist; reading it off an "
+            "intermediate list variable raises -1728 and kills the fast path"
+        )
+        # A 1-track range returns a bare value rather than a 1-item list, so
+        # without the coercion `item 1 of allNames` indexes into the string
+        # and yields its first CHARACTER ("T" instead of "Take On Me").
+        assert (
+            f"(get {prop} of tracks 1 thru maxTracks of targetPlaylist) as list" in script
+        ), f"'{prop}' must be coerced `as list` or limit=1 returns one character"
+
+    assert "set allTracks to" not in script
+
+
+@pytest.mark.parametrize(
+    "limit, expected",
+    [
+        (5, "set maxTracks to 5"),
+        (0, "set maxTracks to 0"),
+        (-3, "set maxTracks to 0"),  # negative would count back from the END
+    ],
+)
+def test_get_playlist_tracks_bulk_clamps_limit(monkeypatch, limit, expected):
+    """Both range clamps are load-bearing -- each bad bound is an AppleScript
+    error, not an empty result.
+
+    `tracks 1 thru 0` raises -1728, and its message enumerates the entire
+    playlist (1,096,166 bytes on a 12,457-track playlist). A negative limit is
+    worse than useless: `tracks 1 thru -3` means "through the third-from-last",
+    i.e. nearly the whole playlist -- the exact cost this bound exists to avoid.
+    """
+    recorder = Recorder(True, "")
+    setrun(monkeypatch, recorder)
+    asc._get_playlist_tracks_bulk("PL", limit)
+    script = recorder.calls[0]
+
+    assert expected in script
+    assert "if maxTracks < 1 then return" in script, "limit<1 must return before the range"
+    assert (
+        "if maxTracks > trackCount then set maxTracks to trackCount" in script
+    ), "a range past the end of the playlist is an error, not a truncation"
 
 
 def test_create_playlist(monkeypatch):

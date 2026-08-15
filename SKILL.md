@@ -1,6 +1,6 @@
 ---
 name: apple-music
-version: 0.18.3
+version: 0.18.4
 description: Apple Music integration — AppleScript (local Music.app) and the Apple Music API / web player (cross-platform library, playlists, playback, and queue)
 ---
 
@@ -262,6 +262,18 @@ tell application "Music"
     -- Get playlist tracks
     every track of user playlist "Road Trip"
     name of every track of user playlist "Road Trip"
+
+    -- Get the FIRST N, one Apple Event per property. Read the range off the
+    -- playlist itself. Do NOT stash the tracks in a variable first --
+    -- `set t to tracks of pl` materializes a plain list, and a property of a
+    -- plain list does not distribute: Music raises -1728 and names every
+    -- track of the playlist in the error message.
+    set pl to user playlist "Road Trip"
+    set n to 25
+    if n > (count of tracks of pl) then set n to (count of tracks of pl)
+    if n < 1 then return {}                        -- `tracks 1 thru 0` errors
+    get name of tracks 1 thru n of pl as list      -- `as list`: n=1 returns a
+                                                   -- bare value, not a list
 
     -- Add track to playlist (must be library track)
     set targetPlaylist to user playlist "Road Trip"

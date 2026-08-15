@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.4] - 2026-08-15
+
+### Fixed
+
+- **Listing playlist tracks was ~10x slower than it should be, and always reported genre and year as empty.** The bulk fast path read each property off an intermediate `set allTracks to tracks of targetPlaylist`. That materializes a plain AppleScript list, and a property of a plain list does not distribute — Music answers -1728 and names every track of the playlist in the error message. So the fast path failed on *every* call, and every listing was quietly served by the per-track fallback, which skips genre and year for speed. Reading the range off the playlist itself (`name of tracks 1 thru N of targetPlaylist`) restores it. On a 12,457-track playlist at the default limit of 500: **7.3s → 1.2s, with genre and year populated** (a track with no year still reads as empty rather than as year 0).
+- **A slow playlist read failed instead of falling back.** The per-track retry was gated on the error text containing `Can` and `get` — which no timeout carries, and which is English-only, so a playlist slow enough to hit the 30s `osascript` deadline gave up rather than retrying on the path that would have served it. The gate now classifies the failure (`classify_error`) and retries only logic-level ones; an environmental failure is reported once instead of being retried on a path that sends ~7x more Apple Events and fails again.
+
+### Changed
+
+- **`limit` is validated and clamped before it reaches AppleScript.** It was interpolated into the script as-is, where a bound below 1 is an error rather than an empty result, and a negative bound counts back from the *end* of the playlist. `limit` below 1 now yields an empty list, and a non-numeric `limit` is rejected with a message instead of reaching `osascript`.
+- `SKILL.md` documents the bounded playlist-track read, including the plain-list trap and the single-element `as list` coercion.
+
 ## [0.18.3] - 2026-08-05
 
 ### Fixed

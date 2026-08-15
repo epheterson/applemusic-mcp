@@ -683,34 +683,64 @@ def get_playlists() -> tuple[bool, list[dict]]:
     return True, playlists
 
 
+_BAD_LIMIT = "limit must be an integer"
+
+
+def _clamp_track_limit(limit: int) -> Optional[int]:
+    """Coerce `limit` to a non-negative int, or None if it isn't a number.
+
+    Both track-fetch paths interpolate this straight into AppleScript, so it
+    has to be a number before it gets there. Negatives must not survive
+    either: an AppleScript range counts a negative bound back from the END
+    (`tracks 1 thru -3` means "through the third-from-last"), so a negative
+    `limit` would read nearly the whole playlist -- the opposite of a bound.
+    """
+    try:
+        return max(0, int(limit))
+    except (TypeError, ValueError):
+        return None
+
+
 def _get_playlist_tracks_bulk(safe_name: str, limit: int) -> tuple[bool, str]:
     """Try bulk property fetch for playlist tracks (fast path).
 
     Returns (success, output) where output is raw AppleScript output or error.
     """
+    safe_limit = _clamp_track_limit(limit)
+    if safe_limit is None:
+        return False, f"{_BAD_LIMIT}, got {limit!r}"
+
     script = f"""
     tell application "Music"
 {_find_playlist_applescript(safe_name)}
 
-        set allTracks to tracks of targetPlaylist
-        set trackCount to count of allTracks
+        set trackCount to count of tracks of targetPlaylist
         if trackCount is 0 then return ""
 
-        -- Bound the slice to `limit` BEFORE reading any properties, so cost
+        -- Bound the range to `limit` BEFORE reading any properties, so cost
         -- is O(limit) instead of O(playlist size) -- large playlists must
-        -- not pay for tracks beyond what was requested.
-        set maxTracks to {limit}
-        if trackCount < maxTracks then set maxTracks to trackCount
-        set sliceTracks to items 1 thru maxTracks of allTracks
+        -- not pay for tracks beyond what was requested. Both clamps are
+        -- load-bearing: `tracks 1 thru 0` and a range past the end are each
+        -- an AppleScript error (-1728), not an empty result.
+        set maxTracks to {safe_limit}
+        if maxTracks > trackCount then set maxTracks to trackCount
+        if maxTracks < 1 then return ""
 
-        -- Bulk fetch all properties at once (much faster than per-track)
-        set allNames to name of sliceTracks
-        set allArtists to artist of sliceTracks
-        set allAlbums to album of sliceTracks
-        set allDurations to duration of sliceTracks
-        set allGenres to genre of sliceTracks
-        set allYears to year of sliceTracks
-        set allIds to persistent ID of sliceTracks
+        -- One Apple Event per property, addressed as a range of
+        -- targetPlaylist. This must NOT go through an intermediate
+        -- `set allTracks to tracks of targetPlaylist`: that materializes a
+        -- plain AppleScript list, and `<property> of <plain list>` does not
+        -- distribute -- Music raises -1728 ("Can't get name of {{...}}") and
+        -- names every track in the message. `as list` because a 1-track
+        -- range returns a bare value, so `item 1 of` would otherwise index
+        -- into the string and yield its first character.
+        set allNames to (get name of tracks 1 thru maxTracks of targetPlaylist) as list
+        set allArtists to (get artist of tracks 1 thru maxTracks of targetPlaylist) as list
+        set allAlbums to (get album of tracks 1 thru maxTracks of targetPlaylist) as list
+        set allDurations to (get duration of tracks 1 thru maxTracks of targetPlaylist) as list
+        set allGenres to (get genre of tracks 1 thru maxTracks of targetPlaylist) as list
+        set allYears to (get year of tracks 1 thru maxTracks of targetPlaylist) as list
+        set allIds to (get persistent ID of tracks 1 thru maxTracks of targetPlaylist) as list
 
         -- Combine into output
         set output to ""
@@ -736,6 +766,10 @@ def _get_playlist_tracks_slow(safe_name: str, limit: int) -> tuple[bool, str]:
     Optimized for shared tracks: skips genre/year (saves ~33% time).
     Returns (success, output) where output is raw AppleScript output or error.
     """
+    safe_limit = _clamp_track_limit(limit)
+    if safe_limit is None:
+        return False, f"{_BAD_LIMIT}, got {limit!r}"
+
     script = f"""
     tell application "Music"
 {_find_playlist_applescript(safe_name)}
@@ -747,7 +781,7 @@ def _get_playlist_tracks_slow(safe_name: str, limit: int) -> tuple[bool, str]:
         -- Per-track iteration (slower but handles shared tracks)
         -- Optimized: skip genre/year to reduce try/catch overhead
         set output to ""
-        set maxTracks to {limit}
+        set maxTracks to {safe_limit}
         if trackCount < maxTracks then set maxTracks to trackCount
         repeat with i from 1 to maxTracks
             set t to item i of allTracks
@@ -773,23 +807,36 @@ def get_playlist_tracks(playlist_name: str, limit: int = 500) -> tuple[bool, lis
     """Get tracks in a playlist by name.
 
     Uses fast bulk fetch when possible, falls back to per-track iteration
-    for playlists containing shared tracks (Apple Music subscription tracks).
+    for tracks whose properties the bulk read cannot get.
 
     Args:
         playlist_name: Name of the playlist
-        limit: Maximum number of tracks to return (default 500)
+        limit: Maximum number of tracks to return (default 500). A limit
+            below 1 yields an empty list.
 
     Returns:
         Tuple of (success, list of track dicts or error string)
     """
+    if _clamp_track_limit(limit) is None:
+        return False, f"{_BAD_LIMIT}, got {limit!r}"
+
     safe_name = _escape_for_applescript(playlist_name)
 
-    # Try bulk fetch first (150x faster)
+    # Try bulk fetch first (~10x faster, and the only path that returns
+    # genre/year -- the slow path deliberately skips them).
     success, output = _get_playlist_tracks_bulk(safe_name, limit)
 
-    # If bulk fetch fails (e.g., shared tracks), fall back to per-track
-    # Note: AppleScript uses straight apostrophe in "Can't get"
-    if not success and "Can" in output and "get" in output:
+    # Retry per-track only for a logic-level failure -- a track whose
+    # properties the bulk read cannot get (-1728), which is the case the
+    # per-track try/catch exists to survive. classify_error() files that
+    # under `unknown` precisely so callers with a fallback cascade here.
+    #
+    # It replaces a `"Can" in output and "get" in output` test that was both
+    # too narrow and too broad: English-only, and it matches "Cannot connect
+    # to target" ("tar-get"). Retrying an environmental failure is worse than
+    # not retrying -- the slow path sends ~7x more Apple Events, so a Music
+    # that timed out or refused automation fails it again at double the wait.
+    if not success and classify_error(output) == ERROR_UNKNOWN:
         success, output = _get_playlist_tracks_slow(safe_name, limit)
 
     if not success:
@@ -811,6 +858,12 @@ def get_playlist_tracks(playlist_name: str, limit: int = 500) -> tuple[bool, lis
                 except (ValueError, TypeError):
                     duration = ""
 
+                # Music reports an unset year as 0, and the bulk read has no
+                # per-track try/catch to turn that into "". Passing "0"
+                # through would have a consumer report a release year of 0 --
+                # report it as unknown, the same as the slow path does.
+                year = "" if parts[5].strip() == "0" else parts[5]
+
                 tracks.append(
                     {
                         "name": parts[0],
@@ -818,7 +871,7 @@ def get_playlist_tracks(playlist_name: str, limit: int = 500) -> tuple[bool, lis
                         "album": parts[2],
                         "duration": duration,
                         "genre": parts[4],
-                        "year": parts[5],
+                        "year": year,
                         "id": parts[6],
                     }
                 )
