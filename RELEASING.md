@@ -7,9 +7,11 @@ MCP registry](https://registry.modelcontextprotocol.io) (via GitHub OIDC, no
 stored token). There is no manual release step — which means **the version bump
 itself is the point of no return.**
 
-The registry step publishes `server.json`, so a stale `version` there now fails
-the release rather than quietly advertising the wrong one. It runs after PyPI, so
-the registry never points at a package version that failed to upload.
+The registry step runs after PyPI, so the registry never advertises a package
+version that failed to upload. Note what it does *not* protect: by the time it
+runs, the tag, the GitHub Release, and the PyPI upload have all happened. The
+version-surface gate that actually guards a release is the pre-tag
+`check_versions.py` in `release.yml`.
 
 ## Why there is a LOCAL gate
 

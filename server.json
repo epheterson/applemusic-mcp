@@ -16,7 +16,7 @@
         "type": "stdio"
       },
       "runtimeHint": "uvx",
-      "runtimeArguments": [
+      "packageArguments": [
         {
           "type": "positional",
           "value": "serve"

@@ -61,6 +61,13 @@ jobs:
         # release/v1 is PyPA's maintained security-patch channel for this
         # first-party OIDC action — see pinning policy at top of file.
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Without this, a re-dispatch after an already-successful upload
+          # fails here with "file already exists" and skips the registry job
+          # below — leaving no way to retry a registry publish that failed
+          # for a transient reason (the registry returns 429/5xx as
+          # "retry later") short of burning a version bump.
+          skip-existing: true
 
   registry:
     name: Publish to MCP Registry
@@ -77,27 +84,33 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install mcp-publisher
-        # Third party, and a plain binary rather than an action: pin the
-        # version instead of tracking `latest`, per the policy at the top of
-        # this file. Bump deliberately.
+        # Third party, and a plain binary rather than an action. A release tag
+        # and its assets are both mutable, so the version alone gives
+        # reproducibility but no integrity — and this binary is then handed an
+        # OIDC token with authority over the io.github.epheterson/* namespace.
+        # Pin the digest too, per the policy at the top of this file. Bump both
+        # deliberately.
         env:
           MCP_PUBLISHER_VERSION: v1.8.1
+          MCP_PUBLISHER_SHA256: a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc
         run: |
-          curl -fsSL --retry 3 \
-            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
-            | tar xz mcp-publisher
+          set -euo pipefail
+          curl -fsSL --retry 3 -o publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
+          echo "${MCP_PUBLISHER_SHA256}  publisher.tar.gz" | sha256sum -c -
+          tar xzf publisher.tar.gz mcp-publisher
           ./mcp-publisher --version
 
       - name: Verify server.json agrees with the release
         # server.json has no other CI and does not follow an edit to
-        # pyproject.toml, so it is exactly the surface that drifts. Reuse the
-        # same check release.yml runs rather than inventing a second one.
+        # pyproject.toml, so it is exactly the surface that drifts. This is a
+        # last check before advertising, not the gate that protects a release:
+        # by now the tag, the GitHub Release, and PyPI have all happened. The
+        # gate is the same script run pre-tag in release.yml.
         run: python3 scripts/check_versions.py
 
       - name: Publish to MCP Registry
-        # Republishing an existing version fails, so a re-dispatch of this
-        # workflow for an already-published version will fail here. That is
-        # intentional: it is louder than silently overwriting the entry.
         run: |
+          set -euo pipefail
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish server.json
