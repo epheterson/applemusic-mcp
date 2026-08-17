@@ -9,6 +9,8 @@
 
 MCP server for Apple Music. It gives any [MCP client](https://modelcontextprotocol.io/clients) (Claude, Cursor, Cline, Windsurf) control of your playlists, library, catalog, discovery, playback, and the Up Next queue. Runs on macOS, Windows, and Linux.
 
+**A Mac or an Apple Music subscription is all you need.** Four engines, chosen per call: Music.app and Safari on a Mac, the Apple Music API and Chrome on any OS.
+
 ## Features
 
 Four engines back the server. **Native** drives the local Music.app on macOS via AppleScript. **API** uses Apple Music's web API (`amp-api.music.apple.com`) on any OS. **Safari** drives your signed-in Safari's MusicKit on macOS (DRM-native, zero install). **Chrome** runs a local Google Chrome window with MusicKit for DRM audio on any OS. One `mode` preference picks the engine — `auto` (default) mixes the best of each: native Music.app for playback on macOS, Safari for the Up Next queue, the API for data, Chrome off-mac. Pin one with `native` / `safari` / `chrome` / `api`, or override a single playback/queue call with `engine=`. In the table below, the **Browser** column covers both the Safari and Chrome web players. `✓` supported, `✗` not possible on that engine, `—` not applicable there.
@@ -45,7 +47,7 @@ Everything in the **API** column runs anywhere, no browser and no Music app. Bro
 
 ## Setup
 
-**Requirements:** Python 3.10+ and an Apple Music subscription. The Chrome web player (cross-platform playback + Up Next queue) needs [Google Chrome](https://www.google.com/chrome/) + Playwright. **On macOS you can skip both** — sign in via Safari and play through the Music app — so the default macOS install is lightweight (no ~500 MB Playwright). Windows/Linux include Playwright automatically (it's the only path there).
+**Requirements:** Python 3.10+, plus either a Mac or an Apple Music subscription. The Chrome web player (cross-platform playback + Up Next queue) needs [Google Chrome](https://www.google.com/chrome/) + Playwright. **On macOS you can skip both** — sign in via Safari and play through the Music app — so the default macOS install is lightweight (no ~500 MB Playwright). Windows/Linux include Playwright automatically (it's the only path there).
 
 **Claude Code**, one line:
 
