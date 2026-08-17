@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.18.5] - 2026-08-17
+
+No runtime code changed in this release.
+
+### Fixed
+
+- **The MCP registry entry described the wrong install command.** `server.json` carried `serve` in `runtimeArguments`, which the schema defines as arguments to the *runtime* (`uvx`) and places before the package name, so a client consuming the entry built `uvx serve applemusic-mcp` and tried to resolve a PyPI package called `serve`. Arguments for the package's own binary are `packageArguments`. This could only affect anyone once the entry was first published, which happened on 0.18.4.
+
+### Changed
+
+- **Releases now publish to the official [MCP registry](https://registry.modelcontextprotocol.io) automatically**, after PyPI, authenticating with GitHub OIDC rather than a stored token. The entry previously had to be published by hand, which is why it went unlisted for so long, and nothing would have kept it current: every version bump would have left it stale at the previous release.
+
 ## [0.18.4] - 2026-08-15
 
 ### Fixed

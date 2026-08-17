@@ -109,8 +109,41 @@ jobs:
         # gate is the same script run pre-tag in release.yml.
         run: python3 scripts/check_versions.py
 
+      - name: Wait for PyPI to serve the new version
+        # The registry validates the entry by fetching
+        # pypi.org/pypi/<pkg>/<version>/json and treats a 404 as a failure.
+        # PyPI's JSON API trails the upload by seconds, so poll instead of
+        # racing it.
+        run: |
+          set -euo pipefail
+          ver=$(python3 -c "import json;print(json.load(open('server.json'))['version'])")
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null "https://pypi.org/pypi/applemusic-mcp/${ver}/json"; then
+              echo "PyPI is serving ${ver}"
+              exit 0
+            fi
+            echo "attempt ${i}: PyPI has no ${ver} yet"
+            sleep 10
+          done
+          echo "PyPI never served ${ver}" >&2
+          exit 1
+
       - name: Publish to MCP Registry
+        # The registry answers 429/5xx as "likely transient, retry later", so
+        # retry rather than leaving the entry a version behind. A duplicate is
+        # treated as success: it means an earlier attempt landed and only the
+        # response was lost, and republishing a version is impossible anyway.
         run: |
           set -euo pipefail
           ./mcp-publisher login github-oidc
-          ./mcp-publisher publish server.json
+          for i in 1 2 3; do
+            out=$(./mcp-publisher publish server.json 2>&1) && { echo "$out"; exit 0; }
+            echo "$out"
+            if echo "$out" | grep -q "duplicate version"; then
+              echo "already published; treating as success"
+              exit 0
+            fi
+            echo "publish attempt ${i} failed, retrying" >&2
+            sleep 15
+          done
+          exit 1
