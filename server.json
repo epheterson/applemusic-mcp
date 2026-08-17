@@ -1,7 +1,7 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.epheterson/applemusic-mcp",
-  "description": "Cross-platform Apple Music control \u2014 library, playlists, catalog, playback, and the Up Next queue \u2014 on macOS, Windows, and Linux. No Apple Developer account required.",
+  "description": "Apple Music MCP server: playlists, library, catalog, playback and Up Next, on Mac/Windows/Linux.",
   "repository": {
     "url": "https://github.com/epheterson/applemusic-mcp",
     "source": "github"

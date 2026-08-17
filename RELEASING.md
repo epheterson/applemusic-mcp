@@ -2,8 +2,14 @@
 
 Releases are automatic: pushing a **version bump** to `main` makes
 `.github/workflows/release.yml` tag it and create a GitHub Release, which
-dispatches `publish.yml` to push the package to PyPI. There is no manual release
-step — which means **the version bump itself is the point of no return.**
+dispatches `publish.yml` to push the package to PyPI and then to the [official
+MCP registry](https://registry.modelcontextprotocol.io) (via GitHub OIDC, no
+stored token). There is no manual release step — which means **the version bump
+itself is the point of no return.**
+
+The registry step publishes `server.json`, so a stale `version` there now fails
+the release rather than quietly advertising the wrong one. It runs after PyPI, so
+the registry never points at a package version that failed to upload.
 
 ## Why there is a LOCAL gate
 

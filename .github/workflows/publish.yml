@@ -61,3 +61,43 @@ jobs:
         # release/v1 is PyPA's maintained security-patch channel for this
         # first-party OIDC action — see pinning policy at top of file.
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  registry:
+    name: Publish to MCP Registry
+    # After PyPI: the registry entry advertises a pypi package at this version,
+    # so it must not point at a version that failed to publish.
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      # OIDC proves the job runs in this repo, which is what authorizes the
+      # io.github.epheterson/* namespace. No secret, no stored token.
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mcp-publisher
+        # Third party, and a plain binary rather than an action: pin the
+        # version instead of tracking `latest`, per the policy at the top of
+        # this file. Bump deliberately.
+        env:
+          MCP_PUBLISHER_VERSION: v1.8.1
+        run: |
+          curl -fsSL --retry 3 \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+          ./mcp-publisher --version
+
+      - name: Verify server.json agrees with the release
+        # server.json has no other CI and does not follow an edit to
+        # pyproject.toml, so it is exactly the surface that drifts. Reuse the
+        # same check release.yml runs rather than inventing a second one.
+        run: python3 scripts/check_versions.py
+
+      - name: Publish to MCP Registry
+        # Republishing an existing version fails, so a re-dispatch of this
+        # workflow for an already-published version will fail here. That is
+        # intentional: it is louder than silently overwriting the entry.
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish server.json
