@@ -1,6 +1,6 @@
 ---
 name: apple-music
-version: 0.18.5
+version: 0.19.0
 description: Apple Music integration — AppleScript (local Music.app) and the Apple Music API / web player (cross-platform library, playlists, playback, and queue)
 ---
 
@@ -93,6 +93,17 @@ tell application "Music"
     rating of t         -- 0-100 (20 per star)
     loved of t          -- true/false
     disliked of t       -- true/false
+
+    -- Content rating. DO NOT trust this for filtering.
+    -- On Apple Music (cloud) tracks this property is unset, and reading it
+    -- RAISES "A descriptor type mismatch occurred" rather than returning
+    -- false. Catching that and defaulting to false is what turns "I could
+    -- not tell" into "this is clean": on a real 463-track playlist Music.app
+    -- yielded zero explicit tracks where the catalog rated eight of them
+    -- explicit. If a caller asked for clean content, resolve the rating
+    -- against the catalog (`contentRating == "explicit"`, matching on name
+    -- AND artist) and report anything you could not verify as unknown.
+    explicit of t       -- true/false, RAISES on most cloud tracks
 
     -- Playback
     played count of t   -- 42

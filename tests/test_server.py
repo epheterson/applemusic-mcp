@@ -4994,18 +4994,25 @@ class TestLibraryBrowsePagination:
         assert "Track 19" in result
         assert "Track 0" not in result
 
-    def test_applescript_clean_only_uses_full_fetch_with_accurate_count(self, monkeypatch):
-        """clean_only=True uses the full-fetch path so the reported total reflects post-filter count."""
+    def test_applescript_clean_only_verifies_the_page_not_the_library(self, monkeypatch):
+        """clean_only uses the O(limit) page path.
+
+        Rating lookups are network calls. Sweeping the whole library to make the
+        reported total post-filter would verify at most a budget's worth of an
+        arbitrary subset -- likely not even the rows returned -- so the count
+        would describe a filter that never ran. Bound the work to the page and
+        report the true library total instead.
+        """
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         mock_asc = MagicMock()
         songs = [self._make_as_song(i) for i in range(5)]
-        mock_asc.get_library_songs.return_value = (True, songs)
+        mock_asc.get_library_songs_page.return_value = (True, songs, 5, None)
         monkeypatch.setattr(server, "asc", mock_asc)
 
         result = server._library_browse(item_type="songs", limit=10, offset=0, clean_only=True)
 
-        mock_asc.get_library_songs.assert_called_once_with(0)
-        mock_asc.get_library_songs_page.assert_not_called()
+        mock_asc.get_library_songs_page.assert_called_once()
+        mock_asc.get_library_songs.assert_not_called()
         assert result is not None
 
 

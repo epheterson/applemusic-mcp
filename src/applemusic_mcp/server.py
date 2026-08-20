@@ -709,6 +709,9 @@ def format_output(
                 "id",
                 "track_count",
                 "release_date",
+                # Carried so a structured consumer can tell a verified-clean
+                # track from one that could not be checked.
+                "explicit",
             }
             filtered = [{k: v for k, v in item.items() if k in standard_keys} for item in items]
             result_parts.append(json.dumps(filtered, indent=2))
@@ -5215,10 +5218,11 @@ def _library_search(
             results = _deduplicate_by_id(results, keep_no_id=True)
 
             # Filter explicit content if clean_only
+            clean_note = ""
             if clean_only:
-                results = [t for t in results if t.get("explicit") != "Yes"]
+                results, clean_note = _apply_clean_filter(results, clean_only)
 
-            return format_output(
+            out = format_output(
                 results,
                 format,
                 export,
@@ -5227,6 +5231,7 @@ def _library_search(
                 total_count=total,
                 offset=offset,
             )
+            return _with_clean_note(out, clean_note, format)
         if not success:
             # Capture so the API-fallback error path can surface what really
             # broke. Without this, an AS failure followed by missing-token
@@ -5301,10 +5306,10 @@ def _library_search(
         song_data = _deduplicate_by_id(song_data)
 
         # Filter explicit content if clean_only
-        if clean_only:
-            song_data = [s for s in song_data if s.get("explicit") != "Yes"]
+        song_data, clean_note = _apply_clean_filter(song_data, clean_only)
 
-        return format_output(song_data, format, export, full, f"search_{query[:20]}")
+        out = format_output(song_data, format, export, full, f"search_{query[:20]}")
+        return _with_clean_note(out, clean_note, format)
 
     except requests.exceptions.RequestException as e:
         msg = f"API Error: {str(e)}"
@@ -5628,6 +5633,7 @@ def _catalog_search(
         # Collect all data for JSON format
         all_data = {"songs": [], "albums": [], "artists": [], "playlists": [], "music-videos": []}
 
+        clean_note = ""
         if "songs" in results:
             all_data["songs"] = [
                 extract_track_data(s, full) for s in results["songs"].get("data", [])
@@ -5636,7 +5642,7 @@ def _catalog_search(
             all_data["songs"] = _deduplicate_by_id(all_data["songs"])
             # Filter out explicit content if clean_only is True
             if clean_only:
-                all_data["songs"] = [s for s in all_data["songs"] if s.get("explicit") == "No"]
+                all_data["songs"], clean_note = _apply_clean_filter(all_data["songs"], clean_only)
 
         if "albums" in results:
             for album in results["albums"].get("data", []):
@@ -5701,6 +5707,8 @@ def _catalog_search(
 
         # Text format
         output = []
+        if clean_note:
+            output.append(clean_note + "\n")
         if all_data["songs"]:
             output.append(f"=== {len(all_data['songs'])} Songs ===")
             for s in all_data["songs"]:
@@ -6257,11 +6265,162 @@ def _catalog_album_details(
 # ============ LIBRARY BROWSING ============
 
 
+def _with_clean_note(out: str, note: str, format: str) -> str:
+    """Prefix the verification note, but only where it is prose.
+
+    `format_output` returns *pure* JSON or CSV, so prefixing there produces
+    unparseable output -- and `clean_only` can come from a stored preference,
+    so a user who never passes the flag would still get broken JSON. Those
+    formats carry the same information in each row's `explicit` field.
+    """
+    if not note or format not in ("text", ""):
+        return out
+    return f"{note}\n\n{out}"
+
+
+# Cap on catalog lookups per call when verifying content ratings. Web sign-in
+# uses Apple's shared public quota, so an unbounded sweep over a large result
+# set can trip HTTP 429 and leave every remaining track unverified. Better to
+# verify a bounded number and say plainly how many were not checked.
+_CLEAN_VERIFY_BUDGET = 40
+
+
+def _resolve_explicit_ratings(tracks: list[dict], budget: int = _CLEAN_VERIFY_BUDGET) -> dict:
+    """Fill in each track's `explicit` from the cache, then the catalog.
+
+    Music.app cannot be trusted for this: it leaves the property unset on many
+    cloud tracks. The catalog is the authority, so anything still Unknown after
+    the cache is looked up for real, up to `budget` lookups.
+
+    Mutates `tracks` in place. Returns counts for the caller to report.
+    """
+    stats = {"cached": 0, "looked_up": 0, "unverified": 0, "blocked": ""}
+    cache = get_track_cache()
+    pending = []
+
+    for t in tracks:
+        if t.get("explicit") in ("Yes", "No"):
+            continue
+        tid = t.get("id", "")
+        cached = cache.get_explicit(tid) if tid else None
+        if cached not in ("Yes", "No") and t.get("artist") and t.get("name"):
+            # Name index only, and only with an artist -- a title alone is not
+            # an identity (see the artist check below).
+            by_name = cache.get_track_by_name(t.get("name", ""), t.get("artist", ""))
+            cached = cache.get_explicit(by_name) if by_name else None
+        # "Unknown" is a cached *failure*, not an answer. Treating it as a hit
+        # (it is truthy) would make one failed lookup permanent: the enrichment
+        # path caches Unknown for unmatched tracks, and set_track_metadata
+        # refuses to overwrite an existing entry.
+        if cached in ("Yes", "No"):
+            t["explicit"] = cached
+            stats["cached"] += 1
+        else:
+            pending.append(t)
+
+    for t in pending:
+        if stats["looked_up"] >= budget or not t.get("name"):
+            stats["unverified"] += 1
+            continue
+        try:
+            hits = _search_catalog_songs(f"{t.get('name', '')} {t.get('artist', '')}".strip(), 5)
+        except FileNotFoundError:
+            # No credentials: every remaining lookup will fail the same way,
+            # so stop asking and say so once.
+            stats["blocked"] = stats["blocked"] or "not signed in"
+            stats["unverified"] += 1
+            continue
+        except requests.exceptions.RequestException as e:
+            stats["blocked"] = stats["blocked"] or (
+                "catalog timed out"
+                if isinstance(e, requests.exceptions.Timeout)
+                else "catalog unreachable"
+            )
+            stats["unverified"] += 1
+            continue
+        except Exception:
+            stats["unverified"] += 1
+            continue
+        stats["looked_up"] += 1
+        # Match on name AND artist. Matching name alone is how #50 queued an
+        # unrelated song, and a filter that decides what a child hears is the
+        # last place to accept a loose match: a wrong hit here does not just
+        # return the wrong track, it labels an explicit one clean.
+        want_artist = (t.get("artist") or "").strip()
+        if not want_artist:
+            # Without an artist a title match is a coin flip, and the result
+            # would be cached and reused. Leave it unverified instead.
+            stats["unverified"] += 1
+            continue
+        match = None
+        for h in hits:
+            a = h.get("attributes", {})
+            if not _loose_equals(a.get("name", ""), t.get("name", "")):
+                continue
+            if not _loose_equals(a.get("artistName", ""), want_artist):
+                continue
+            match = a
+            break
+        if not match:
+            stats["unverified"] += 1
+            continue
+        rating = "Yes" if match.get("contentRating") == "explicit" else "No"
+        t["explicit"] = rating
+        cache.set_track_metadata(
+            explicit=rating,
+            persistent_id=t.get("id") or None,
+            name=t.get("name") or None,
+            artist=t.get("artist") or None,
+        )
+
+    return stats
+
+
+def _apply_clean_filter(tracks: list[dict], clean_only: bool) -> tuple[list[dict], str]:
+    """Drop confirmed-explicit tracks and say what was actually verified.
+
+    A filter called `clean_only` must not answer "clean" when it means "not
+    known to be explicit". Confirmed-explicit tracks are removed; tracks that
+    could not be verified stay, keep their Unknown rating so the output shows
+    it, and are counted in the returned note.
+    """
+    if not clean_only:
+        return tracks, ""
+
+    stats = _resolve_explicit_ratings(tracks)
+    kept = [t for t in tracks if t.get("explicit") != "Yes"]
+    removed = len(tracks) - len(kept)
+    unverified = sum(1 for t in kept if t.get("explicit") != "No")
+
+    parts = [f"{len(kept) - unverified} verified clean"]
+    if removed:
+        parts.append(f"{removed} explicit removed")
+    if unverified:
+        why = f" ({stats['blocked']})" if stats.get("blocked") else ""
+        parts.append(f"{unverified} could NOT be verified{why}")
+    note = "Clean filter: " + " · ".join(parts)
+    if unverified:
+        # Naming them is the whole point: a count tells a parent that five of
+        # twenty-five are unchecked without telling them which five.
+        names = [
+            f"{t.get('name', '?')} - {t.get('artist', '?')}"
+            for t in kept
+            if t.get("explicit") != "No"
+        ]
+        shown = names[:10]
+        note += "\nUnverified: " + "; ".join(shown)
+        if len(names) > len(shown):
+            note += f"; and {len(names) - len(shown)} more"
+    if stats.get("looked_up", 0) >= _CLEAN_VERIFY_BUDGET and unverified:
+        note += f"\n(Verification stopped at {_CLEAN_VERIFY_BUDGET} catalog lookups to stay inside the rate limit.)"
+    return kept, note
+
+
 def _build_library_track_data(
     songs: list[dict],
     fetch_explicit: bool,
     clean_only: bool,
-) -> list[dict]:
+) -> tuple[list[dict], str]:
     """Build output-ready track dicts from AppleScript library song dicts.
 
     Constructs core fields, enriches with explicit status from cache, and
@@ -6288,9 +6447,10 @@ def _build_library_track_data(
                 cached_explicit = cache.get_explicit(track_id)
                 if cached_explicit:
                     track["explicit"] = cached_explicit
+    note = ""
     if clean_only:
-        data = [t for t in data if t.get("explicit") != "Yes"]
-    return data
+        data, note = _apply_clean_filter(data, clean_only)
+    return data, note
 
 
 def _library_browse(
@@ -6316,34 +6476,49 @@ def _library_browse(
     # Try AppleScript first for songs (local, instant, no auth required) —
     # only in native engine mode; api mode browses via the HTTP API below.
     if _engine() == "native" and APPLESCRIPT_AVAILABLE and item_type == "songs":
-        if limit > 0 and not clean_only:
+        if limit > 0:
             # O(limit): fetch only the requested page and the true total count.
+            # clean_only rides this path too — ratings are resolved for the page
+            # being shown, so the work is bounded by page size rather than by
+            # library size. A page may come back short when explicit tracks are
+            # removed; total_count stays the true library total.
             success, as_songs, true_total, as_err = asc.get_library_songs_page(offset, limit)
             if success:
                 if true_total == 0:
                     return f"No {item_type} in library"
                 if offset >= true_total:
                     return f"Offset {offset} exceeds library size of {true_total} songs"
-                data = _build_library_track_data(as_songs, fetch_explicit, clean_only)
-                return format_output(
-                    data, format, export, full, "songs", total_count=true_total, offset=offset
+                data, clean_note = _build_library_track_data(as_songs, fetch_explicit, clean_only)
+                return _with_clean_note(
+                    format_output(
+                        data, format, export, full, "songs", total_count=true_total, offset=offset
+                    ),
+                    clean_note,
+                    format,
                 )
             as_error = as_err or "AppleScript get_library_songs_page failed"
             return (
                 f"Error browsing library: {_format_applescript_error(as_error, 'browse library')}"
             )
         else:
-            # Full fetch: limit=0 (all songs) or clean_only=True (needs post-filter total).
+            # Full fetch: limit=0 (all songs).
             success, as_songs = asc.get_library_songs(0)
             if success:
                 if not as_songs:
                     return f"No {item_type} in library"
-                data = _build_library_track_data(as_songs, fetch_explicit, clean_only)
-                data, total_count, error = _apply_pagination(data, limit, offset)
+                # Paginate BEFORE verifying: rating lookups are network calls,
+                # so they must be bounded by what is actually returned rather
+                # than swept across the whole library.
+                as_songs, total_count, error = _apply_pagination(as_songs, limit, offset)
                 if error:
                     return error
-                return format_output(
-                    data, format, export, full, "songs", total_count=total_count, offset=offset
+                data, clean_note = _build_library_track_data(as_songs, fetch_explicit, clean_only)
+                return _with_clean_note(
+                    format_output(
+                        data, format, export, full, "songs", total_count=total_count, offset=offset
+                    ),
+                    clean_note,
+                    format,
                 )
             # AppleScript failed on macOS — surface the actionable error
             # instead of cascading to API and leaking "Developer token not
@@ -6433,22 +6608,27 @@ def _library_browse(
             ]
 
         # Filter explicit content if clean_only (songs only, API already has explicit status)
+        clean_note = ""
         if item_type == "songs" and clean_only:
-            data = [t for t in data if t.get("explicit") != "Yes"]
+            data, clean_note = _apply_clean_filter(data, clean_only)
 
         # Apply pagination
         data, total_count, error = _apply_pagination(data, limit, offset)
         if error:
             return error
 
-        return format_output(
-            data,
+        return _with_clean_note(
+            format_output(
+                data,
+                format,
+                export,
+                full,
+                f"library_{item_type}",
+                total_count=total_count,
+                offset=offset,
+            ),
+            clean_note,
             format,
-            export,
-            full,
-            f"library_{item_type}",
-            total_count=total_count,
-            offset=offset,
         )
 
     except requests.exceptions.RequestException as e:
@@ -6485,14 +6665,16 @@ def _library_favorites(
     if not as_songs:
         return "No favorite songs in library"
 
-    data = _build_library_track_data(as_songs, fetch_explicit, clean_only)
+    data, clean_note = _build_library_track_data(as_songs, fetch_explicit, clean_only)
     if not data:
         return "No favorite songs in library"
     data, total_count, error = _apply_pagination(data, limit, offset)
     if error:
         return error
-    return format_output(
-        data, format, export, full, "songs", total_count=total_count, offset=offset
+    return _with_clean_note(
+        format_output(data, format, export, full, "songs", total_count=total_count, offset=offset),
+        clean_note,
+        format,
     )
 
 

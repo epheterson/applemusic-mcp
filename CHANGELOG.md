@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.0] - 2026-08-20
+
+### Fixed
+
+- **`clean_only` could report success while letting explicit tracks through.** The filter kept everything whose rating was not literally `"Yes"`, and any track whose rating was not already cached was set to `"Unknown"` — so on a cold cache it removed almost nothing while appearing to work. Ratings that are not already known are now resolved against the catalog before filtering, confirmed-explicit tracks are removed, and anything that still could not be verified is kept with its `Unknown` rating and **named in the output** rather than passing silently as clean.
+- **Music.app's `explicit` property was read as authoritative and defaulted to "not explicit".** The scripts fell back to `false` when the property could not be read, and the parser mapped anything that was not `true` to `"No"`, so "could not tell" became "this is clean". Music.app leaves the property unset on many cloud tracks: on a real 463-track playlist it reported **zero** explicit tracks where the catalog reported **eight**. It now reports `Unknown` and defers to the catalog.
+
+### Changed
+
+- **Where clean content is requested, the result says what was actually verified.** A `clean_only` request reports how many tracks were verified clean, how many were removed as explicit, and how many could not be checked — **naming the unverified ones**, since a count alone does not tell you which tracks they are. Verification is capped per call so a large result set cannot exhaust the shared web-sign-in rate limit; when the cap is reached, the output says so. `format="json"` and `format="csv"` stay pure: they carry each track's `explicit` field instead of a prose note.
+- **A rating is only accepted when the catalog match agrees on artist as well as title.** Matching on title alone is how #50 queued an unrelated song; here a wrong match would not merely return the wrong track, it would label an explicit one clean. A track with no artist is reported unverified rather than matched on title.
+- **A cached "Unknown" no longer disables verification permanently.** "Unknown" is a cached failure, not an answer, but it is truthy and the cache refuses to overwrite an existing entry — so one failed lookup would have made a track unverifiable forever.
+- `SKILL.md` documents that Music.app's `explicit` property is unreliable and must not be used for filtering.
+
 ## [0.18.5] - 2026-08-17
 
 No runtime code changed in this release.

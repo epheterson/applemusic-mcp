@@ -145,6 +145,23 @@ def _find_playlist_applescript(safe_name: str) -> str:
         end try"""
 
 
+def _parse_explicit(raw: str) -> str:
+    """Map Music.app's explicit property to Yes / No / Unknown.
+
+    Music.app leaves `explicit` unset on many cloud tracks, and the scripts
+    emit "unknown" when reading it raises. Collapsing that to "No" is the
+    dangerous direction: it turns "I could not tell" into "this is clean",
+    which is the one answer a caller filtering for clean content must never
+    be given without it being true. Only a literal true/false is trusted.
+    """
+    v = (raw or "").strip().lower()
+    if v == "true":
+        return "Yes"
+    if v == "false":
+        return "No"
+    return "Unknown"
+
+
 def _parse_library_track_line(line: str) -> Optional[dict]:
     """Parse one ``|||``-delimited library track line into a dict.
 
@@ -168,7 +185,7 @@ def _parse_library_track_line(line: str) -> Optional[dict]:
         duration = ""
     explicit = "Unknown"
     if len(parts) >= 8:
-        explicit = "Yes" if parts[7].lower() == "true" else "No"
+        explicit = _parse_explicit(parts[7])
     return {
         "name": parts[0],
         "artist": parts[1],
@@ -1507,7 +1524,7 @@ def search_playlist(playlist_name: str, query: str) -> tuple[bool, list[dict]]:
                 try
                     set trackExplicit to explicit of t
                 on error
-                    set trackExplicit to false
+                    set trackExplicit to "unknown"
                 end try
                 set output to output & trackName & "|||" & trackArtist & "|||" & trackAlbum & "|||" & trackId & "|||" & trackExplicit & "\\n"
             on error
@@ -1535,7 +1552,7 @@ def search_playlist(playlist_name: str, query: str) -> tuple[bool, list[dict]]:
             # Parse explicit field (added in 5th position)
             explicit = "Unknown"
             if len(parts) >= 5:
-                explicit = "Yes" if parts[4].lower() == "true" else "No"
+                explicit = _parse_explicit(parts[4])
 
             tracks.append(
                 {
@@ -2530,7 +2547,7 @@ def get_library_songs(limit: int = 100) -> tuple[bool, list[dict]]:
                 try
                     set tExplicit to explicit of t
                 on error
-                    set tExplicit to false
+                    set tExplicit to "unknown"
                 end try
                 set output to output & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & tDuration & "|||" & tGenre & "|||" & tYear & "|||" & tId & "|||" & tExplicit & "\\n"
                 set resultCount to resultCount + 1
@@ -2624,7 +2641,7 @@ def get_loved_songs(limit: int = 0) -> tuple[bool, list[dict]]:
                 try
                     set tExplicit to explicit of t
                 on error
-                    set tExplicit to false
+                    set tExplicit to "unknown"
                 end try
                 set output to output & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & tDuration & "|||" & tGenre & "|||" & tYear & "|||" & tId & "|||" & tExplicit & "\\n"
                 set resultCount to resultCount + 1
@@ -2688,7 +2705,7 @@ def get_library_songs_page(offset: int, limit: int) -> tuple[bool, list[dict], i
                 try
                     set tExplicit to explicit of t
                 on error
-                    set tExplicit to false
+                    set tExplicit to "unknown"
                 end try
                 set output to output & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & tDuration & "|||" & tGenre & "|||" & tYear & "|||" & tId & "|||" & tExplicit & "\\n"
             on error
@@ -2803,7 +2820,7 @@ def search_library_page(
                 try
                     set tExplicit to explicit of t
                 on error
-                    set tExplicit to false
+                    set tExplicit to "unknown"
                 end try
                 set output to output & tName & "|||" & tArtist & "|||" & tAlbum & "|||" & tDuration & "|||" & tGenre & "|||" & tYear & "|||" & tId & "|||" & tExplicit & "\\n"
             on error

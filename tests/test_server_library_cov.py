@@ -16,9 +16,11 @@ Covers:
 
 import json
 import time
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 import responses
 
 from applemusic_mcp import server
@@ -1125,7 +1127,7 @@ class TestLibraryRecentlyPlayed:
 class TestBuildLibraryTrackData:
     def test_basic_construction(self):
         songs = [_make_song_data()]
-        result = server._build_library_track_data(songs, fetch_explicit=False, clean_only=False)
+        result, _ = server._build_library_track_data(songs, fetch_explicit=False, clean_only=False)
         assert len(result) == 1
         assert result[0]["name"] == "Song A"
         assert result[0]["explicit"] == "Unknown"
@@ -1135,7 +1137,7 @@ class TestBuildLibraryTrackData:
         fake_cache = MagicMock()
         fake_cache.get_explicit.return_value = "Yes"
         monkeypatch.setattr(server, "get_track_cache", lambda: fake_cache)
-        result = server._build_library_track_data(songs, fetch_explicit=True, clean_only=False)
+        result, _ = server._build_library_track_data(songs, fetch_explicit=True, clean_only=False)
         assert result[0]["explicit"] == "Yes"
 
     def test_clean_only_filters_explicit(self, monkeypatch):
@@ -1150,7 +1152,7 @@ class TestBuildLibraryTrackData:
 
         fake_cache.get_explicit.side_effect = get_ex
         monkeypatch.setattr(server, "get_track_cache", lambda: fake_cache)
-        result = server._build_library_track_data(songs, fetch_explicit=False, clean_only=True)
+        result, _ = server._build_library_track_data(songs, fetch_explicit=False, clean_only=True)
         names = [t["name"] for t in result]
         assert "Clean" in names
         assert "Dirty" not in names
@@ -1160,7 +1162,7 @@ class TestBuildLibraryTrackData:
         songs = [_make_song_data(track_id="")]
         fake_cache = MagicMock()
         monkeypatch.setattr(server, "get_track_cache", lambda: fake_cache)
-        result = server._build_library_track_data(songs, fetch_explicit=True, clean_only=False)
+        result, _ = server._build_library_track_data(songs, fetch_explicit=True, clean_only=False)
         fake_cache.get_explicit.assert_not_called()
         assert result[0]["explicit"] == "Unknown"
 
@@ -1267,12 +1269,15 @@ class TestLibraryBrowse:
         result = server._library_browse(item_type="songs", limit=0)
         assert "Error" in result
 
-    def test_native_clean_only_uses_full_fetch(self, monkeypatch):
-        """clean_only=True forces full fetch path (limit>0 but clean_only)."""
+    def test_native_clean_only_uses_the_page_path(self, monkeypatch):
+        """clean_only rides the O(limit) page path so rating lookups are bounded
+        by the page rather than swept across the library."""
         songs = [_make_song_data(name="Clean", track_id="i.c1")]
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         monkeypatch.setattr(server, "_engine", lambda: "native")
-        monkeypatch.setattr(server.asc, "get_library_songs", lambda limit: (True, songs))
+        monkeypatch.setattr(
+            server.asc, "get_library_songs_page", lambda offset, limit: (True, songs, 1, None)
+        )
         fake_cache = MagicMock()
         fake_cache.get_explicit.return_value = "No"
         monkeypatch.setattr(server, "get_track_cache", lambda: fake_cache)
@@ -2065,3 +2070,182 @@ class TestLibraryRecentlyAddedMissingLines:
         result = server._library_recently_added(limit=26, format="text", export="none", full=False)
         assert "Album 0" in result
         assert "Last Album" in result
+
+
+# ===========================================================================
+# clean_only must not answer "clean" when it means "not known to be explicit"
+# ===========================================================================
+def test_parse_explicit_is_three_state():
+    """ "Could not read it" must not collapse to "No" -- that is the one wrong
+    answer for a caller filtering for children."""
+    from applemusic_mcp.applescript import _parse_explicit
+
+    assert _parse_explicit("true") == "Yes"
+    assert _parse_explicit("false") == "No"
+    for cannot_tell in ("unknown", "", "   ", "missing value"):
+        assert _parse_explicit(cannot_tell) == "Unknown", cannot_tell
+
+
+def test_clean_filter_removes_explicit_and_discloses_unverified(monkeypatch):
+    """Old filter was `!= "Yes"` with uncached ratings set to "Unknown", so a
+    cold cache passed everything through while reporting success."""
+    from applemusic_mcp import server as srv
+
+    monkeypatch.setattr(srv, "_resolve_explicit_ratings", lambda t, budget=40: {})
+    kept, note = srv._apply_clean_filter(
+        [
+            {"name": "Clean", "explicit": "No"},
+            {"name": "Explicit", "explicit": "Yes"},
+            {"name": "Unrated", "explicit": "Unknown"},
+        ],
+        True,
+    )
+
+    assert [t["name"] for t in kept] == ["Clean", "Unrated"]
+    assert kept[1]["explicit"] == "Unknown", "kept, but not relabelled as clean"
+    assert "1 verified clean" in note and "could NOT be verified" in note
+
+
+def test_clean_filter_resolves_unknown_against_catalog(monkeypatch):
+    """The case that let 8 explicit tracks read as clean: Music.app says
+    Unknown, the catalog says explicit."""
+    from applemusic_mcp import server as srv
+
+    saved = {}
+    cache = types.SimpleNamespace(
+        get_explicit=lambda tid: None,
+        get_track_by_name=lambda n, a="": None,
+        set_track_metadata=lambda **kw: saved.update(kw),
+    )
+    monkeypatch.setattr(srv, "get_track_cache", lambda: cache)
+    monkeypatch.setattr(
+        srv,
+        "_search_catalog_songs",
+        lambda q, n: [
+            # Same title, different artist: must not be accepted as this
+            # track's rating (#50 was this bug class in the queue path).
+            {
+                "attributes": {
+                    "name": "Fat Lip",
+                    "artistName": "Someone Else",
+                    "contentRating": "clean",
+                }
+            },
+            {
+                "attributes": {
+                    "name": "Fat Lip",
+                    "artistName": "Sum 41",
+                    "contentRating": "explicit",
+                }
+            },
+        ],
+    )
+
+    kept, note = srv._apply_clean_filter(
+        [{"name": "Fat Lip", "artist": "Sum 41", "id": "9", "explicit": "Unknown"}], True
+    )
+    assert kept == [] and "1 explicit removed" in note
+    assert saved["explicit"] == "Yes", "resolved rating should be cached"
+
+
+def test_clean_filter_will_not_rate_a_track_from_a_different_artist(monkeypatch):
+    """No match for this artist means unverified, not clean."""
+    from applemusic_mcp import server as srv
+
+    cache = types.SimpleNamespace(
+        get_explicit=lambda tid: None,
+        get_track_by_name=lambda n, a="": None,
+        set_track_metadata=lambda **kw: None,
+    )
+    monkeypatch.setattr(srv, "get_track_cache", lambda: cache)
+    monkeypatch.setattr(
+        srv,
+        "_search_catalog_songs",
+        lambda q, n: [
+            {"attributes": {"name": "Fat Lip", "artistName": "Nobody", "contentRating": "clean"}}
+        ],
+    )
+
+    kept, note = srv._apply_clean_filter(
+        [{"name": "Fat Lip", "artist": "Sum 41", "explicit": "Unknown"}], True
+    )
+    assert kept[0]["explicit"] == "Unknown", "a mismatched hit must not mark it clean"
+    assert "could NOT be verified" in note
+
+
+def test_clean_filter_is_noop_when_disabled():
+    from applemusic_mcp import server as srv
+
+    kept, note = srv._apply_clean_filter([{"name": "X", "explicit": "Yes"}], False)
+    assert len(kept) == 1 and note == ""
+
+
+def test_cached_unknown_does_not_permanently_block_verification(monkeypatch):
+    """The enrichment path caches "Unknown" for unmatched tracks and the cache
+    refuses to overwrite an entry, so treating Unknown as a cache hit would make
+    one failed lookup permanent."""
+    from applemusic_mcp import server as srv
+
+    cache = types.SimpleNamespace(
+        get_explicit=lambda tid: "Unknown",
+        get_track_by_name=lambda n, a="": None,
+        set_track_metadata=lambda **kw: None,
+    )
+    monkeypatch.setattr(srv, "get_track_cache", lambda: cache)
+    monkeypatch.setattr(
+        srv,
+        "_search_catalog_songs",
+        lambda q, n: [
+            {"attributes": {"name": "T", "artistName": "A", "contentRating": "explicit"}}
+        ],
+    )
+
+    kept, note = srv._apply_clean_filter(
+        [{"name": "T", "artist": "A", "id": "1", "explicit": "Unknown"}], True
+    )
+    assert kept == [], "a cached Unknown must not stop the catalog lookup"
+
+
+def test_unverified_tracks_are_named_not_just_counted(monkeypatch):
+    """A count tells a parent five of twenty-five are unchecked without telling
+    them which five."""
+    from applemusic_mcp import server as srv
+
+    monkeypatch.setattr(srv, "_resolve_explicit_ratings", lambda t, budget=40: {})
+    _, note = srv._apply_clean_filter(
+        [{"name": "Mystery", "artist": "Nobody", "explicit": "Unknown"}], True
+    )
+    assert "Mystery - Nobody" in note
+
+
+@pytest.mark.parametrize(
+    "failure, expected_reason",
+    [
+        (FileNotFoundError("Developer token not found"), "not signed in"),
+        (requests.exceptions.ConnectionError("offline"), "catalog unreachable"),
+        (requests.exceptions.Timeout("slow"), "catalog timed out"),
+    ],
+)
+def test_clean_filter_degrades_without_crashing(monkeypatch, failure, expected_reason):
+    """No token, no network, no catalog: keep the tracks, mark them unverified,
+    and say which of those it was. These paths used to work with no network at
+    all, so they must not start raising."""
+    from applemusic_mcp import server as srv
+
+    cache = types.SimpleNamespace(
+        get_explicit=lambda tid: None,
+        get_track_by_name=lambda n, a="": None,
+        set_track_metadata=lambda **kw: None,
+    )
+    monkeypatch.setattr(srv, "get_track_cache", lambda: cache)
+
+    def boom(q, n):
+        raise failure
+
+    monkeypatch.setattr(srv, "_search_catalog_songs", boom)
+
+    kept, note = srv._apply_clean_filter(
+        [{"name": "T", "artist": "A", "id": "1", "explicit": "Unknown"}], True
+    )
+    assert kept and kept[0]["explicit"] == "Unknown"
+    assert expected_reason in note
