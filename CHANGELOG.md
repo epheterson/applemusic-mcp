@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.19.1] - 2026-08-20
+
+### Fixed
+
+- **`clean_only` still reported unchecked tracks as "verified clean" on every API-sourced path** — Windows, Linux, and `api` engine mode, where the library API is the only source. `/me/library/songs` does not return `contentRating` at all, and the extractor read absent as "not explicit", so a request for clean content came back confidently clean having verified nothing. Library objects now report `Unknown` when the field is absent; catalog objects keep the (correct) reading that absent means clean, discriminated on the object's `type`. Audited against an independent catalog lookup on both the native and API paths: zero tracks reported clean that are actually explicit.
+- **An unverified rating could be written to the cache and become permanent.** The extractor cached whatever it had inferred, including the false "not explicit" above, and the cache is consulted as authoritative and refuses to overwrite an existing entry. Only an established `Yes`/`No` is cached now.
+
+### Changed
+
+- **Ratings are resolved in one batch request by catalog id** instead of one fuzzy search per track. Matching is exact — no name comparison is involved — and only tracks with no catalog id (user-uploaded songs that are not in the catalog) fall back to searching, which is also why those are the ones reported unverified. A 25-track `clean_only` browse went from 9.7s and 20 searches to 3.9s and 3.
+
 ## [0.19.0] - 2026-08-20
 
 ### Fixed

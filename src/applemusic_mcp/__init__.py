@@ -4,4 +4,4 @@ Works on Windows, Linux, and macOS via Apple Music's web API plus a browser play
 (Chrome anywhere); on macOS it also drives Music.app and Safari directly.
 """
 
-__version__ = "0.19.0"
+__version__ = "0.19.1"

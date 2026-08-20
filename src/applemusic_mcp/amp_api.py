@@ -574,3 +574,39 @@ def rate(catalog_id: str, value: int, content_type: str = "songs") -> tuple[bool
         return (r.status_code in _OK), (label if r.status_code in _OK else _err(r, "rate"))
     except Exception as e:
         return False, str(e)
+
+
+def catalog_content_ratings(catalog_ids: list[str], storefront: str = "us") -> dict[str, str]:
+    """Look up content ratings for many catalog songs at once.
+
+    Returns {catalog_id: "Yes"|"No"} for every id the catalog answered for.
+    Ids it does not answer for are simply absent -- the caller must treat a
+    missing id as unverified rather than as clean.
+
+    The catalog omits ``contentRating`` on clean tracks, so absent-in-a-present
+    -object means "No" here. That inference is only valid for catalog objects;
+    library objects never carry the field at all.
+    """
+    out: dict[str, str] = {}
+    ids = [i for i in dict.fromkeys(catalog_ids) if i]
+    if not ids:
+        return out
+    # The endpoint accepts a few hundred ids per request; keep well inside it.
+    for start in range(0, len(ids), 250):
+        chunk = ids[start : start + 250]
+        try:
+            r = requests.get(
+                f"{AMP}/catalog/{storefront}/songs",
+                headers=_headers(),
+                params={"ids": ",".join(chunk)},
+                timeout=TIMEOUT,
+            )
+            note_status(r.status_code)
+            if not r.ok:
+                continue
+            for d in r.json().get("data", []):
+                rating = d.get("attributes", {}).get("contentRating")
+                out[d.get("id", "")] = "Yes" if rating == "explicit" else "No"
+        except requests.exceptions.RequestException:
+            continue
+    return out
