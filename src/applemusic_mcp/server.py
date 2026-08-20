@@ -6318,7 +6318,7 @@ def _resolve_explicit_ratings(tracks: list[dict], budget: int = _CLEAN_VERIFY_BU
 
     Mutates `tracks` in place. Returns counts for the caller to report.
     """
-    stats = {"cached": 0, "looked_up": 0, "unverified": 0, "blocked": ""}
+    stats = {"cached": 0, "batched": 0, "looked_up": 0, "unverified": 0, "blocked": ""}
     cache = get_track_cache()
     pending = []
 
@@ -6358,7 +6358,7 @@ def _resolve_explicit_ratings(tracks: list[dict], budget: int = _CLEAN_VERIFY_BU
             if not t:
                 continue
             t["explicit"] = rating
-            stats["looked_up"] += 1
+            stats["batched"] += 1
             cache.set_track_metadata(
                 explicit=rating,
                 catalog_id=cid,
@@ -6445,6 +6445,10 @@ def _apply_clean_filter(tracks: list[dict], clean_only: bool) -> tuple[list[dict
     if removed:
         parts.append(f"{removed} explicit removed")
     if unverified:
+        # A throttle is the most likely reason a lookup came back empty, and it
+        # is the one the user can act on (wait, or sign in with --dev).
+        if not stats.get("blocked") and amp_api.throttled_recently():
+            stats["blocked"] = "rate limited by Apple"
         why = f" ({stats['blocked']})" if stats.get("blocked") else ""
         parts.append(f"{unverified} could NOT be verified{why}")
     note = "Clean filter: " + " · ".join(parts)

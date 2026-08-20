@@ -2313,3 +2313,56 @@ def test_ratings_are_resolved_by_catalog_id_before_any_name_search(monkeypatch):
 
     assert tracks[0]["explicit"] == "Yes", "resolved exactly, by id"
     assert len(searched) == 1 and "NoId" in searched[0], "only the id-less track is searched"
+
+
+def test_batched_resolutions_do_not_consume_the_search_budget(monkeypatch):
+    """The budget caps expensive per-track searches. Counting cheap batched
+    resolutions against it would let one well-populated page disable the
+    fallback for exactly the tracks that need it -- the ones with no id."""
+    from applemusic_mcp import server as srv
+
+    monkeypatch.setattr(
+        srv,
+        "get_track_cache",
+        lambda: types.SimpleNamespace(
+            get_explicit=lambda tid: None,
+            get_track_by_name=lambda n, a="": None,
+            set_track_metadata=lambda **kw: None,
+        ),
+    )
+    batched = {str(i): "No" for i in range(50)}
+    monkeypatch.setattr(
+        srv.amp_api, "catalog_content_ratings", lambda ids, storefront="us": batched
+    )
+    searched = []
+    monkeypatch.setattr(srv, "_search_catalog_songs", lambda q, n: searched.append(q) or [])
+
+    tracks = [
+        {"name": f"B{i}", "artist": "A", "catalog_id": str(i), "explicit": "Unknown"}
+        for i in range(50)
+    ] + [{"name": "NoId", "artist": "A", "catalog_id": "", "explicit": "Unknown"}]
+
+    srv._resolve_explicit_ratings(tracks, budget=5)
+    assert searched, "50 batched tracks must not exhaust a 5-search budget"
+
+
+def test_rate_limiting_is_named_as_the_reason(monkeypatch):
+    from applemusic_mcp import server as srv
+
+    monkeypatch.setattr(
+        srv,
+        "get_track_cache",
+        lambda: types.SimpleNamespace(
+            get_explicit=lambda tid: None,
+            get_track_by_name=lambda n, a="": None,
+            set_track_metadata=lambda **kw: None,
+        ),
+    )
+    monkeypatch.setattr(srv.amp_api, "catalog_content_ratings", lambda ids, storefront="us": {})
+    monkeypatch.setattr(srv, "_search_catalog_songs", lambda q, n: [])
+    monkeypatch.setattr(srv.amp_api, "throttled_recently", lambda *a, **k: True)
+
+    _, note = srv._apply_clean_filter(
+        [{"name": "T", "artist": "A", "catalog_id": "1", "explicit": "Unknown"}], True
+    )
+    assert "rate limited by Apple" in note
