@@ -1,6 +1,6 @@
 ---
 name: apple-music
-version: 0.19.1
+version: 0.20.0
 description: Apple Music integration — AppleScript (local Music.app) and the Apple Music API / web player (cross-platform library, playlists, playback, and queue)
 ---
 
@@ -264,7 +264,8 @@ tell application "Music"
     -- Create playlist
     make new user playlist with properties {name:"New Playlist", description:"My playlist"}
 
-    -- Delete playlist
+    -- Delete playlist. Match the name EXACTLY; a `contains` fallback here
+    -- turns "Work" into "Workout".
     delete user playlist "Old Playlist"
 
     -- Rename playlist
@@ -291,8 +292,17 @@ tell application "Music"
     set targetTrack to first track of library playlist 1 whose name contains "Hey Jude"
     duplicate targetTrack to targetPlaylist
 
-    -- Remove track from playlist
-    delete (first track of user playlist "Road Trip" whose name contains "Hey Jude")
+    -- Remove track from playlist. `contains` + `first` is a TRAP for anything
+    -- destructive: it deletes whichever match sorts first, irreversibly.
+    -- "Love" matches 376 tracks in a real library; "Jack" matches three
+    -- playlists including a 467-track one. Enumerate first and act only when
+    -- the target is unambiguous.
+    set hits to (every track of user playlist "Road Trip" whose name contains "Hey Jude")
+    if (count of hits) is 1 then
+        delete (item 1 of hits)
+    else
+        -- report the candidates and let the user choose; do not guess
+    end if
 
     -- Playlist properties
     duration of user playlist "Road Trip"   -- total duration

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.0] - 2026-08-22
+
+Security release. Reported privately by [@jaminben](https://github.com/jaminben) in GHSA-82fm-fh3q-54fj, with fixes and reproduction detail supplied alongside the report.
+
+### Security
+
+- **An Apple Music URL was validated by prefix, so a lookalike host reached `open`.** `startswith("https://music.apple.com")` accepts `https://music.apple.com.attacker.tld/…` and `https://music.apple.com@attacker.tld/…`, whose real host is the attacker's, and the `music://` branch accepted any host at all. The value is passed to `open`. Since track titles, album names and playlist descriptions are text an attacker can influence and that reaches the model, a URL-open primitive is an outbound channel rather than merely a bad link. Both schemes are now validated on the parsed **hostname**, matching what the Chrome and Safari engines already did, and both URLs are rebuilt from the validated remainder so the host that was checked is the host that is opened.
+- **The `exports://` containment check could not have stopped a traversal.** `Path.is_relative_to` is lexical, so `cache_dir/"../../.ssh/id_rsa"` satisfied it while resolving outside the cache, and the check ran after the file was already opened. Not exploitable as shipped — the MCP SDK binds `{filename}` to a single path segment — but that is a control this server does not own. The path is now rejected if absolute or containing `..`, resolved, and confirmed inside the cache before any filesystem access.
+
+### Fixed
+
+- **Destructive operations acted on a substring match and could hit the wrong item.** `library(action="remove", track="Love")` deleted whichever of 376 matching tracks sorted first; `playlist(action="delete", name="Jack")` could destroy a 467-track playlist called "Jack & Norah". All three destructive native paths — library removal, playlist delete, playlist rename — now enumerate first: an exact case-insensitive match wins, a single partial match is accepted, and anything else is refused with the candidates named. This is the behaviour the API rail already had; the native rail, which is the default on macOS, never got it.
+- **`clean_only` lost its signal in CSV and exported JSON.** The verification note is suppressed for structured formats on the grounds that each row carries `explicit` — true for inline JSON, but the CSV field list and the JSON export writer both omitted the key, so `format="csv"` returned a list that read as vetted while containing tracks that were never checked. Both now carry it.
+- **`SECURITY.md` described a control that does not exist.** It instructed setting a `secure_storage` preference to use the OS keychain; there is no such preference (storage is chosen by platform, and `config(set-pref)` rejects the key), so a reader following it believed they had hardened token storage and had not. The browser-argument claim is also narrowed to the engine it actually describes.
+
 ## [0.19.1] - 2026-08-20
 
 ### Fixed

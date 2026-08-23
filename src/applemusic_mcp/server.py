@@ -743,7 +743,9 @@ def format_output(
         # CSV response inline
         output = io.StringIO()
         if items and "duration" in items[0]:
-            csv_fields = ["name", "duration", "artist", "album", "year", "genre", "id"]
+            # `explicit` rides along so a clean_only export cannot read as
+            # vetted while containing tracks that were never checked.
+            csv_fields = ["name", "duration", "artist", "album", "year", "genre", "explicit", "id"]
             if full:
                 csv_fields += [
                     "track_number",
@@ -839,6 +841,7 @@ def format_output(
                                     "id",
                                     "track_count",
                                     "release_date",
+                                    "explicit",
                                 }
                             }
                             for item in items
@@ -911,12 +914,20 @@ def list_exports() -> str:
 @mcp.resource("exports://{filename}")
 def read_export(filename: str) -> str:
     """Read an exported file from the cache directory."""
-    cache_dir = get_cache_dir()
-    file_path = cache_dir / filename
-    if not file_path.exists():
+    # Containment must be checked on the RESOLVED path and before touching the
+    # filesystem. `is_relative_to` is purely lexical: cache_dir/"../../.ssh/id_rsa"
+    # satisfies it while resolving outside the cache entirely. What kept this
+    # from being exploitable was the MCP SDK binding {filename} to a single path
+    # segment -- a control this server does not own, so it is not one to rely on.
+    cache_dir = get_cache_dir().resolve()
+    candidate = Path(filename)
+    if candidate.is_absolute() or ".." in candidate.parts:
+        return "Invalid path"
+    file_path = (cache_dir / candidate).resolve()
+    if cache_dir not in file_path.parents:
+        return "Invalid path"
+    if not file_path.is_file():
         return f"File not found: {filename}"
-    if not file_path.is_relative_to(cache_dir):
-        return "Invalid path"  # pragma: no cover  # unreachable: file_path is always cache_dir/filename, never outside cache_dir
     return file_path.read_text(encoding="utf-8")
 
 

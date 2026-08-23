@@ -2366,3 +2366,50 @@ def test_rate_limiting_is_named_as_the_reason(monkeypatch):
         [{"name": "T", "artist": "A", "catalog_id": "1", "explicit": "Unknown"}], True
     )
     assert "rate limited by Apple" in note
+
+
+@pytest.mark.parametrize(
+    "name", ["../../.ssh/id_rsa", "/etc/passwd", "..", "../../../etc/hosts", "sub/../../x"]
+)
+def test_read_export_rejects_traversal(name):
+    """`is_relative_to` is lexical: cache_dir/"../../.ssh/id_rsa" satisfies it
+    while resolving outside the cache. What kept this unexploitable was the MCP
+    SDK binding {filename} to one path segment -- a control this server does not
+    own. GHSA-82fm-fh3q-54fj."""
+    from applemusic_mcp import server as srv
+
+    assert srv.read_export(name) == "Invalid path"
+
+
+def test_read_export_still_reads_a_real_export():
+    from applemusic_mcp import server as srv
+
+    cache = srv.get_cache_dir().resolve()
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / "_guard_probe.json").write_text('{"ok":1}', encoding="utf-8")
+    try:
+        assert srv.read_export("_guard_probe.json") == '{"ok":1}'
+    finally:
+        (cache / "_guard_probe.json").unlink()
+
+
+def test_csv_carries_explicit_so_a_clean_only_export_is_not_silently_unlabelled():
+    """The note is suppressed for csv on the grounds that rows carry the rating.
+    They did not. GHSA-82fm-fh3q-54fj."""
+    from applemusic_mcp import server as srv
+
+    rows = [
+        {
+            "name": "A",
+            "duration": "3:00",
+            "artist": "X",
+            "album": "Al",
+            "year": "2020",
+            "genre": "Pop",
+            "id": "1",
+            "explicit": "Unknown",
+        }
+    ]
+    out = srv.format_output(rows, "csv", "none", False, "t")
+    assert "explicit" in out.splitlines()[0]
+    assert "Unknown" in out

@@ -6,12 +6,12 @@
     "url": "https://github.com/epheterson/applemusic-mcp",
     "source": "github"
   },
-  "version": "0.19.1",
+  "version": "0.20.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "applemusic-mcp",
-      "version": "0.19.1",
+      "version": "0.20.0",
       "transport": {
         "type": "stdio"
       },

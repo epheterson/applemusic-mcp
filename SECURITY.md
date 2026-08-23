@@ -8,7 +8,7 @@ Please report security issues privately via [GitHub Security Advisories](https:/
 
 This is a **local** stdio MCP server. It talks to Apple Music on your behalf and holds the credentials needed to do so. Nothing is sent anywhere except Apple's own endpoints (`amp-api.music.apple.com`, `api.music.apple.com`, `music.apple.com`) and, for catalog resolution, the public iTunes Search API.
 
-- **Tokens** (the Apple Developer token, your `media-user-token`, and the harvested web-player token) are stored by default in **`0600` files** under `~/.config/applemusic-mcp/` — readable only by you, and reliable across the separate CLI and server processes. Set the `secure_storage` preference to `keychain` to use the **OS keychain** instead (macOS Keychain / Windows Credential Locker / Linux Secret Service); it's opt-in because the keychain's per-process access policy can prompt or fail when the CLI writes a token and the server reads it. Either way a secret lives in exactly one place at a time.
+- **Tokens** (the Apple Developer token, your `media-user-token`, and the harvested web-player token) are stored by default in **`0600` files** under `~/.config/applemusic-mcp/` — readable only by you, and reliable across the separate CLI and server processes. On Windows the **OS keychain** (Credential Locker) is used instead, chosen automatically by platform rather than by a setting; elsewhere the `0600` files are used, because the keychain's per-process access policy can prompt or fail when the CLI writes a token and the server reads it. Either way a secret lives in exactly one place at a time.
 - **Token files and the generated `auth.html`** are created `0600` atomically (no world-readable window). The config directory and the browser profile directory (`~/.applemusic-mcp/chrome`, which holds your signed-in session) are `0700`.
 - **Your `.p8` signing key** (Apple Developer path only) stays where you put it; it is never copied into the keychain. `reset` does **not** delete it.
 - The **audit log** (`~/.cache/applemusic-mcp/audit_log.jsonl`) records actions (e.g. "deleted playlist X") and library content — never tokens, cookies, or headers.
@@ -22,7 +22,7 @@ Without an Apple Developer account, the server can use Apple's **public** `AMPWe
 ## Hardening notes
 
 - Browser features (sign-in, playback, queue) drive a **local** Chrome via Playwright. The server never opens a network-listening port except the short-lived `localhost`-only callback used by the optional `authorize` flow, which is gated by an exact Host/Origin check (anti-DNS-rebinding).
-- User input routed into AppleScript is escaped; values passed to the browser are sent as `page.evaluate` arguments, never string-interpolated into a script body.
+- User input routed into AppleScript is escaped. Values passed to the Chrome/Playwright engine are sent as `page.evaluate` arguments rather than interpolated into a script body. The Safari engine does interpolate JS into an AppleScript literal, where the value is `json.dumps`-encoded (with `ensure_ascii`, so line separators stay escaped) and then AppleScript-quoted.
 
 ## Supported versions
 

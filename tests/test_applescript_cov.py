@@ -1553,3 +1553,82 @@ def test_library_diff():
     # clean case
     same = {"track_count": 1, "playback": {}, "playlists": {}, "folders": {}}
     assert asc.library_diff(same, same)["is_clean"] is True
+
+
+# ===========================================================================
+# GHSA-82fm-fh3q-54fj
+# ===========================================================================
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://music.apple.com.attacker.tld/album/x/1?i=2",  # suffix host
+        "https://music.apple.com@attacker.tld/album/x/1",  # userinfo; real host is attacker.tld
+        "music://attacker.tld/anything",  # music:// used to accept anything
+        "https://evil.tld/x",
+        "HTTPS://MUSIC.APPLE.COM.evil.tld/x",
+        "notaurl",
+    ],
+)
+def test_open_catalog_song_rejects_non_apple_hosts(monkeypatch, url):
+    """The value reaches `open`, so a prefix check is not enough: it accepts
+    both a suffix host and a userinfo-prefixed host whose real authority is the
+    attacker's. Titles and playlist names are attacker-influenceable text that
+    reaches the model, so a URL-open primitive is an outbound channel."""
+    ran = []
+    monkeypatch.setattr(asc.subprocess, "run", lambda *a, **k: ran.append(a))
+
+    ok, msg = asc.open_catalog_song(url)
+
+    assert ok is False, msg
+    assert ran == [], f"nothing may be handed to `open` for {url!r}"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://music.apple.com/us/album/x/1?i=2",
+        "music://music.apple.com/us/album/x/1",
+        "https://beta.music.apple.com/us/album/x/1",
+    ],
+)
+def test_open_catalog_song_still_opens_real_apple_urls(monkeypatch, url):
+    calls = []
+    monkeypatch.setattr(asc.subprocess, "run", lambda *a, **k: calls.append(a[0][1]))
+    ok, _ = asc.open_catalog_song(url)
+    assert ok and calls and calls[0].startswith("music://")
+
+
+def test_remove_from_library_refuses_an_ambiguous_match(monkeypatch):
+    """`whose name contains` plus `first track` deleted whichever track sorted
+    first. Deletion is irreversible, so ambiguity must refuse."""
+    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS:376:At Your Best - Aaliyah; Crazy Love - X; "))
+    ok, msg = asc.remove_from_library(track_name="Love")
+    assert ok is False
+    assert "376" in msg and "refusing to delete" in msg
+    assert "Aaliyah" in msg, "the candidates must be named"
+
+
+def test_delete_playlist_refuses_an_ambiguous_match(monkeypatch):
+    """`delete "Jack"` could destroy "Jack & Norah"."""
+    setrun(
+        monkeypatch, const(True, "ERROR:AMBIGUOUS:3:Jack & Norah; Jack Heard; Jack's Birthday; ")
+    )
+    ok, msg = asc.delete_playlist("Jack")
+    assert ok is False and "refusing to delete" in msg and "Jack & Norah" in msg
+
+
+def test_rename_playlist_refuses_an_ambiguous_match(monkeypatch):
+    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS:2:Work; Workout; "))
+    ok, msg = asc.rename_playlist("Work", "New")
+    assert ok is False and "refusing to rename" in msg
+
+
+def test_destructive_playlist_ops_do_not_use_the_partial_match_resolver(monkeypatch):
+    """The read-path resolver falls back to `name contains`, which is fine for
+    reads and unacceptable for delete/rename."""
+    for fn, args in ((asc.delete_playlist, ("X",)), (asc.rename_playlist, ("X", "Y"))):
+        r = setrun(monkeypatch, Recorder(True, ""))
+        fn(*args)
+        script = code_only(r.calls[0])
+        assert "ERROR:AMBIGUOUS" in script, fn.__name__
+        assert "first user playlist whose name contains" not in script, fn.__name__
