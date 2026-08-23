@@ -799,7 +799,19 @@ def format_output(
             file_path = cache_dir / f"{file_prefix}_{timestamp}.csv"
             # Determine fields based on full flag
             if items and "duration" in items[0]:
-                csv_fields = ["name", "duration", "artist", "album", "year", "genre", "id"]
+                # `explicit` must ride along here too: the verification note is
+                # suppressed for non-text formats on the grounds that each row
+                # carries the rating, and an export file has no note at all.
+                csv_fields = [
+                    "name",
+                    "duration",
+                    "artist",
+                    "album",
+                    "year",
+                    "genre",
+                    "explicit",
+                    "id",
+                ]
                 if full:
                     csv_fields += [
                         "track_number",
@@ -3888,9 +3900,20 @@ def _playlist_create_in_folder(name: str, folder: str, description: str = "") ->
     # Move it into the folder
     move_result = _playlist_move(name, folder)
     if "Error" in move_result:
-        # Rollback: delete the orphaned playlist
-        asc.delete_playlist(name)
-        return f"Error: Created playlist '{name}' but failed to move to folder '{folder}': {move_result}. Playlist was removed."
+        # Rollback: delete the orphaned playlist. The delete can legitimately
+        # refuse -- Music.app allows duplicate names, and if one already existed
+        # the rollback now sees two and will not guess which to remove. Report
+        # what actually happened rather than asserting a cleanup that did not
+        # occur, so the user knows an orphan is sitting there.
+        removed, removal_detail = asc.delete_playlist(name)
+        if removed:
+            outcome = "Playlist was removed."
+        else:
+            outcome = f"The playlist was left in place ({removal_detail}) — remove it manually."
+        return (
+            f"Error: Created playlist '{name}' but failed to move to folder "
+            f"'{folder}': {move_result}. {outcome}"
+        )
 
     return f"Created playlist '{name}' in folder '{folder}'"
 

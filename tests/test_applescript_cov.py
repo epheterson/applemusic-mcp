@@ -1567,6 +1567,14 @@ def test_library_diff():
         "https://evil.tld/x",
         "HTTPS://MUSIC.APPLE.COM.evil.tld/x",
         "notaurl",
+        # A backslash is not an authority delimiter to urlparse but IS
+        # normalised to "/" by browsers, so this parses with a host that
+        # passes a suffix test and then resolves to evil.tld once opened.
+        "https://evil.tld\\.music.apple.com/x",
+        "https://music.apple.com\\@evil.tld/x",
+        # urlparse raises ValueError here; a rejection path must not crash.
+        "https://[evil",
+        "https://music.apple.com /x",
     ],
 )
 def test_open_catalog_song_rejects_non_apple_hosts(monkeypatch, url):
@@ -1611,14 +1619,14 @@ def test_remove_from_library_refuses_an_ambiguous_match(monkeypatch):
 def test_delete_playlist_refuses_an_ambiguous_match(monkeypatch):
     """`delete "Jack"` could destroy "Jack & Norah"."""
     setrun(
-        monkeypatch, const(True, "ERROR:AMBIGUOUS:3:Jack & Norah; Jack Heard; Jack's Birthday; ")
+        monkeypatch, const(True, "ERROR:AMBIGUOUS_PL:3:Jack & Norah; Jack Heard; Jack's Birthday; ")
     )
     ok, msg = asc.delete_playlist("Jack")
     assert ok is False and "refusing to delete" in msg and "Jack & Norah" in msg
 
 
 def test_rename_playlist_refuses_an_ambiguous_match(monkeypatch):
-    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS:2:Work; Workout; "))
+    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS_PL:2:Work; Workout; "))
     ok, msg = asc.rename_playlist("Work", "New")
     assert ok is False and "refusing to rename" in msg
 
@@ -1632,3 +1640,66 @@ def test_destructive_playlist_ops_do_not_use_the_partial_match_resolver(monkeypa
         script = code_only(r.calls[0])
         assert "ERROR:AMBIGUOUS" in script, fn.__name__
         assert "first user playlist whose name contains" not in script, fn.__name__
+
+
+def test_remove_track_from_playlist_refuses_both_kinds_of_ambiguity(monkeypatch):
+    """This path was ambiguous twice over: the playlist was resolved by partial
+    match AND the track was `first ... whose name contains`, so it could delete
+    the wrong track from the wrong playlist. The two are reported distinctly."""
+    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS_PL:3:Jack & Norah; Jack Heard; "))
+    ok, msg = asc.remove_track_from_playlist("Jack", track_name="Love")
+    assert ok is False and "playlists match" in msg
+
+    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS:16:What the World Needs Now Is Love - Burt; "))
+    ok, msg = asc.remove_track_from_playlist("Jack & Norah", track_name="Love")
+    assert ok is False and "tracks in" in msg and "16" in msg
+
+
+def test_move_to_root_refuses_an_ambiguous_match(monkeypatch):
+    """move_to_root deletes the playlist and recreates it -- the persistent ID
+    changes -- so a partial match here is a destructive operation wearing the
+    name of a move."""
+    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS_PL:3:Jack & Norah; Jack Heard; "))
+    ok, msg = asc.move_to_root("Jack")
+    assert ok is False and "refusing to move" in msg
+
+
+def test_every_destructive_native_path_enumerates_first(monkeypatch):
+    """Guard against a new destructive path shipping with the old shape."""
+    cases = [
+        (asc.delete_playlist, ("X",)),
+        (asc.rename_playlist, ("X", "Y")),
+        (asc.move_to_root, ("X",)),
+        (asc.remove_track_from_playlist, ("X",), {"track_name": "T"}),
+        (asc.remove_from_library, (), {"track_name": "T"}),
+    ]
+    for case in cases:
+        fn, args = case[0], case[1]
+        kwargs = case[2] if len(case) > 2 else {}
+        r = setrun(monkeypatch, Recorder(True, ""))
+        fn(*args, **kwargs)
+        script = code_only(r.calls[0])
+        assert "AMBIGUOUS" in script, f"{fn.__name__} does not enumerate before acting"
+
+
+def test_exact_disambiguation_is_one_apple_event_not_one_per_match(monkeypatch):
+    """Reading `name of t` per match is a round-trip each: 8478 matches took
+    ~10s and a broad term hit the 30s timeout, failing precisely in the
+    high-ambiguity case the guard exists for."""
+    r = setrun(monkeypatch, Recorder(True, ""))
+    asc.remove_from_library(track_name="Love")
+    script = code_only(r.calls[0])
+    assert "repeat with t in matches" not in script, "must not iterate matches"
+    assert 'whose name is "Love"' in script, "a single exact query instead"
+
+
+def test_exact_disambiguation_queries_the_right_container(monkeypatch):
+    """The library path must query the library and the playlist path the
+    playlist; swapping them yields 'variable targetPlaylist is not defined'."""
+    r = setrun(monkeypatch, Recorder(True, ""))
+    asc.remove_from_library(track_name="T")
+    assert "every track of library playlist 1 whose name is" in code_only(r.calls[0])
+
+    r = setrun(monkeypatch, Recorder(True, ""))
+    asc.remove_track_from_playlist("PL", track_name="T")
+    assert "every track of targetPlaylist whose name is" in code_only(r.calls[0])
