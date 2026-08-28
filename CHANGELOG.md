@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.1] - 2026-08-27
+
+### Fixed
+
+- **Playing an album or playlist from its page did nothing on macOS 26.** Music 26 rebuilt the header, and which activation works inverted: `AXPress` drives the new controls while a synthetic mouse click no-ops, where on Music 1.5 it is the other way round. Only the 1.5 answer was implemented, so album playback silently failed on macOS 26. Both activations are now tried and the result is decided by observation rather than by either call's return value — a playback fingerprint (player state plus current track) taken before and after, requiring an observed change. Whichever worked is remembered so the usual case costs one attempt.
+- **"Playback started" could be reported when nothing had happened.** The check was "is Music playing?", which is true whenever Music was already playing something, so an activation that did nothing at all looked successful. It now requires what is playing to have *changed*.
+- **The Play/Shuffle button is found by searching the accessibility tree** for a button with that name, instead of two hardcoded paths that a future re-nesting would break — macOS 26 already wrapped the album header in a new container. The known paths remain as a fallback.
+
+### Internal
+
+- `st` is reserved in AppleScript as an ordinal suffix ("1st"), so `set st to player state` is a syntax error. It parsed on Music 26 and failed on Music 1.5, where the unreadable value made every activation look like a no-op. A failed read now returns empty rather than a placeholder that compares equal to itself.
+
 ## [0.20.0] - 2026-08-22
 
 Security release. Reported privately by [@jaminben](https://github.com/jaminben) in GHSA-82fm-fh3q-54fj, with fixes and reproduction detail supplied alongside the report.
