@@ -2144,64 +2144,194 @@ def _check_playing() -> bool:
     return ok and state.strip() == "playing"
 
 
-def _click_play_or_shuffle(shuffle: bool = False) -> tuple[bool, str]:
-    """Find and click the Play or Shuffle button across different Music.app page layouts.
+def _playback_fingerprint() -> str:
+    """What is playing right now, as a comparable string.
 
-    Tries multiple known UI paths since albums, editorial playlists, and personal
-    playlists each have different accessibility hierarchies.
-
-    Args:
-        shuffle: If True, click Shuffle instead of Play
-
-    Returns:
-        Tuple of (success, message or error)
+    "Is it playing?" is not enough to prove an activation worked: if Music was
+    already playing something, every strategy looks successful while doing
+    nothing. Pair the state with the current track so we can require an
+    observed CHANGE instead.
     """
-    button_name = "Shuffle" if shuffle else "Play"
-    sa = _SCROLL_AREA
+    # `st` is NOT available as a variable name: AppleScript reserves it as an
+    # ordinal suffix (as in "1st"), so `set st to ...` is a syntax error. It
+    # parses on some versions and not others, which is the worst kind of trap —
+    # here it failed only on Music 1.5, where the unreadable fingerprint made
+    # every activation strategy look like a no-op.
+    ok, res = run_applescript(
+        """
+tell application "Music"
+    set pstate to (player state as text)
+    try
+        return pstate & "|" & (persistent ID of current track)
+    on error
+        return pstate & "|none"
+    end try
+end tell"""
+    )
+    if not ok:
+        # Returning a placeholder would make every before/after comparison
+        # equal, i.e. silently report that nothing ever works.
+        return ""
+    return res.strip()
 
-    # AXPress (`click button ...`) silently no-ops on Music.app's custom Play /
-    # Shuffle controls — it returns success but playback never starts (verified
-    # live). So we *locate* the button across the known layouts, read its screen
-    # rect, and post a real CoreGraphics mouse click at its center.
-    #   Path 1: album / editorial playlist (nested lists)
-    #   Path 2: personal playlist (header group)
-    locate = f"""
+
+# Where the header controls live has already moved once (macOS 26 wrapped the
+# album header in an AXUnknown), so find the button by SEARCHING the tree for
+# its name rather than by a fixed path. The known paths stay as a fallback.
+#
+# The walk is iterative on purpose. A recursive AppleScript handler does not
+# work here: handlers do not inherit the caller's `tell` context, so the
+# element references resolve in the wrong scope and every lookup silently
+# returns nothing — which reads exactly like "button not present".
+_HEADER_BUTTON_PATHS = (
+    'button "{name}" of UI element 1 of list 1 of list 1 of {sa}',
+    'button "{name}" of group 1 of {sa}',
+)
+
+_MAX_HEADER_DEPTH = 8
+
+
+def _header_button_lookup(button_name: str, tail: str) -> str:
+    """Build a script that binds `b` to the header button, then runs `tail`.
+
+    Search first, fixed paths second. `contents of` is required on the loop
+    variables: they are references, and passing one on without dereferencing
+    is the other way this search quietly finds nothing.
+    """
+    fallbacks = "\n".join(
+        f"""        if b is missing value then
+            try
+                set b to {path.format(name=button_name, sa="sa")}
+            end try
+        end if"""
+        for path in _HEADER_BUTTON_PATHS
+    )
+    return f"""
 tell application "System Events"
     tell process "Music"
-        set sa to {sa}
+        set sa to {_SCROLL_AREA}
         set b to missing value
-        try
-            set b to button "{button_name}" of UI element 1 of list 1 of list 1 of sa
-        end try
-        if b is missing value then
-            try
-                set b to button "{button_name}" of group 1 of sa
-            end try
-        end if
+
+        set theQueue to {{sa}}
+        set depth to 0
+        repeat while (count of theQueue) > 0 and depth < {_MAX_HEADER_DEPTH} and b is missing value
+            set nextLevel to {{}}
+            repeat with node in theQueue
+                try
+                    set kids to UI elements of (contents of node)
+                on error
+                    set kids to {{}}
+                end try
+                repeat with k in kids
+                    set kk to contents of k
+                    try
+                        if (role of kk as text) is "AXButton" and ¬
+                           (name of kk as text) is "{button_name}" then
+                            set b to kk
+                            exit repeat
+                        end if
+                    end try
+                    set end of nextLevel to kk
+                end repeat
+                if b is not missing value then exit repeat
+            end repeat
+            set theQueue to nextLevel
+            set depth to depth + 1
+        end repeat
+
+{fallbacks}
         if b is missing value then return "NOT_FOUND"
-        set p to position of b
-        set s to size of b
-        return (((item 1 of p) + (item 1 of s) / 2) as text) & "," & ¬
-               (((item 2 of p) + (item 2 of s) / 2) as text)
+{tail}
     end tell
 end tell"""
 
-    _ensure_music_frontmost()
-    ok, res = run_applescript(locate)
-    if not ok or not res or res.strip() == "NOT_FOUND":
-        return False, f"Could not find {button_name} button"
-    try:
-        cx, cy = (float(v) for v in res.strip().split(","))
-    except ValueError:
-        return False, f"Invalid {button_name} button position: {res}"
 
-    if not _jxa_mouse_click(cx, cy):
-        return False, "CoreGraphics click failed"
-    time.sleep(1)
-    if _check_playing():
-        mode = "shuffling" if shuffle else "playing"
-        return True, f"Playing ({mode} via UI click)"
-    return False, f"Clicked {button_name} but playback did not start"
+def _find_header_button(button_name: str) -> tuple[bool, str]:
+    """Return "x,y" for the centre of a header button."""
+    ok, res = run_applescript(
+        _header_button_lookup(
+            button_name,
+            """        set p to position of b
+        set z to size of b
+        return (((item 1 of p) + (item 1 of z) / 2) as text) & "," & ¬
+               (((item 2 of p) + (item 2 of z) / 2) as text)""",
+        )
+    )
+    return (ok and bool(res) and res.strip() != "NOT_FOUND"), res.strip()
+
+
+def _press_button_axpress(button_name: str, _center: str) -> bool:
+    """Activate via the accessibility API. Works on Music 26, no-ops on 1.5."""
+    ok, res = run_applescript(
+        _header_button_lookup(button_name, '        click b\n        return "PRESSED"')
+    )
+    return ok and res.strip() == "PRESSED"
+
+
+def _press_button_coregraphics(_button_name: str, center: str) -> bool:
+    """Activate with a real mouse event. Works on Music 1.5, no-ops on 26."""
+    try:
+        cx, cy = (float(v) for v in center.split(","))
+    except ValueError:
+        return False
+    return _jxa_mouse_click(cx, cy)
+
+
+# Ordered cheapest/most-supported first. Each returns "did I manage to fire
+# something", never "did playback start" -- that is decided by observation.
+_ACTIVATIONS = (
+    ("AXPress", _press_button_axpress),
+    ("click", _press_button_coregraphics),
+)
+
+# Remembering the winner keeps the common case to one attempt. It is only ever
+# a hint: every attempt is still verified, so a stale hint costs one retry.
+_activation_hint: Optional[str] = None
+
+
+def _click_play_or_shuffle(shuffle: bool = False) -> tuple[bool, str]:
+    """Start playback from the page header, whichever way this Music build wants.
+
+    Which activation works is a property of the Music version and has already
+    inverted once:
+
+      Music 1.5 (macOS 15)  AXPress silently no-ops; a real mouse event works.
+      Music 26  (macOS 26)  the header was rebuilt; AXPress works and the
+                            synthetic click no-ops.
+
+    Both report success either way, so neither return value is evidence. We try
+    each in turn and believe only an observed change in what is playing.
+    """
+    global _activation_hint
+    button_name = "Shuffle" if shuffle else "Play"
+    mode = "shuffling" if shuffle else "playing"
+
+    _ensure_music_frontmost()
+    found, center = _find_header_button(button_name)
+    if not found:
+        return False, f"Could not find {button_name} button"
+
+    before = _playback_fingerprint()
+    if not before:
+        return False, "Could not read player state to verify playback"
+    order = sorted(_ACTIVATIONS, key=lambda a: a[0] != _activation_hint)
+    tried = []
+    for label, activate in order:
+        tried.append(label)
+        if not activate(button_name, center):
+            continue
+        time.sleep(1)
+        after = _playback_fingerprint()
+        # Require a CHANGE. Music already playing something else would make
+        # "is it playing?" true for a strategy that did nothing at all.
+        if after and after != before and after.startswith("playing"):
+            _activation_hint = label
+            return True, f"Playing ({mode} via {label})"
+
+    return False, (
+        f"Found the {button_name} button but nothing started playing "
+        f"(tried: {', '.join(tried)})"
+    )
 
 
 def _ensure_music_frontmost() -> None:

@@ -822,34 +822,85 @@ def test_ensure_music_frontmost(monkeypatch):
 # ===========================================================================
 # Click-to-play orchestration
 # ===========================================================================
-def test_click_play_or_shuffle(monkeypatch):
-    monkeypatch.setattr(asc, "_ensure_music_frontmost", lambda: None)
+def _play_router(find="100,200", press="PRESSED", states=None):
+    """Route the three scripts _click_play_or_shuffle issues.
 
-    # NOT_FOUND
-    setrun(monkeypatch, const(True, "NOT_FOUND"))
+    `states` is the sequence of playback fingerprints returned, letting a test
+    say "nothing changed" (activation no-oped) or "it started".
+    """
+    seq = list(states or [])
+
+    def run(script, *_a):
+        if "position of b" in script:
+            return (True, find)
+        if "click b" in script:
+            return (True, press)
+        if "player state as text" in script:
+            return (True, seq.pop(0) if seq else "paused|none")
+        return (True, "")
+
+    return run
+
+
+def test_click_play_or_shuffle_reports_missing_button(monkeypatch):
+    monkeypatch.setattr(asc, "_ensure_music_frontmost", lambda: None)
+    setrun(monkeypatch, _play_router(find="NOT_FOUND"))
     ok, msg = asc._click_play_or_shuffle()
     assert ok is False and "Could not find Play" in msg
 
-    # invalid position
-    setrun(monkeypatch, const(True, "not,a,number"))
-    ok, msg = asc._click_play_or_shuffle(shuffle=True)
-    assert ok is False and "Invalid Shuffle button position" in msg
 
-    # click fails
-    setrun(monkeypatch, const(True, "10.0,20.0"))
-    monkeypatch.setattr(asc, "_jxa_mouse_click", lambda x, y: False)
-    assert asc._click_play_or_shuffle()[0] is False
+def test_click_play_or_shuffle_uses_axpress_when_it_works(monkeypatch):
+    """Music 26 activates via AXPress; the mouse event must not be needed."""
+    monkeypatch.setattr(asc, "_ensure_music_frontmost", lambda: None)
+    monkeypatch.setattr(asc, "_activation_hint", None, raising=False)
+    clicked = []
+    monkeypatch.setattr(asc, "_jxa_mouse_click", lambda x, y: clicked.append((x, y)) or True)
+    setrun(monkeypatch, _play_router(states=["paused|A", "playing|B"]))
 
-    # click ok + playing
+    ok, msg = asc._click_play_or_shuffle()
+    assert ok and "AXPress" in msg
+    assert clicked == [], "AXPress worked; no synthetic click should be posted"
+
+
+def test_click_play_or_shuffle_falls_back_to_the_mouse_event(monkeypatch):
+    """Music 1.5 no-ops AXPress, so an unchanged fingerprint must fall through."""
+    monkeypatch.setattr(asc, "_ensure_music_frontmost", lambda: None)
+    monkeypatch.setattr(asc, "_activation_hint", None, raising=False)
     monkeypatch.setattr(asc, "_jxa_mouse_click", lambda x, y: True)
-    monkeypatch.setattr(asc, "_check_playing", lambda: True)
-    ok, msg = asc._click_play_or_shuffle()
-    assert ok is True and "playing via UI click" in msg
+    # before, after-AXPress (unchanged), after-click (changed)
+    setrun(monkeypatch, _play_router(states=["paused|A", "paused|A", "playing|B"]))
 
-    # click ok but not playing
-    monkeypatch.setattr(asc, "_check_playing", lambda: False)
     ok, msg = asc._click_play_or_shuffle()
-    assert ok is False and "playback did not start" in msg
+    assert ok and "click" in msg
+
+
+def test_click_play_or_shuffle_will_not_claim_success_for_music_already_playing(monkeypatch):
+    """The fail-open this replaced: `_check_playing()` alone is true when Music
+    was already playing something else, so a strategy that did nothing at all
+    looked like it worked."""
+    monkeypatch.setattr(asc, "_ensure_music_frontmost", lambda: None)
+    monkeypatch.setattr(asc, "_activation_hint", None, raising=False)
+    monkeypatch.setattr(asc, "_jxa_mouse_click", lambda x, y: True)
+    # Already playing track A, and nothing changes: no strategy did anything.
+    setrun(monkeypatch, _play_router(states=["playing|A"] * 4))
+
+    ok, msg = asc._click_play_or_shuffle()
+    assert ok is False, "unchanged playback is not evidence of activation"
+    assert "AXPress" in msg and "click" in msg, "should say what it tried"
+
+
+def test_click_play_or_shuffle_remembers_what_worked(monkeypatch):
+    monkeypatch.setattr(asc, "_ensure_music_frontmost", lambda: None)
+    monkeypatch.setattr(asc, "_activation_hint", None, raising=False)
+    monkeypatch.setattr(asc, "_jxa_mouse_click", lambda x, y: True)
+    setrun(monkeypatch, _play_router(states=["paused|A", "paused|A", "playing|B"]))
+    asc._click_play_or_shuffle()
+    assert asc._activation_hint == "click"
+
+    # Next call tries the remembered winner first: one activation, one check.
+    setrun(monkeypatch, _play_router(states=["paused|B", "playing|C"]))
+    ok, msg = asc._click_play_or_shuffle()
+    assert ok and "click" in msg
 
 
 def test_find_highlighted_track_position(monkeypatch):
