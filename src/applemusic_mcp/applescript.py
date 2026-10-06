@@ -657,12 +657,40 @@ def seek(position: float) -> tuple[bool, str]:
 # =============================================================================
 
 
-def get_playlists() -> tuple[bool, list[dict]]:
-    """Get all user playlists with details.
+def _get_playlists_bulk() -> tuple[bool, str]:
+    """Read every user playlist's properties in one Apple Event (fast path).
 
-    Returns:
-        Tuple of (success, list of playlist dicts or error string)
+    The per-playlist path costs five Apple Events per playlist, each resolving
+    ``item i of user playlists`` afresh: on a 738-playlist library it ran past
+    the 30s osascript deadline, so ``playlist(action="list")`` could only time
+    out. ``properties of every user playlist`` is a single event (~0.3s there),
+    which leaves the track count -- not a playlist property -- as the only
+    per-playlist read, addressed by id so it cannot drift from its row.
     """
+    script = """
+    tell application "Music"
+        set allProps to properties of every user playlist
+        set output to ""
+        repeat with r in allProps
+            set pName to name of r
+            try
+                set pCount to count of tracks of user playlist id (id of r)
+            on error
+                set pCount to 0
+            end try
+            if pName is not "" then
+                set pRow to pName & "|||" & (persistent ID of r) & "|||" & (smart of r)
+                set output to output & pRow & "|||" & pCount & "|||" & (time of r) & "\\n"
+            end if
+        end repeat
+        return output
+    end tell
+    """
+    return run_applescript(script)
+
+
+def _get_playlists_slow() -> tuple[bool, str]:
+    """Read playlists one property at a time (fallback path)."""
     # Each property is read defensively: a single playlist that can't return,
     # say, its persistent ID (cloud playlists mid-sync raise -1728) must not
     # abort the whole listing. We still emit the row by name so it stays
@@ -703,7 +731,25 @@ def get_playlists() -> tuple[bool, list[dict]]:
         return output
     end tell
     """
-    success, output = run_applescript(script)
+    return run_applescript(script)
+
+
+def get_playlists() -> tuple[bool, list[dict]]:
+    """Get all user playlists with details.
+
+    Returns:
+        Tuple of (success, list of playlist dicts or error string)
+    """
+    success, output = _get_playlists_bulk()
+
+    # One playlist that can't give up a property (-1728, e.g. a cloud playlist
+    # mid-sync) fails the whole bulk read; that logic-level failure is what the
+    # per-playlist try/catch path survives. Environmental failures (timeout,
+    # automation denied, Music not running) are not retried -- same rule as
+    # get_playlist_tracks.
+    if not success and classify_error(output) == ERROR_UNKNOWN:
+        success, output = _get_playlists_slow()
+
     if not success:
         return False, output
 
