@@ -295,6 +295,34 @@ def test_get_playlists(monkeypatch):
     assert ok and len(pls) == 1 and pls[0]["smart"] is True and pls[0]["track_count"] == 5
 
 
+def test_get_playlists_bulk_path_is_one_script(monkeypatch):
+    seq = Seq([(True, "P|||ID|||false|||2|||1:00")])
+    setrun(monkeypatch, seq)
+    ok, pls = asc.get_playlists()
+    assert ok and pls[0]["id"] == "ID" and pls[0]["track_count"] == 2
+    assert len(seq.calls) == 1 and "properties of every user playlist" in seq.calls[0]
+
+
+def test_get_playlists_unreadable_property_falls_back_to_slow(monkeypatch):
+    seq = Seq(
+        [
+            (False, "Music got an error: Can’t get persistent ID of user playlist 7. (-1728)"),
+            (True, "P|||ID|||true|||5|||3:00"),
+        ]
+    )
+    setrun(monkeypatch, seq)
+    ok, pls = asc.get_playlists()
+    assert ok and pls[0]["name"] == "P"
+    assert len(seq.calls) == 2 and "repeat with p in user playlists" in seq.calls[1]
+
+
+def test_get_playlists_timeout_is_not_retried(monkeypatch):
+    seq = Seq([(False, "AppleScript timed out after 30 seconds")])
+    setrun(monkeypatch, seq)
+    assert asc.get_playlists() == (False, "AppleScript timed out after 30 seconds")
+    assert len(seq.calls) == 1
+
+
 def test_get_playlist_tracks_bulk_and_slow(monkeypatch):
     # bulk fails with Can't get -> slow fallback succeeds
     seq = Seq([(False, "Can't get foo"), (True, "N|||Ar|||Al|||bad|||||||||PID")])
