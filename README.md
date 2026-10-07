@@ -6,6 +6,7 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Downloads](https://static.pepy.tech/badge/applemusic-mcp)](https://pepy.tech/project/applemusic-mcp)
 [![MCP](https://img.shields.io/badge/MCP-server-purple.svg)](https://modelcontextprotocol.io/)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/epheterson/applemusic-mcp/badge)](https://scorecard.dev/viewer/?uri=github.com/epheterson/applemusic-mcp)
 
 MCP server for Apple Music. It gives any [MCP client](https://modelcontextprotocol.io/clients) (Claude, Cursor, Cline, Windsurf) control of your playlists, library, catalog, discovery, playback, and the Up Next queue. Runs on macOS, Windows, and Linux.
 

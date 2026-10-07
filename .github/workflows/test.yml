@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: pytest (Python ${{ matrix.python-version }})
@@ -17,9 +20,11 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
-      # Pinning policy: first-party actions/* by tag; third-party by verified
-      # SHA. See the note at the top of publish.yml.
-      - uses: actions/checkout@v4
+      # Pinning policy: every action by full commit SHA. See the note at the
+      # top of publish.yml.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39  # v3.2.4
@@ -52,9 +57,11 @@ jobs:
       # died on import (0.18.2). This job resolves dependencies the way pip does
       # for a user, with no lockfile, so an upstream major bump breaks CI before
       # it breaks installs.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -84,9 +91,11 @@ jobs:
       # majors are supported (server.py aliases the renamed module), so one of them
       # would otherwise go untested and rot silently — which is exactly how the 2.0
       # rename reached users in the first place.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
