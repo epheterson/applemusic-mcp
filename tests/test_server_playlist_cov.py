@@ -1151,15 +1151,15 @@ class TestPlaylistList:
             lambda: (
                 True,
                 [
-                    {"id": "A", "name": "Jack & Norah", "track_count": 5, "smart": False},
-                    {"id": "B", "name": "Jack Heard", "track_count": 3, "smart": False},
+                    {"id": "A", "name": "Alice & Bob", "track_count": 5, "smart": False},
+                    {"id": "B", "name": "Alice in Chains", "track_count": 3, "smart": False},
                     {"id": "C", "name": "Reggae Tunes", "track_count": 9, "smart": False},
                 ],
             ),
         )
-        result = server._playlist_list(filter="jack")
-        assert "Jack & Norah" in result
-        assert "Jack Heard" in result
+        result = server._playlist_list(filter="alice")
+        assert "Alice & Bob" in result
+        assert "Alice in Chains" in result
         assert "Reggae Tunes" not in result
 
     def test_filter_no_match(self, monkeypatch):
@@ -2012,7 +2012,7 @@ class TestPlaylistDispatcher:
         monkeypatch.setattr(
             server.amp_api, "add_tracks", lambda pid, items: (False, "status 403: forbidden")
         )
-        out = server.playlist(action="add", playlist="Jack & Norah", track="i.song1")
+        out = server.playlist(action="add", playlist="Alice & Bob", track="i.song1")
         assert "created in Music.app" in out and "403" in out
 
     def test_web_add_401_with_expired_session_says_reauth(self, monkeypatch):
@@ -2026,7 +2026,7 @@ class TestPlaylistDispatcher:
         monkeypatch.setattr(
             server.amp_api, "add_tracks", lambda pid, items: (False, "status 401: unauthorized")
         )
-        out = server.playlist(action="add", playlist="Jack & Norah", track="i.song1")
+        out = server.playlist(action="add", playlist="Alice & Bob", track="i.song1")
         assert "expired" in out.lower() and "login" in out.lower()
         assert "created in Music.app" not in out
 

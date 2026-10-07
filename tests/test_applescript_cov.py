@@ -323,6 +323,37 @@ def test_get_playlists_timeout_is_not_retried(monkeypatch):
     assert len(seq.calls) == 1
 
 
+# Captured at import, before conftest's autouse stub replaces it per test.
+_real_get_playlist_names = asc.get_playlist_names
+
+
+def test_get_playlist_names_is_one_script(monkeypatch):
+    seq = Seq([(True, "🤟👶🎸 Alice & Bob\nJazz Mix")])
+    setrun(monkeypatch, seq)
+    assert _real_get_playlist_names() == (True, ["🤟👶🎸 Alice & Bob", "Jazz Mix"])
+    assert len(seq.calls) == 1 and "name of every user playlist" in seq.calls[0]
+    assert "count of tracks" not in seq.calls[0]
+
+
+def test_get_playlist_names_logic_error_falls_back_to_full_read(monkeypatch):
+    seq = Seq(
+        [
+            (False, "Music got an error: Can’t get name of user playlist 7. (-1728)"),
+            (True, "P|||ID|||false|||2|||1:00"),
+        ]
+    )
+    setrun(monkeypatch, seq)
+    assert _real_get_playlist_names() == (True, ["P"])
+    assert len(seq.calls) == 2
+
+
+def test_get_playlist_names_timeout_is_not_retried(monkeypatch):
+    seq = Seq([(False, "AppleScript timed out after 30 seconds")])
+    setrun(monkeypatch, seq)
+    assert _real_get_playlist_names() == (False, "AppleScript timed out after 30 seconds")
+    assert len(seq.calls) == 1
+
+
 def test_get_playlist_tracks_bulk_and_slow(monkeypatch):
     # bulk fails with Can't get -> slow fallback succeeds
     seq = Seq([(False, "Can't get foo"), (True, "N|||Ar|||Al|||bad|||||||||PID")])
@@ -1696,12 +1727,13 @@ def test_remove_from_library_refuses_an_ambiguous_match(monkeypatch):
 
 
 def test_delete_playlist_refuses_an_ambiguous_match(monkeypatch):
-    """`delete "Jack"` could destroy "Jack & Norah"."""
+    """`delete "Alice"` could destroy "Alice & Bob"."""
     setrun(
-        monkeypatch, const(True, "ERROR:AMBIGUOUS_PL:3:Jack & Norah; Jack Heard; Jack's Birthday; ")
+        monkeypatch,
+        const(True, "ERROR:AMBIGUOUS_PL:3:Alice & Bob; Alice in Chains; Alice's Birthday; "),
     )
-    ok, msg = asc.delete_playlist("Jack")
-    assert ok is False and "refusing to delete" in msg and "Jack & Norah" in msg
+    ok, msg = asc.delete_playlist("Alice")
+    assert ok is False and "refusing to delete" in msg and "Alice & Bob" in msg
 
 
 def test_rename_playlist_refuses_an_ambiguous_match(monkeypatch):
@@ -1725,12 +1757,12 @@ def test_remove_track_from_playlist_refuses_both_kinds_of_ambiguity(monkeypatch)
     """This path was ambiguous twice over: the playlist was resolved by partial
     match AND the track was `first ... whose name contains`, so it could delete
     the wrong track from the wrong playlist. The two are reported distinctly."""
-    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS_PL:3:Jack & Norah; Jack Heard; "))
-    ok, msg = asc.remove_track_from_playlist("Jack", track_name="Love")
+    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS_PL:3:Alice & Bob; Alice in Chains; "))
+    ok, msg = asc.remove_track_from_playlist("Alice", track_name="Love")
     assert ok is False and "playlists match" in msg
 
     setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS:16:What the World Needs Now Is Love - Burt; "))
-    ok, msg = asc.remove_track_from_playlist("Jack & Norah", track_name="Love")
+    ok, msg = asc.remove_track_from_playlist("Alice & Bob", track_name="Love")
     assert ok is False and "tracks in" in msg and "16" in msg
 
 
@@ -1738,8 +1770,8 @@ def test_move_to_root_refuses_an_ambiguous_match(monkeypatch):
     """move_to_root deletes the playlist and recreates it -- the persistent ID
     changes -- so a partial match here is a destructive operation wearing the
     name of a move."""
-    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS_PL:3:Jack & Norah; Jack Heard; "))
-    ok, msg = asc.move_to_root("Jack")
+    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS_PL:3:Alice & Bob; Alice in Chains; "))
+    ok, msg = asc.move_to_root("Alice")
     assert ok is False and "refusing to move" in msg
 
 

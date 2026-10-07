@@ -1,0 +1,20 @@
+# Quiet by design: open-pull-requests-limit 0 turns off routine version-update PRs.
+# Security updates are unaffected: when an advisory hits a dependency or a pinned action,
+# Dependabot still opens a PR (needs "Dependabot security updates" on in repo settings).
+# To catch up on versions by hand, raise the limit for a run or bump the pin directly.
+version: 2
+
+updates:
+  # pyproject.toml + uv.lock.
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0
+
+  # Every action is pinned to a commit SHA; security updates move a pin when it's affected.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 0

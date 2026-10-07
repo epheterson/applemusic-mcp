@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   release:
     name: Tag + GitHub Release on version bump
@@ -15,8 +18,9 @@ jobs:
                        # the default GITHUB_TOKEN — discovered when v0.10.2
                        # release was created but publish.yml never fired)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          persist-credentials: false
           fetch-depth: 0  # full history so we can list commits since last tag
 
       - name: Read version from pyproject.toml

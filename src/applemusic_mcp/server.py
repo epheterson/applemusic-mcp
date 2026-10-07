@@ -2003,17 +2003,15 @@ def _resolve_playlist(playlist: str) -> ResolvedPlaylist:
 
     # Not found via API - try AppleScript-based fuzzy matching if available
     if APPLESCRIPT_AVAILABLE:
-        success, playlists = asc.get_playlists()
-        if success and playlists:
-            # Use fuzzy matching on AppleScript playlist names
-            def playlist_name_extractor(pl: dict) -> str:
-                return pl.get("name", "")
-
+        # Names only: matching needs nothing else, and get_playlists() also
+        # reads every playlist's track count.
+        success, names = asc.get_playlist_names()
+        if success and names:
             matched, fuzzy_result = _fuzzy_match_entity(
-                playlist, playlists, playlist_name_extractor
+                playlist, [{"name": n} for n in names], lambda pl: pl["name"]
             )
             if matched:
-                matched_name = matched.get("name", playlist)
+                matched_name = matched["name"]
                 return ResolvedPlaylist(
                     raw_input=playlist,
                     api_id=None,
@@ -4998,7 +4996,7 @@ def playlist(
     auto_add: Optional[bool] = None,
     replace: str = "",
 ) -> str:
-    """Playlist and folder operations. Actions: list, folders (macOS — show the folder tree; folders are NOT in `list`), tracks, search, create, add, copy, move, path (macOS), remove, delete, rename. (move/remove/delete/rename work on every OS — via Music.app on macOS, via the web API on Windows/Linux. Only folders/path are macOS-only.) To find a playlist by name, use action='list' with filter='jack' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', `track` accepts a song NAME, a catalog song id (a numeric id like '1440857781' — pins the EXACT edition, avoiding name/album version mismatches), or a library id; set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own. Note: adding a not-yet-owned catalog track to a Music.app-made playlist is two-step — it's added to the library over the API, then attached locally once iCloud syncs it down (usually seconds). If the sync is slow it may return "added to your library — re-run to attach"; just re-run the same add. Rarely, if the sync stalls past ~20s, Music.app briefly flashes to the foreground as a last-resort sync nudge — expected, not a glitch. To SWAP one track for another, use action='add' with `replace`=<the old track to remove>: it adds the new track, confirms it actually persisted, and only THEN removes the old one — so if the add silently reverts (a Music.app bug), the old track is kept rather than lost."""
+    """Playlist and folder operations. Actions: list, folders (macOS — show the folder tree; folders are NOT in `list`), tracks, search, create, add, copy, move, path (macOS), remove, delete, rename. (move/remove/delete/rename work on every OS — via Music.app on macOS, via the web API on Windows/Linux. Only folders/path are macOS-only.) To find a playlist by name, use action='list' with filter='alice' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', `track` accepts a song NAME, a catalog song id (a numeric id like '1440857781' — pins the EXACT edition, avoiding name/album version mismatches), or a library id; set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own. Note: adding a not-yet-owned catalog track to a Music.app-made playlist is two-step — it's added to the library over the API, then attached locally once iCloud syncs it down (usually seconds). If the sync is slow it may return "added to your library — re-run to attach"; just re-run the same add. Rarely, if the sync stalls past ~20s, Music.app briefly flashes to the foreground as a last-resort sync nudge — expected, not a glitch. To SWAP one track for another, use action='add' with `replace`=<the old track to remove>: it adds the new track, confirms it actually persisted, and only THEN removes the old one — so if the add silently reverts (a Music.app bug), the old track is kept rather than lost."""
     action = action.lower().strip().replace("-", "_")
 
     if action == "list":

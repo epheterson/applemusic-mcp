@@ -65,7 +65,7 @@ def cleanup_test_playlist():
 
 
 def test_partial_matching_playlist(monkeypatch):
-    """Test that partial playlist names work (e.g., 'Jack & Norah' finds '🤟👶🎸 Jack & Norah')."""
+    """Test that partial playlist names work (e.g., 'Alice & Bob' finds '🤟👶🎸 Alice & Bob')."""
     print("\n" + "=" * 80)
     print("TEST 1: Partial Playlist Name Matching")
     print("=" * 80)
@@ -75,8 +75,8 @@ def test_partial_matching_playlist(monkeypatch):
         asc, "get_playlist_tracks", lambda name, *a, **k: (True, [{"name": "Some Song"}])
     )
 
-    # Try finding Jack & Norah playlist with partial name
-    success, tracks = asc.get_playlist_tracks("Jack & Norah")
+    # Try finding Alice & Bob playlist with partial name
+    success, tracks = asc.get_playlist_tracks("Alice & Bob")
 
     assert success, f"Could not find playlist with partial name: {tracks}"
     print(f"✓ Found {len(tracks)} tracks")
