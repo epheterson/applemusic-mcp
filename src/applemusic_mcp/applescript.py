@@ -770,6 +770,30 @@ def get_playlists() -> tuple[bool, list[dict]]:
     return True, playlists
 
 
+def get_playlist_names() -> tuple[bool, list[str] | str]:
+    """Names of every user playlist, in one Apple Event.
+
+    Name resolution needs nothing else, and ``get_playlists`` still reads each
+    playlist's track count separately (~12s for 738 playlists). Same fallback
+    rule as ``get_playlists``: a logic-level failure falls back to the full
+    read, an environmental one is returned as is.
+    """
+    script = """
+    tell application "Music" to set pNames to name of every user playlist
+    set AppleScript's text item delimiters to linefeed
+    return pNames as text
+    """
+    success, output = run_applescript(script)
+    if success:
+        return True, [n for n in output.split("\n") if n]
+    if classify_error(output) != ERROR_UNKNOWN:
+        return False, output
+    success, playlists = get_playlists()
+    if not success:
+        return False, playlists
+    return True, [p["name"] for p in playlists]
+
+
 _BAD_LIMIT = "limit must be an integer"
 
 
@@ -1234,7 +1258,7 @@ def move_to_root(item_name: str) -> tuple[bool, str]:
     safe_item = _escape_for_applescript(item_name)
     # This is a delete-and-recreate, not a move: the original playlist is
     # deleted and the persistent ID changes. Resolving it by partial match
-    # meant move_to_root("Jack") could destroy "Jack & Norah".
+    # meant move_to_root("Alice") could destroy "Alice & Bob".
     script = f"""
     tell application "Music"
 {_unambiguous_playlist_applescript(safe_item)}

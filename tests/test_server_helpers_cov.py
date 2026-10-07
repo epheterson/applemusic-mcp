@@ -1841,12 +1841,12 @@ class TestAutoSearchAndAddToPlaylist:
             lambda pl, n, a, al: native_calls.append((pl, n)) or (True, "ok", None),
         )
         monkeypatch.setattr(server, "_verify_track_in_playlist", lambda pl, n, a: True)
-        ok, msg, steps = server._auto_search_and_add_to_playlist("So What", "Miles", "Jack & Norah")
+        ok, msg, steps = server._auto_search_and_add_to_playlist("So What", "Miles", "Alice & Bob")
         assert ok is True and "So What" in msg
         # per-leg method attribution: library via the API, playlist via Music.app
         assert "added to library via the Apple Music API" in msg
         assert "attached to playlist via Music.app" in msg
-        assert native_calls == [("Jack & Norah", "So What")]  # attached natively
+        assert native_calls == [("Alice & Bob", "So What")]  # attached natively
 
     @responses.activate
     def test_catalog_search_not_found(self, mock_config_dir, mock_developer_token, mock_user_token):

@@ -373,17 +373,17 @@ def test_resolve_playlist_id_includes_app_made_when_asked():
     responses.add(
         responses.GET,
         f"{amp_api.AMP}/me/library/playlists",
-        json={"data": [{"id": "p.app", "attributes": {"name": "Jack & Norah", "canEdit": False}}]},
+        json={"data": [{"id": "p.app", "attributes": {"name": "Alice & Bob", "canEdit": False}}]},
         status=200,
     )
-    assert amp_api.resolve_playlist_id("Jack & Norah") is None
+    assert amp_api.resolve_playlist_id("Alice & Bob") is None
     responses.add(
         responses.GET,
         f"{amp_api.AMP}/me/library/playlists",
-        json={"data": [{"id": "p.app", "attributes": {"name": "Jack & Norah", "canEdit": False}}]},
+        json={"data": [{"id": "p.app", "attributes": {"name": "Alice & Bob", "canEdit": False}}]},
         status=200,
     )
-    assert amp_api.resolve_playlist_id("Jack & Norah", api_created_only=False) == "p.app"
+    assert amp_api.resolve_playlist_id("Alice & Bob", api_created_only=False) == "p.app"
 
 
 def test_is_api_created():

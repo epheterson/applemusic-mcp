@@ -77,6 +77,20 @@ def _block_live_applescript(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _playlist_names_follow_get_playlists(monkeypatch):
+    """Name resolution reads ``asc.get_playlist_names``; by default derive it from
+    ``asc.get_playlists`` at call time, as its real fallback does, so tests that
+    stub ``get_playlists`` keep driving resolution. test_applescript_cov captures the
+    real function at import to test it."""
+
+    def _names():
+        ok, playlists = asc.get_playlists()
+        return (True, [p.get("name", "") for p in playlists]) if ok else (False, playlists)
+
+    monkeypatch.setattr(asc, "get_playlist_names", _names)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_browser_profile(request, tmp_path, monkeypatch):
     """Never let a non-live test touch the real Chrome profile. `clear_session`
     (hit by logout/reset on both the CLI and the `config` tool) rmtree's

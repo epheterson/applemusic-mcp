@@ -1616,7 +1616,7 @@ class TestFuzzyMatchingPlaylistResolution:
     def test_fuzzy_matches_and_vs_ampersand(
         self, mock_config_dir, mock_developer_token, mock_user_token
     ):
-        """Should fuzzy match 'Jack and Norah' to 'Jack & Norah'."""
+        """Should fuzzy match 'Alice and Bob' to 'Alice & Bob'."""
         # Setup tokens
         dev_token_file = mock_config_dir / "developer_token.json"
         with open(dev_token_file, "w") as f:
@@ -1626,26 +1626,26 @@ class TestFuzzyMatchingPlaylistResolution:
         with open(user_token_file, "w") as f:
             json.dump({"music_user_token": mock_user_token}, f)
 
-        # Mock API response with playlist named "Jack & Norah"
+        # Mock API response with playlist named "Alice & Bob"
         responses.add(
             responses.GET,
             "https://api.music.apple.com/v1/me/library/playlists",
             json={
                 "data": [
-                    {"id": "p.jack123", "attributes": {"name": "Jack & Norah"}},
+                    {"id": "p.alice123", "attributes": {"name": "Alice & Bob"}},
                 ]
             },
             status=200,
         )
 
-        # User types "Jack and Norah" (with "and" instead of "&")
-        resolved = server._resolve_playlist("Jack and Norah")
+        # User types "Alice and Bob" (with "and" instead of "&")
+        resolved = server._resolve_playlist("Alice and Bob")
 
         # Should fuzzy match and return BOTH identifiers
-        assert resolved.api_id == "p.jack123"
-        assert resolved.applescript_name == "Jack & Norah"  # CRITICAL: Must have actual name
+        assert resolved.api_id == "p.alice123"
+        assert resolved.applescript_name == "Alice & Bob"  # CRITICAL: Must have actual name
         assert resolved.error is None
-        assert resolved.raw_input == "Jack and Norah"
+        assert resolved.raw_input == "Alice and Bob"
         assert resolved.fuzzy_match is not None
         assert "and" in str(resolved.fuzzy_match.transformations).lower() or "&" in str(
             resolved.fuzzy_match.transformations
@@ -1670,18 +1670,18 @@ class TestFuzzyMatchingPlaylistResolution:
             "https://api.music.apple.com/v1/me/library/playlists",
             json={
                 "data": [
-                    {"id": "p.emoji123", "attributes": {"name": "🤟👶🎸 Jack & Norah"}},
+                    {"id": "p.emoji123", "attributes": {"name": "🤟👶🎸 Alice & Bob"}},
                 ]
             },
             status=200,
         )
 
         # User types without emojis
-        resolved = server._resolve_playlist("Jack & Norah")
+        resolved = server._resolve_playlist("Alice & Bob")
 
         # Should fuzzy match (emojis ignored)
         assert resolved.api_id == "p.emoji123"
-        assert resolved.applescript_name == "🤟👶🎸 Jack & Norah"  # Keep actual emoji name
+        assert resolved.applescript_name == "🤟👶🎸 Alice & Bob"  # Keep actual emoji name
         assert resolved.error is None
         assert resolved.fuzzy_match is not None
 
@@ -1727,7 +1727,7 @@ class TestFuzzyMatchingPlaylistResolution:
     ):
         """REGRESSION TEST: Resolved object MUST have both api_id and applescript_name after fuzzy match.
 
-        This is the critical fix for the bug where remove_from_playlist("Jack and Norah", ...)
+        This is the critical fix for the bug where remove_from_playlist("Alice and Bob", ...)
         would fail because fuzzy matching converted to API ID but function needs AppleScript name.
         """
         dev_token_file = mock_config_dir / "developer_token.json"
@@ -2454,6 +2454,10 @@ class TestUserJourneyMacOSOnly:
         )
         mock_asc.remove_track_from_playlist.return_value = (True, "Removed")
         monkeypatch.setattr(server, "asc", mock_asc)
+        mock_asc.get_playlist_names.return_value = (
+            True,
+            [p["name"] for p in mock_asc.get_playlists.return_value[1]],
+        )
 
         # Resolve playlist with fuzzy name
         resolved = server._resolve_playlist("My Mix")
@@ -2747,6 +2751,10 @@ class TestAlbumDisambiguation:
             [{"name": "Test Playlist", "id": "test123", "count": 0}],
         )
         monkeypatch.setattr(server, "asc", mock_asc)
+        mock_asc.get_playlist_names.return_value = (
+            True,
+            [p["name"] for p in mock_asc.get_playlists.return_value[1]],
+        )
 
         # Will fail at API call, but that's fine — we're just checking _resolve_album was entered
         try:
@@ -2779,6 +2787,10 @@ class TestAlbumDisambiguation:
         mock_asc.track_exists_in_playlist.return_value = (True, False)
         mock_asc.add_track_to_playlist.return_value = (True, "Added Hot Potato")
         monkeypatch.setattr(server, "asc", mock_asc)
+        mock_asc.get_playlist_names.return_value = (
+            True,
+            [p["name"] for p in mock_asc.get_playlists.return_value[1]],
+        )
 
         server._playlist_add(
             playlist="Test Playlist",
@@ -2817,6 +2829,10 @@ class TestAlbumDisambiguation:
             "Added Hot Potato (Ready, Steady, Wiggle!) by The Wiggles",
         )
         monkeypatch.setattr(server, "asc", mock_asc)
+        mock_asc.get_playlist_names.return_value = (
+            True,
+            [p["name"] for p in mock_asc.get_playlists.return_value[1]],
+        )
 
         result = server._playlist_add(
             playlist="Test Playlist",
@@ -2859,6 +2875,10 @@ class TestAlbumDisambiguation:
         mock_asc.track_exists_in_playlist.side_effect = [(True, False)] + [(True, True)] * 10
         mock_asc.add_track_to_playlist.return_value = (True, "Added Hot Potato by The Wiggles")
         monkeypatch.setattr(server, "asc", mock_asc)
+        mock_asc.get_playlist_names.return_value = (
+            True,
+            [p["name"] for p in mock_asc.get_playlists.return_value[1]],
+        )
 
         # Mock library song lookup for the ID
         responses.add(
@@ -4444,6 +4464,10 @@ class TestPlaylistAddIdsRequireToken:
         mock_asc.track_exists_in_playlist.return_value = (True, False)
         mock_asc.classify_error = real_asc.classify_error
         monkeypatch.setattr(server, "asc", mock_asc)
+        mock_asc.get_playlist_names.return_value = (
+            True,
+            [p["name"] for p in mock_asc.get_playlists.return_value[1]],
+        )
 
         # No token configured — _has_developer_token returns False,
         # which the new ID-guard catches and surfaces a specific message.
@@ -4488,6 +4512,10 @@ class TestPlaylistAddIdsRequireToken:
             [{"name": "Workout", "id": "p.work", "smart": False, "track_count": 0}],
         )
         monkeypatch.setattr(server, "asc", mock_asc)
+        mock_asc.get_playlist_names.return_value = (
+            True,
+            [p["name"] for p in mock_asc.get_playlists.return_value[1]],
+        )
         monkeypatch.setattr(server, "_has_developer_token", lambda: False)
 
         # If we reach get_headers, the guard didn't fire.
@@ -4559,6 +4587,10 @@ class TestPlaylistCopyNoTokenLeakOnAsFailure:
         mock_asc.add_track_to_playlist.return_value = (True, "Added")
         self._wire_error_constants(mock_asc, real_asc)
         monkeypatch.setattr(server, "asc", mock_asc)
+        mock_asc.get_playlist_names.return_value = (
+            True,
+            [p["name"] for p in mock_asc.get_playlists.return_value[1]],
+        )
 
         # If get_headers is reached, the regression has happened.
         def fail_loud():
@@ -4595,6 +4627,10 @@ class TestPlaylistCopyNoTokenLeakOnAsFailure:
         )
         self._wire_error_constants(mock_asc, real_asc)
         monkeypatch.setattr(server, "asc", mock_asc)
+        mock_asc.get_playlist_names.return_value = (
+            True,
+            [p["name"] for p in mock_asc.get_playlists.return_value[1]],
+        )
 
         def fail_loud():
             raise AssertionError("get_headers() reached — should have early-returned")
