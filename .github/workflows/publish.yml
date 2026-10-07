@@ -2,7 +2,7 @@ name: publish
 
 # Action pinning policy: every `uses:` is pinned to a full commit SHA with its version in a
 # comment, first-party or not, because a moved tag is the supply-chain risk. Dependabot
-# (github-actions, weekly) keeps the pins and their comments current.
+# security updates move a pin when an advisory affects it; routine bumps are by hand.
 #
 # What a release carries: a GitHub build-provenance attestation for the sdist and wheel
 #   gh attestation verify dist/<file> --repo epheterson/applemusic-mcp
@@ -81,8 +81,8 @@ jobs:
           path: dist/
 
       - name: Publish to PyPI
-        # release/v1 is PyPA's maintained security-patch channel for this
-        # first-party OIDC action — see pinning policy at top of file.
+        # Pinned like everything else (see the policy at the top of the file);
+        # Dependabot moves it if an advisory lands against it.
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           # Without this, a re-dispatch after an already-successful upload

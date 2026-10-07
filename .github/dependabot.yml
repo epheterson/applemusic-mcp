@@ -1,5 +1,7 @@
-# Weekly version updates, grouped so a quiet week is one pull request per ecosystem.
-# Security updates are separate and come as soon as an advisory lands.
+# Quiet by design: open-pull-requests-limit 0 turns off routine version-update PRs.
+# Security updates are unaffected: when an advisory hits a dependency or a pinned action,
+# Dependabot still opens a PR (needs "Dependabot security updates" on in repo settings).
+# To catch up on versions by hand, raise the limit for a run or bump the pin directly.
 version: 2
 
 updates:
@@ -8,19 +10,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
-      day: monday
-    labels: [dependencies]
-    groups:
-      python-minor:
-        update-types: [minor, patch]
+    open-pull-requests-limit: 0
 
-  # Every action is pinned to a commit; this keeps the pins and their version comments current.
+  # Every action is pinned to a commit SHA; security updates move a pin when it's affected.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-      day: monday
-    labels: [dependencies]
-    groups:
-      actions:
-        patterns: ["*"]
+    open-pull-requests-limit: 0
