@@ -1,6 +1,6 @@
 ---
 name: apple-music
-version: 0.20.1
+version: 0.20.2
 description: Apple Music integration — AppleScript (local Music.app) and the Apple Music API / web player (cross-platform library, playlists, playback, and queue)
 ---
 
@@ -294,7 +294,7 @@ tell application "Music"
 
     -- Remove track from playlist. `contains` + `first` is a TRAP for anything
     -- destructive: it deletes whichever match sorts first, irreversibly.
-    -- "Love" matches 376 tracks in a real library; "Jack" matches three
+    -- "Love" matches 376 tracks in a real library; "Alice" matches three
     -- playlists including a 467-track one. Enumerate first and act only when
     -- the target is unambiguous.
     set hits to (every track of user playlist "Road Trip" whose name contains "Hey Jude")
@@ -482,7 +482,7 @@ When a user asks for something, the right MCP tool depends on whether they're se
 | Goal | Use | Notes |
 |---|---|---|
 | Find a song the user already has | `library(action='search', query='...')` | Local library only. AppleScript on macOS, API otherwise. |
-| Find a playlist by name | `playlist(action='list', filter='jack')` | Loose name match, returns matching playlists with IDs. Do **not** use `action='search'` for this — that searches the *tracks inside* a given playlist and needs a `playlist` param. |
+| Find a playlist by name | `playlist(action='list', filter='alice')` | Loose name match, returns matching playlists with IDs. Do **not** use `action='search'` for this — that searches the *tracks inside* a given playlist and needs a `playlist` param. |
 | List the user's tracks in a genre | `library(action='search', query='Rock', types='genre')` | Filters on the track's genre field — **macOS-only**. Do NOT route a genre name through plain full-text search: it never looks at the genre field, so "Rock" would false-match a song titled *"Rock Your Body."* Zero matches returns "No tracks found"; off macOS it reports genre filtering isn't available via the API. |
 | Find a song in Apple Music's full catalog | `catalog(action='search', query='...')` | Tries API first, falls back to Music.app UI search on tokenless macOS. |
 | Add a catalog song to the user's library | `library(action='add', track='...')` | API only — needs a developer token (generated or harvested) + a media-user-token (`signin`). The UI-automation fallback was removed in 0.15.0 (see note above). |

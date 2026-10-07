@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.2] - 2026-10-06
+
+### Fixed
+
+- **Listing playlists timed out on large libraries.** `playlist(action="list")` read five properties per playlist, each as its own Apple Event, so a 738-playlist library ran past the 30-second AppleScript deadline and the call could only report a timeout. All playlist properties are now read in one event; only the track count, which isn't a playlist property, is still read per playlist. 738 playlists: timed out → 12.5s. If one playlist can't give up a property (a cloud playlist mid-sync), the old per-playlist read is the fallback. Contributed by [@JacopKane](https://github.com/JacopKane) in #62.
+- **Playlist operations by name paid for the full listing too.** When a name wasn't found through the API, resolving it read every playlist with its track count just to compare names, so add, remove, copy and rename by name hit the same timeout on large libraries. Resolution now reads names only, in one Apple Event.
+
+### Security
+
+- **Every GitHub Action is pinned to a full commit SHA**, first-party ones included, and each workflow's token defaults to read-only with write access granted per job. Checkouts no longer keep the token in the git config.
+- **Releases carry a build-provenance attestation** for the sdist and wheel (`gh attestation verify <file> --repo epheterson/applemusic-mcp`) and an SPDX SBOM as a workflow artifact.
+- **CodeQL** (Python and Actions) and **OpenSSF Scorecard** now run on `main` and weekly. Dependabot is configured for security updates only.
+
 ## [0.20.1] - 2026-08-27
 
 ### Fixed
@@ -28,7 +41,7 @@ Security release. Reported privately by [@jaminben](https://github.com/jaminben)
 
 ### Fixed
 
-- **Destructive operations acted on a substring match and could hit the wrong item.** `library(action="remove", track="Love")` deleted whichever of 376 matching tracks sorted first; `playlist(action="delete", name="Jack")` could destroy a 467-track playlist called "Jack & Norah". All five destructive native paths — library removal, playlist delete, playlist rename, removing a track from a playlist, and `move_to_root` — now enumerate first: an exact case-insensitive match wins, a single partial match is accepted, and anything else is refused with the candidates named. This is the behaviour the API rail already had; the native rail, which is the default on macOS, never got it.
+- **Destructive operations acted on a substring match and could hit the wrong item.** `library(action="remove", track="Love")` deleted whichever of 376 matching tracks sorted first; `playlist(action="delete", name="Alice")` could destroy a 467-track playlist called "Alice & Bob". All five destructive native paths — library removal, playlist delete, playlist rename, removing a track from a playlist, and `move_to_root` — now enumerate first: an exact case-insensitive match wins, a single partial match is accepted, and anything else is refused with the candidates named. This is the behaviour the API rail already had; the native rail, which is the default on macOS, never got it.
 
   Two of the five were found by auditing for the same shape rather than in the report: removing a track from a playlist was ambiguous *twice over* (the playlist resolved by partial match **and** the track by first-substring-match, so it could remove the wrong track from the wrong playlist — the two cases are now reported distinctly), and `move_to_root` is a delete-and-recreate rather than a move, so a partial match there destroyed a playlist and changed its persistent ID.
 - **`clean_only` lost its signal in CSV and exported JSON.** The verification note is suppressed for structured formats on the grounds that each row carries `explicit` — true for inline JSON, but the CSV field list and the JSON export writer both omitted the key, so `format="csv"` returned a list that read as vetted while containing tracks that were never checked. Both now carry it.
@@ -353,7 +366,7 @@ Windows, and Linux, plus a Safari playback engine and data-safety fixes.
   `playback(action="play", engine="web")` so transport reaches that queue,
   instead of flipping a global pref (and accidentally driving the native app,
   which has its own separate playback state).
-- **Find a playlist by name** with `playlist(action="list", filter="jack")`, a
+- **Find a playlist by name** with `playlist(action="list", filter="alice")`, a
   loose name match that returns just the matching playlists with their IDs
   (instead of dumping the whole library). `action="search"` stays what it was:
   searching the tracks inside a given playlist.
@@ -1541,7 +1554,7 @@ get_album_tracks(album="Abbey Road", artist="Beatles")
   - Shows cache sizes, entry counts, file ages
   - Replaces old `cache` tool with more intuitive naming
 - **Partial playlist matching** - Smart playlist name matching with exact-match priority:
-  - "Jack & Norah" now finds "🤟👶🎸 Jack & Norah"
+  - "Alice & Bob" now finds "🤟👶🎸 Alice & Bob"
   - Exact matches always prioritized over partial matches
   - Applied to all playlist operations via `_find_playlist_applescript()` helper
 - **Comprehensive documentation**:
