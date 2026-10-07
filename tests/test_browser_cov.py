@@ -382,6 +382,32 @@ def test_player_ready_navigates_when_ready_check_raises(monkeypatch):
     assert page.goto_calls  # had to re-navigate
 
 
+def test_player_ready_ignores_lookalike_host(monkeypatch):
+    # A page whose URL merely *contains* music.apple.com is not the web player:
+    # it must be re-navigated, never reused.
+    page = FakePage(
+        url="https://evil.tld/?next=music.apple.com",
+        cookies=[{"name": "media-user-token", "value": "tok"}],
+    )
+    set_engine(monkeypatch, page=page)
+    ok, _ = browser.play_catalog_track("55")
+    assert ok
+    assert page.goto_calls
+
+
+def test_is_music_apple_url():
+    assert browser._is_music_apple_url("https://music.apple.com/us/browse")
+    assert browser._is_music_apple_url("https://beta.music.apple.com/x")
+    for bad in (
+        "https://evil.tld/?next=music.apple.com",
+        "https://music.apple.com.evil.tld/x",
+        "https://evilmusic.apple.com/x",
+        "",
+        None,
+    ):
+        assert not browser._is_music_apple_url(bad)
+
+
 def test_player_ready_not_signed_in(monkeypatch):
     page = FakePage(url="", cookies=[])  # no token after navigation
     set_engine(monkeypatch, page=page)
