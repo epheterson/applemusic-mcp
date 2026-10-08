@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
-- Lockfile updates for urllib3 2.8.0 and PyJWT 2.15.0 (Dependabot security updates, #64 and #65). Neither changes what a `pip install` resolves: the declared ranges already allow both, and the PyJWT advisories concern signature verification, which this server doesn't do.
+- **Lockfile refreshed**, clearing all 31 open Dependabot alerts (cryptography, mcp, starlette, python-multipart, anyio and others; urllib3 and PyJWT in #64 and #65). The lockfile pins the dev and CI environments only, so this doesn't change what a `pip install` resolves: the declared ranges already allowed every fixed version. It stays on mcp 1.x; mcp 2.x keeps its own CI job.
 
 ## [0.20.2] - 2026-10-06
 
