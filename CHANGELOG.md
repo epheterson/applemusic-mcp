@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.3] - 2026-10-07
+
+### Security
+
+- **The web player was reused on any page whose URL merely contained `music.apple.com`.** Before running player commands, the browser engine checked whether the current page was already the Apple Music web player with a substring test, so a page like `evil.tld/?next=music.apple.com` would have had player scripts run in it instead of being navigated back to Apple Music. It now compares the parsed hostname, the same check `play_url` and `reveal_url` already used. Found by CodeQL. (#67)
+
+### Internal
+
+- **Lockfile refreshed**, clearing all 31 open Dependabot alerts (cryptography, mcp, starlette, python-multipart, anyio and others; urllib3 and PyJWT in #64 and #65). The lockfile pins the dev and CI environments only, so this doesn't change what a `pip install` resolves: the declared ranges already allowed every fixed version. It stays on mcp 1.x; mcp 2.x keeps its own CI job.
+
 ## [0.20.2] - 2026-10-06
 
 ### Fixed
