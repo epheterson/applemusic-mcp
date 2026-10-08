@@ -530,6 +530,16 @@ def add_catalog_track_to_library(song_id: str, name: str = "") -> tuple[bool, st
 # volume 0-100 (-1 = leave); shuffle/repeat null = leave.
 
 
+def _is_music_apple_url(url: str) -> bool:
+    """True when ``url``'s host is music.apple.com or a subdomain of it. Compare the
+    parsed host, never a substring: music.apple.com.evil.tld and
+    evil.tld/?music.apple.com both contain the string."""
+    from urllib.parse import urlparse
+
+    host = (urlparse(url or "").hostname or "").lower()
+    return host == "music.apple.com" or host.endswith(".music.apple.com")
+
+
 def _ensure_player_ready(page) -> None:
     """Make sure the page has a configured MusicKit instance — navigating ONLY if
     needed. Re-navigating reloads the page and destroys the player queue/playback
@@ -537,7 +547,7 @@ def _ensure_player_ready(page) -> None:
     (this is what lets pause/skip/seek/volume act on the *currently playing*
     track instead of a freshly reloaded, empty player)."""
     _ensure_session_cookie(page)  # bridge a Safari/saved token so the web player authorizes
-    if "music.apple.com" in (page.url or ""):
+    if _is_music_apple_url(page.url):
         try:
             if page.evaluate(_MUSICKIT_READY):
                 return
@@ -629,12 +639,9 @@ def play_url(music_url: str, shuffle: bool = False) -> tuple[bool, str]:
     — cross-platform parity for the native macOS play-from-URL."""
     if not music_url.strip():
         return False, "Empty URL"
-    from urllib.parse import urlparse
-
-    host = (urlparse(music_url).hostname or "").lower()
-    # Exact host match (parity with reveal_url) — a substring check would pass
-    # music.apple.com.evil.tld and navigate the user's window to an attacker page.
-    if host != "music.apple.com" and not host.endswith(".music.apple.com"):
+    # Exact host match — a substring check would pass music.apple.com.evil.tld
+    # and navigate the user's window to an attacker page.
+    if not _is_music_apple_url(music_url):
         return False, f"Not an Apple Music URL: {music_url}"
     descriptor = _parse_music_url(music_url)
     if descriptor is None:
@@ -646,10 +653,7 @@ def reveal_url(music_url: str) -> tuple[bool, str]:
     """Open an Apple Music URL in the web-player window so the user can see the
     track — the cross-platform counterpart to macOS 'reveal in Music.app'. Does
     not start playback (it just navigates the page)."""
-    from urllib.parse import urlparse
-
-    host = (urlparse(music_url or "").hostname or "").lower()
-    if host != "music.apple.com" and not host.endswith(".music.apple.com"):
+    if not _is_music_apple_url(music_url):
         return False, f"Not an Apple Music URL: {music_url}"
 
     def run(page):
