@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.20.3] - 2026-10-07
+
+### Security
+
+- **The web player was reused on any page whose URL merely contained `music.apple.com`.** Before running player commands, the browser engine checked whether the current page was already the Apple Music web player with a substring test, so a page like `evil.tld/?next=music.apple.com` would have had player scripts run in it instead of being navigated back to Apple Music. It now compares the parsed hostname, the same check `play_url` and `reveal_url` already used. Found by CodeQL. (#67)
+
+### Internal
+
+- Lockfile updates for urllib3 2.8.0 and PyJWT 2.15.0 (Dependabot security updates, #64 and #65). Neither changes what a `pip install` resolves: the declared ranges already allow both, and the PyJWT advisories concern signature verification, which this server doesn't do.
+
 ## [0.20.2] - 2026-10-06
 
 ### Fixed
