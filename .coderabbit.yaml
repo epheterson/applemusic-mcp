@@ -1,0 +1,74 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Independent review of each PR, once, when it opens; comment
+# `@coderabbitai review` for another pass after later pushes. Advisory, never
+# a required check: findings are fixed or answered like any outside
+# contribution. Kept quiet: no summary written into the PR description, no
+# walkthrough extras. Dependabot PRs are skipped (lockfile bumps, shared quota).
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: false
+  poem: false
+  review_status: false
+  in_progress_fortune: false
+  collapse_walkthrough: true
+  changed_files_summary: false
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+  sequence_diagrams: false
+  estimate_code_review_effort: false
+  related_issues: false
+  related_prs: false
+  suggested_labels: false
+  suggested_reviewers: false
+  auto_review:
+    enabled: true
+    auto_incremental_review: false
+    drafts: false
+    ignore_usernames:
+      - "dependabot[bot]"
+  path_filters:
+    - "!uv.lock"
+  path_instructions:
+    - path: "src/applemusic_mcp/**"
+      instructions: >-
+        An MCP server that lets a model control a user's Apple Music library.
+        Track titles, album names and playlist descriptions are text an
+        attacker can influence and that reaches the model, so treat them as
+        untrusted input everywhere. Flag any token, cookie or auth header that
+        could reach logs, errors or tool output.
+    - path: "src/applemusic_mcp/applescript.py"
+      instructions: >-
+        Scripts are built as strings: check that every interpolated value is
+        escaped for AppleScript (quotes and backslashes) so a name cannot
+        break out of its literal. Destructive operations (library removal,
+        playlist delete, rename, track removal, folder moves) must act on an
+        exact, unambiguous match and refuse otherwise, never on the first
+        substring or fuzzy hit. Bulk reads fall back to per-item reads only on
+        a logic-level error (classify_error == unknown), never on a timeout,
+        denied Automation or Music not running. Watch for behavior that
+        differs between Music 1.5 and Music 26, and for AppleScript reserved
+        words used as variable names.
+    - path: "src/applemusic_mcp/{browser,safari,safari_player,musickit_js,amp_api}.py"
+      instructions: >-
+        URLs must be validated on the parsed hostname (music.apple.com or a
+        subdomain), never by substring or prefix. Values reach page
+        JavaScript only as data: a page.evaluate argument (Playwright) or
+        json.dumps (Safari's do JavaScript), never concatenated into the
+        script text.
+    - path: "tests/**"
+      instructions: >-
+        Non-live tests must never run real AppleScript or touch the network
+        or the user's home directory; conftest guards enforce this, so flag
+        tests that work around them. Prefer tests that fail against the old
+        code.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Actions must be pinned to full commit SHAs with least-privilege
+        permissions. Releases are automated from the version in
+        pyproject.toml on merge to main; publishing uses PyPI trusted
+        publishing and attests the build.
+chat:
+  auto_reply: true
