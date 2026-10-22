@@ -110,3 +110,50 @@ def test_guard_is_not_a_requests_exception():
     # Callers catch requests.RequestException as "Apple is unreachable"; a
     # refusal must not be swallowed and reported as an outage.
     assert not issubclass(caps.CapabilityDenied, requests.RequestException)
+
+
+# -- tool surface ------------------------------------------------------------
+
+import asyncio  # noqa: E402
+
+import applemusic_mcp.server as server  # noqa: E402
+
+FastMCP = server.FastMCP  # mcp 1.x FastMCP or 2.x MCPServer, per server's import shim
+
+
+@pytest.mark.parametrize(
+    "level,ui,hidden",
+    [
+        ("music", None, {"catalog", "discover", "queue"}),
+        ("music", "1", {"discover", "queue"}),
+        ("api", None, {"queue"}),
+        ("web", None, set()),
+        (None, None, set()),
+    ],
+)
+def test_hidden_tools(level, ui, hidden):
+    assert server.hidden_tools(caps.parse(level, ui)) == hidden
+
+
+def test_apply_level_removes_tools(monkeypatch):
+    app = FastMCP("t")
+    for name in ("playlist", "catalog", "discover", "queue"):
+        app.tool(name=name)(lambda: "")
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "music")
+    removed = server.apply_level(app)
+    names = {t.name for t in asyncio.run(app.list_tools())}
+    assert set(removed) == {"catalog", "discover", "queue"} and names == {"playlist"}
+
+
+def test_apply_level_unrestricted_keeps_all():
+    app = FastMCP("t")
+    for name in ("playlist", "queue"):
+        app.tool(name=name)(lambda: "")
+    assert server.apply_level(app) == []
+    assert {t.name for t in asyncio.run(app.list_tools())} == {"playlist", "queue"}
+
+
+def test_server_registers_the_tools_hidden_tools_names():
+    # hidden_tools names must match real registrations or hiding silently fails.
+    names = {t.name for t in asyncio.run(server.mcp.list_tools())}
+    assert {"catalog", "discover", "queue"} <= names

@@ -215,6 +215,14 @@ def cmd_status(args):
     print("Apple Music MCP status")
     print("=" * 40)
     print(f"Config: {config_dir}")
+    try:
+        from . import capabilities
+
+        lvl = capabilities.current()
+        level = f"{lvl.name}{' + UI scripting' if lvl.ui and lvl.explicit else ''}"
+    except ValueError as e:
+        level = f"invalid ({e})"
+    print(f"Permission level: {level} (each MCP client sets its own with `serve --level`)")
 
     data = developer_token_info()
     if data is not None and data.get("expires", 0) > time.time():

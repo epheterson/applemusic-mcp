@@ -7738,6 +7738,17 @@ def config(
                     )
                     return f"Error: '{preference}' requires 'string_value' parameter{hint}"
                 pref_value = string_value.lower()
+                lvl = capabilities.current()
+                if (
+                    preference == "mode"
+                    and lvl.explicit
+                    and pref_value in enum_prefs["mode"]
+                    and pref_value not in capabilities.MODES_BY_LEVEL[lvl.name]
+                ):
+                    return "Error: " + capabilities.denied_message(
+                        f"Mode '{pref_value}'",
+                        "web" if pref_value in ("safari", "chrome", "web") else "api",
+                    )
                 if preference in enum_prefs and pref_value not in enum_prefs[preference]:
                     return (
                         f"Error: '{preference}' must be one of: "
@@ -7868,6 +7879,21 @@ def config(
         # === INFO (DEFAULT) ===
         if action == "info":
             output = ["=== System Info ===", ""]
+
+            lvl = capabilities.current()
+            if not lvl.explicit:
+                output.append(
+                    "Permission level: unrestricted (set --level music|api|web in the "
+                    "MCP client config to limit what this server can reach)"
+                )
+            else:
+                output.append(
+                    f"Permission level: {lvl.name}{' + UI scripting' if lvl.ui else ''} "
+                    "(set in the MCP client config)"
+                )
+                if lvl.name == "music" and not APPLESCRIPT_AVAILABLE:
+                    output.append("Warning: the music level needs macOS; nothing will work here.")
+            output.append("")
 
             # User Preferences
             prefs = get_user_preferences()
@@ -9902,6 +9928,31 @@ def _shutdown_browser_engine():  # pragma: no cover - lifecycle, not exercised u
         pass
 
 
+def hidden_tools(lvl) -> set[str]:
+    """Tools that can't do anything at this permission level, so the model
+    never sees them."""
+    hidden = set()
+    if not lvl.web:
+        hidden.add("queue")
+    if not lvl.network:
+        hidden.add("discover")
+        if not lvl.ui:
+            hidden.add("catalog")  # without the API, catalog search is UI scripting
+    return hidden
+
+
+def apply_level(app) -> list[str]:
+    """Remove the tools the current level hides from ``app``. Returns their names."""
+    removed = sorted(hidden_tools(capabilities.current()))
+    for name in removed:
+        remover = getattr(app, "remove_tool", None)
+        if remover is not None:
+            remover(name)
+        else:  # older mcp 1.x without remove_tool
+            app._tool_manager._tools.pop(name, None)
+    return removed
+
+
 def main():
     """Run the MCP server."""
     # pragma: no cover  # entrypoint: starts the MCP server, not exercised under test
@@ -9915,6 +9966,18 @@ def main():
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     except (ValueError, OSError):
         pass  # not the main thread / unsupported platform — atexit still covers normal exit
+    try:
+        lvl = capabilities.current()
+    except ValueError as e:  # APPLEMUSIC_LEVEL set directly in the env, not via `serve --level`
+        print(f"applemusic-mcp: {e}", file=sys.stderr)
+        sys.exit(2)
+    if lvl.name == "music" and not APPLESCRIPT_AVAILABLE:
+        print(
+            "applemusic-mcp: --level music needs macOS; nothing will work on this system.",
+            file=sys.stderr,
+        )
+    capabilities.install_network_guard()
+    apply_level(mcp)
     mcp.run()
 
 

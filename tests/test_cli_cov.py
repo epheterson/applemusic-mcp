@@ -414,3 +414,12 @@ def test_serve_bad_level_exits_2(monkeypatch, capsys):
         cli.main()
     assert e.value.code == 2
     assert "music, api, web" in capsys.readouterr().err
+
+
+def test_status_shows_level(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, "get_config_dir", lambda: tmp_path)
+    monkeypatch.setitem(sys.modules, "applemusic_mcp.auth", _status_auth(None, False))
+    monkeypatch.setattr(cli, "get_developer_token", lambda: None)
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "api")
+    cli.cmd_status(_args())
+    assert "Permission level: api" in capsys.readouterr().out
