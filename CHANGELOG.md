@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Nothing, unless you set a level. Without `--level` the server behaves exactly as 0.20.3 did. The setup snippets in the README now start new installs at `--level music`.
+- **The README is half as long.** It leads with the levels and the feature table (each engine column now names the level that turns it on); sign-in, configuration and usage patterns moved to [`docs/`](docs/).
 
 ## [0.20.3] - 2026-10-07
 
