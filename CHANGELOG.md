@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-10-22
+
+### Added
+
+- **Permission levels.** `serve --level music|api|web` sets what the server may reach, in the MCP client config where the assistant can't change it. `music` is Music.app only: no network, no browser. `api` adds Apple's music APIs, and `web` adds the Safari and Chrome web players. Accessibility UI scripting (the clicks behind no-sign-in catalog play and the iCloud sync nudge) is a separate opt-in, `--allow-ui`, at any level. Tools that can't work at the chosen level aren't offered to the assistant. A `mode` above the level is refused, one saved earlier is ignored, and every refusal tells the user where to change the level. Under the per-feature checks, two backstops hold the line: at `music` every HTTP request is refused, and without `--allow-ui` no System Events UI script or synthetic mouse event runs. `config info` and `applemusic-mcp status` show the level. The README now leads with the choice.
+
+### Changed
+
+- Nothing, unless you set a level. Without `--level` the server behaves exactly as 0.20.3 did. The setup snippets in the README now start new installs at `--level music`.
+
 ## [0.20.3] - 2026-10-07
 
 ### Security

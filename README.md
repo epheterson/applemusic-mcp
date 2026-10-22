@@ -12,6 +12,19 @@ MCP server for Apple Music. It gives any [MCP client](https://modelcontextprotoc
 
 **A Mac or an Apple Music subscription is all you need.** Four engines, chosen per call: Music.app and Safari on a Mac, the Apple Music API and Chrome on any OS.
 
+## Choose how much it can reach
+
+You decide what this server may touch, in your MCP client's config. The assistant can't change it, and tools that need more than you allowed aren't offered to it at all.
+
+| Level | It can reach | Good for |
+|---|---|---|
+| `--level music` | Only the Music app on your Mac. No network, no browser. | Your library, playlists, playback, ratings, AirPlay |
+| `--level api` | + Apple's music service over the internet | Searching and adding from the full catalog, recommendations and charts, Windows and Linux |
+| `--level web` | + a Safari or Chrome web player | The Up Next queue, and playback off the Mac |
+| add `--allow-ui` | + clicking inside the Music app (macOS Accessibility permission) | Playing catalog songs with no sign-in |
+
+Start with `music` and move up only when you want a feature that needs more. Leaving `--level` off keeps every engine on, which is how versions before 0.21 behaved.
+
 ## Features
 
 Four engines back the server. **Native** drives the local Music.app on macOS via AppleScript. **API** uses Apple Music's web API (`amp-api.music.apple.com`) on any OS. **Safari** drives your signed-in Safari's MusicKit on macOS (DRM-native, zero install). **Chrome** runs a local Google Chrome window with MusicKit for DRM audio on any OS. One `mode` preference picks the engine — `auto` (default) mixes the best of each: native Music.app for playback on macOS, Safari for the Up Next queue, the API for data, Chrome off-mac. Pin one with `native` / `safari` / `chrome` / `api`, or override a single playback/queue call with `engine=`. In the table below, the **Browser** column covers both the Safari and Chrome web players. `✓` supported, `✗` not possible on that engine, `—` not applicable there.
@@ -53,7 +66,7 @@ Everything in the **API** column runs anywhere, no browser and no Music app. Bro
 **Claude Code**, one line:
 
 ```bash
-claude mcp add "Apple Music" -- uvx applemusic-mcp serve
+claude mcp add "Apple Music" -- uvx applemusic-mcp serve --level music
 ```
 
 **Claude Desktop / Cursor / Cline / Windsurf**, install once, then add the config block:
@@ -70,11 +83,13 @@ pipx install applemusic-mcp        # or: pip install applemusic-mcp
   "mcpServers": {
     "Apple Music": {
       "command": "applemusic-mcp",
-      "args": ["serve"]
+      "args": ["serve", "--level", "music"]
     }
   }
 }
 ```
+
+Change `music` to `api` or `web` to unlock more (see [Choose how much it can reach](#choose-how-much-it-can-reach)). On Windows or Linux, start at `api`: `music` needs a Mac. What sign-in unlocks needs `api` or higher.
 
 Restart your client and try *"List my Apple Music playlists"* or *"Play my favorites."* On macOS the local library and playback work immediately. To add catalog music or run on any OS, sign in.
 
@@ -114,7 +129,7 @@ See the [appendix](#appendix-developer-token) for getting the MusicKit key.
 
 **Config file:** Claude Desktop uses `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows). Cursor, Cline, and Windsurf use the same `mcpServers` shape, see your client's docs.
 
-**`mode` preference** picks the engine: `auto` (default — best of each: native Music.app for playback on macOS, **Safari** for the Up Next queue, the API for data; **Chrome** off-mac), `native` (Music.app only, no account), `safari` (drive your signed-in Safari — macOS, no Chrome/Playwright), `chrome` (Chrome web player, any OS), or `api` (REST only — data + writes, no playback). Set it conversationally: `config(action="set-pref", preference="mode", string_value="safari")`. A per-call `engine=` (`native` / `safari` / `chrome` / `web`) overrides one playback or queue call (e.g. queue in Safari, then `playback(action="play", engine="safari")`). Using the queue makes its engine the active one, so transport controls reach it. The Safari engine drives the actual Safari you're browsing in (only ever a `music.apple.com` tab); Chrome uses an isolated window.
+**`mode` preference** picks the engine: `auto` (default — best of each: native Music.app for playback on macOS, **Safari** for the Up Next queue, the API for data; **Chrome** off-mac), `native` (Music.app only, no account), `safari` (drive your signed-in Safari — macOS, no Chrome/Playwright), `chrome` (Chrome web player, any OS), or `api` (REST only — data + writes, no playback). Set it conversationally: `config(action="set-pref", preference="mode", string_value="safari")`. `mode` stays inside the [permission level](#choose-how-much-it-can-reach): a mode the level doesn't allow is refused, and one saved earlier is ignored. A per-call `engine=` (`native` / `safari` / `chrome` / `web`) overrides one playback or queue call (e.g. queue in Safari, then `playback(action="play", engine="safari")`). Using the queue makes its engine the active one, so transport controls reach it. The Safari engine drives the actual Safari you're browsing in (only ever a `music.apple.com` tab); Chrome uses an isolated window.
 
 **Browser (Chrome web player) features** — cross-platform playback + the Up Next queue — need Google Chrome plus Playwright. Off macOS, Playwright is installed by default; **on macOS it's an opt-in extra** (`pip install 'applemusic-mcp[browser]'`) since Safari sign-in + native Music.app playback already cover the Mac. After installing, run the one-time browser download (`playwright install chromium`, or `uvx --from applemusic-mcp playwright install chromium`). The bundled Chromium can't decode Apple's DRM, so a real Chrome install is required, and these features open a local Chrome window (not for headless servers). You don't sign in twice: the web player authorizes off your existing sign-in (the Safari-harvested or developer token is bridged into its profile automatically), so on macOS a single `login` covers the API, native playback, *and* the Chrome web player/queue.
 
