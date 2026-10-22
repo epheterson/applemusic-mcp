@@ -9104,10 +9104,14 @@ def _catalog_miss_play(name: str, artist: str, url: str, reveal: bool) -> str:
     # layout this build doesn't match). In auto/browser playback, the browser
     # web player is a working fallback; pinned-native opted out of it.
     pinned_native = _mode_pinned_native()
-    if not pinned_native and has_user_token():
+    lvl = capabilities.current()
+    if not pinned_native and has_user_token() and lvl.web:
         bmsg = _browser_play(_web_player(_playback_engine("web")), url=url)
         if not bmsg.startswith("Error"):
             return f"[Catalog→Browser] {bmsg}"
+    if lvl.explicit and not lvl.ui:
+        # Refused by the level, not by macOS: granting Accessibility wouldn't help.
+        return f"[Catalog] Found {name} by {artist}. {msg}"
 
     return (
         f"[Catalog] Found {name} by {artist} — couldn't auto-play it in Music. "
@@ -9161,7 +9165,7 @@ def _playback_play(
         # Native UI play failed — fall back to the browser web player unless
         # playback is pinned to native (same policy as _catalog_miss_play).
         pinned_native = _mode_pinned_native()
-        if not pinned_native and has_user_token():
+        if not pinned_native and has_user_token() and capabilities.current().web:
             bmsg = _browser_play(_web_player(_playback_engine("web")), url=url, shuffle=shuffle)
             if not bmsg.startswith("Error"):
                 audit_log.log_action("play_url", {"url": url, "via": "browser"})

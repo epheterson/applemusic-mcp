@@ -320,6 +320,14 @@ def _resolve_library_track_applescript(track_name: str, artist: Optional[str] = 
         end try"""
 
 
+# A System Events script that drives another app's UI (needs Accessibility).
+# Checking whether Music is running uses System Events without any of these.
+_UI_SCRIPTING = re.compile(
+    r'application "System Events".*\b(tell process|keystroke|key code|click|perform action)\b',
+    re.DOTALL,
+)
+
+
 def run_applescript(script: str) -> tuple[bool, str]:
     """Execute AppleScript and return (success, output/error).
 
@@ -331,6 +339,8 @@ def run_applescript(script: str) -> tuple[bool, str]:
         On success, output is the script's return value.
         On failure, output is the error message.
     """
+    if _UI_SCRIPTING.search(script) and (denied := _ui_denied("Scripting the Music app's UI")):
+        return False, denied
     try:
         result = subprocess.run(
             ["osascript", "-e", script], capture_output=True, text=True, timeout=30
@@ -558,6 +568,16 @@ _last_cloud_nudge = 0.0
 _CLOUD_NUDGE_MIN_INTERVAL = 4.0  # seconds — don't re-foreground Music more than ~once/4s
 
 
+def _ui_denied(feature: str) -> str | None:
+    """Accessibility UI scripting (clicks, keystrokes, menus) is opt-in once a
+    permission level is set. Returns the refusal text, or None if allowed."""
+    from . import capabilities
+
+    if capabilities.current().ui:
+        return None
+    return capabilities.denied_message(feature, "ui")
+
+
 def update_cloud_library(min_interval: float = _CLOUD_NUDGE_MIN_INTERVAL) -> tuple[bool, str]:
     """Nudge an iCloud Music Library sync via File > Library > Update Cloud Library,
     so a track just added to the library over the API shows up in the LOCAL
@@ -576,6 +596,8 @@ def update_cloud_library(min_interval: float = _CLOUD_NUDGE_MIN_INTERVAL) -> tup
     The menu click is an Accessibility action, not a mouse move, but macOS only
     exposes the frontmost app's menu bar, so we briefly activate Music and then
     restore the previously-frontmost app so the user's focus isn't stolen."""
+    if denied := _ui_denied("Nudging the iCloud Music Library sync"):
+        return False, denied
     global _last_cloud_nudge
     now = time.monotonic()
     if now - _last_cloud_nudge < min_interval:
@@ -2480,6 +2502,8 @@ def _jxa_mouse_move(x: float, y: float) -> bool:
 
     Returns True if the command succeeded.
     """
+    if _ui_denied("Moving or clicking the mouse"):
+        return False
     # 0.05s lets the OS commit the CGEvent before osascript exits.
     script = f'''ObjC.import("CoreGraphics");
 var p = $.CGPointMake({x}, {y});
@@ -2508,6 +2532,8 @@ def _jxa_mouse_click(x: float, y: float) -> bool:
 
     Returns True if the command succeeded.
     """
+    if _ui_denied("Moving or clicking the mouse"):
+        return False
     # 0.05s down→up gap is the minimum that registers as a click (lower
     # is treated as separate down/up events).
     script = f'''ObjC.import("CoreGraphics");
@@ -2541,6 +2567,8 @@ def _jxa_mouse_double_click(x: float, y: float) -> bool:
 
     Returns True if the command succeeded.
     """
+    if _ui_denied("Moving or clicking the mouse"):
+        return False
     script = f'''ObjC.import("CoreGraphics");
 var p = $.CGPointMake({x}, {y});
 for (var i = 1; i <= 2; i++) {{
@@ -2586,6 +2614,8 @@ def _jxa_scroll_down(x: float, y: float, amount: int = 10) -> bool:
 
     Returns True if the command succeeded.
     """
+    if _ui_denied("Moving or clicking the mouse"):
+        return False
     script = f'''ObjC.import("CoreGraphics");
 var p = $.CGPointMake({x}, {y});
 var m = $.CGEventCreateMouseEvent($(), $.kCGEventMouseMoved, p, 0);
@@ -2844,6 +2874,8 @@ def open_catalog_and_play(
     Returns:
         Tuple of (success, message or error)
     """
+    if denied := _ui_denied("Playing a catalog item that isn't in your library"):
+        return False, denied
     # Reject /song/ URLs — they show "Something went wrong" in Music.app
     url_stripped = url.strip()
     if "/song/" in url_stripped and "?i=" not in url_stripped:
@@ -4149,6 +4181,8 @@ def ui_search_catalog(query: str) -> tuple[bool, list[dict], str]:
         artist (if applicable), and index (position in results).
         error is an empty string on success; a human-readable message otherwise.
     """
+    if denied := _ui_denied("Searching the catalog without an API sign-in"):
+        return False, [], denied
     if not query or not query.strip():
         return False, [], "Empty query"
 
@@ -4172,6 +4206,8 @@ def ui_search_catalog(query: str) -> tuple[bool, list[dict], str]:
 
 def ui_clear_search() -> None:
     """Clear the Music.app search field and dismiss search."""
+    if _ui_denied("Clearing Music's search field"):
+        return
     run_applescript(
         f"""
 tell application "System Events"
@@ -4227,6 +4263,8 @@ def ui_play_result_by_query(query: str) -> tuple[bool, str]:
     Returns:
         Tuple of (success, message)
     """
+    if denied := _ui_denied("Playing a catalog item that isn't in your library"):
+        return False, denied
     ok, results, why = ui_search_catalog(query)
     if not ok or not results:
         ui_clear_search()
