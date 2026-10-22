@@ -25,6 +25,8 @@ You decide what this server may touch, in your MCP client's config. The assistan
 
 Start with `music` and move up only when you want a feature that needs more. Leaving `--level` off keeps every engine on, which is how versions before 0.21 behaved.
 
+Rather skip the terminal? [@jaminben](https://github.com/jaminben)'s [secure-applemusic-mcp-for-osx](https://github.com/jaminben/secure-applemusic-mcp-for-osx) is a lovely take on this server: a notarized Mac app you drag to Applications, with a guided first-run window that wires up your AI apps and asks for one permission. It trades the web players and the Up Next queue for the smallest footprint, and it's well worth a look.
+
 ## Features
 
 Four engines back the server. **Native** drives the local Music.app on macOS via AppleScript. **API** uses Apple Music's web API (`amp-api.music.apple.com`) on any OS. **Safari** drives your signed-in Safari's MusicKit on macOS (DRM-native, zero install). **Chrome** runs a local Google Chrome window with MusicKit for DRM audio on any OS. One `mode` preference picks the engine — `auto` (default) mixes the best of each: native Music.app for playback on macOS, Safari for the Up Next queue, the API for data, Chrome off-mac. Pin one with `native` / `safari` / `chrome` / `api`, or override a single playback/queue call with `engine=`. In the table below, the **Browser** column covers both the Safari and Chrome web players. `✓` supported, `✗` not possible on that engine, `—` not applicable there.
