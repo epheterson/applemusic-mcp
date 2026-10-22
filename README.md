@@ -16,16 +16,16 @@ MCP server for Apple Music. It gives any [MCP client](https://modelcontextprotoc
 
 You decide what this server may touch, in your MCP client's config. The assistant can't change it, and tools that need more than you allowed aren't offered to it at all.
 
-| Level | It can reach | Good for |
+| `--level` | It can reach | Good for |
 |---|---|---|
-| `--level music` | Only the Music app on your Mac. No network, no browser. | Your library, playlists, playback, ratings, AirPlay |
-| `--level api` | + Apple's music service over the internet | Searching and adding from the full catalog, recommendations and charts, Windows and Linux |
-| `--level web` | + a Safari or Chrome web player | The Up Next queue, and playback off the Mac |
-| add `--allow-ui` | + clicking inside the Music app (macOS Accessibility permission) | Playing catalog songs with no sign-in |
+| `music` | Only the Music app on your Mac. No network, no browser. | Your library, playlists, playback, ratings, AirPlay |
+| `api` | + Apple's music service over the internet | Searching and adding from the full catalog, recommendations, Windows and Linux |
+| `web` | + a Safari or Chrome web player | The Up Next queue, and playback off the Mac |
+| `--allow-ui` (any level) | + clicking inside the Music app (macOS Accessibility) | Playing catalog songs with no sign-in |
 
-Start with `music` and move up only when you want a feature that needs more. Leaving `--level` off keeps every engine on, which is how versions before 0.21 behaved.
+Start with `music` and move up when you want a feature that needs more. Leaving `--level` off keeps everything on, as before 0.21.
 
-Rather skip the terminal? [@jaminben](https://github.com/jaminben)'s [secure-applemusic-mcp-for-osx](https://github.com/jaminben/secure-applemusic-mcp-for-osx) is a lovely take on this server: a notarized Mac app you drag to Applications, with a guided first-run window that wires up your AI apps and asks for one permission. It trades the web players and the Up Next queue for the smallest footprint, and it's well worth a look.
+Rather skip the terminal? [@jaminben](https://github.com/jaminben)'s [secure-applemusic-mcp-for-osx](https://github.com/jaminben/secure-applemusic-mcp-for-osx) is a lovely take on this server: a notarized Mac app with a guided first-run setup and the smallest footprint. Well worth a look.
 
 ## Features
 
@@ -97,17 +97,7 @@ Restart your client and try *"List my Apple Music playlists"* or *"Play my favor
 
 ### Sign in
 
-Two paths capture the credentials for the cross-platform API.
-
-**Apple Developer token (preferred).** The sanctioned route, an [Apple Developer Program](https://developer.apple.com/programs/) membership with a MusicKit key. One guided command writes the config, mints a 6-month token, and authorizes:
-
-```bash
-applemusic-mcp login --dev      # prompts for Team ID, Key ID, and .p8 path
-```
-
-See the [appendix](#appendix-developer-token) for getting the MusicKit key.
-
-**Web sign-in.** The quick path, and what plain `applemusic-mcp login` does. Your password never touches this tool, sign-in persists, and tokens re-fetch before they expire. You can also sign in conversationally — just ask your assistant. (Web sign-in uses Apple's web-player API, the same path as open-source clients like [Cider](https://github.com/ciderapp/Cider-2) and [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/).)
+**Web sign-in** is what plain `applemusic-mcp login` does, and all most people need. Your password never touches this tool, sign-in persists, and tokens re-fetch before they expire. At `--level web` you can also just ask your assistant to sign you in. (Web sign-in uses Apple's web-player API, the same path as open-source clients like [Cider](https://github.com/ciderapp/Cider-2) and [Music Assistant](https://www.music-assistant.io/music-providers/apple-music/).)
 
 - **macOS — reads from a signed-in Safari (no Chrome, no ~500 MB Playwright):**
 
@@ -124,7 +114,10 @@ See the [appendix](#appendix-developer-token) for getting the MusicKit key.
   applemusic-mcp login            # opens Chrome to music.apple.com; sign in once
   ```
 
-**Bulk work wants `--dev`.** Web sign-in uses Apple's *public* web-player token, and its request quota is shared rather than yours alone. Interactive use never gets near it, but a few hundred catalog searches in an hour — a playlist import, a library migration — will hit `HTTP 429`. Apple sends no `Retry-After` on this path and the window is **rolling and ~60 minutes long**, so a short cooldown doesn't clear it and retrying extends it. `applemusic-mcp login --dev` uses your own MusicKit key, which gets its own much larger quota. When you are throttled the tool says so explicitly, rather than letting the empty results read as "song not found."
+**Your own developer token, for bulk work.** Web sign-in uses Apple's *public* web-player token, whose request quota is shared. Interactive use never gets near it, but a few hundred catalog searches in an hour (a playlist import, a library migration) will hit `HTTP 429`, and the window is **rolling and ~60 minutes long**, so retrying extends it. The tool says so when you're throttled, rather than reporting "not found." With an [Apple Developer Program](https://developer.apple.com/programs/) membership you get your own, much larger quota, through Apple's sanctioned route:
+
+1. [Developer Portal → Keys](https://developer.apple.com/account/resources/authkeys/list) → **+** → check **MusicKit** → Register → download the `.p8` (one time). Note your **Key ID** and **Team ID**.
+2. Run `applemusic-mcp login --dev`. It prompts for the Team ID, Key ID and `.p8` path (or pass `--team-id`, `--key-id`, `--key-path`), writes the config, mints a 180-day token that renews on use, and authorizes you.
 
 <details>
 <summary>Config locations, mode, and source install</summary>
@@ -220,19 +213,6 @@ applemusic-mcp reset --all --force   # full uninstall: also removes the .p8, pro
 - **Brand-new playlists take a moment** to be addable over the API (cloud propagation). Existing ones are immediate.
 - **A few macOS-only features** have no Apple Music API equivalent: 1 to 5 star ratings, favorites, library snapshots, AirPlay, and nested folder paths.
 - **If catalog actions start failing**, re-run `applemusic-mcp login`. A handful of user playlists silently revert AppleScript edits ([known Music.app bug](https://www.macscripter.net/t/add-current-track-from-apple-music-to-playlist/72058)); the server detects and surfaces the rollback.
-
-## Appendix: developer token
-
-The preferred path. With an [Apple Developer Program](https://developer.apple.com/programs/) membership:
-
-1. **Get a MusicKit key.** [Apple Developer Portal → Keys](https://developer.apple.com/account/resources/authkeys/list) → **+** → name it, check **MusicKit**, Register → download the `.p8` (one time). Note your **Key ID** and **Team ID**.
-2. **Run the guided flow:**
-   ```bash
-   applemusic-mcp login --dev
-   ```
-   It prompts for the Team ID, Key ID, and `.p8` path (or pass `--team-id`, `--key-id`, `--key-path`), writes `~/.config/applemusic-mcp/config.json`, generates the developer token (180 days, auto-renews on use), and authorizes your user token.
-
----
 
 ## Star History
 
