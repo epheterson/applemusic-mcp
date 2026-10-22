@@ -91,7 +91,7 @@ pipx install applemusic-mcp        # or: pip install applemusic-mcp
 }
 ```
 
-Change `music` to `api` or `web` to unlock more (see [Choose how much it can reach](#choose-how-much-it-can-reach)). On Windows or Linux, start at `api`: `music` needs a Mac. What sign-in unlocks needs `api` or higher.
+Change `music` to `api` or `web` to unlock more (see [Choose how much it can reach](#choose-how-much-it-can-reach)). On Windows or Linux, start at `api`: `music` needs a Mac. The terminal `login` works at any level; the features it unlocks need `api` or higher, and signing in through the assistant needs `web`.
 
 Restart your client and try *"List my Apple Music playlists"* or *"Play my favorites."* On macOS the local library and playback work immediately. To add catalog music or run on any OS, sign in.
 

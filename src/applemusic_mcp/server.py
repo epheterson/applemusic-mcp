@@ -9267,6 +9267,10 @@ def _playback_play(
                 break
 
         # Not in library - search catalog
+        if not capabilities.current().network:
+            return f"Not in your library: {album}. " + capabilities.denied_message(
+                "Searching the Apple Music catalog", "api"
+            )
         try:
             headers = get_headers()
             response = requests.get(

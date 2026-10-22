@@ -177,3 +177,12 @@ def test_active_engine_is_clamped_to_level(monkeypatch, level):
     level("api")
     monkeypatch.setattr(server, "_active_playback_engine", "safari")
     assert server._get_active_playback() == "native"
+
+
+def test_play_album_at_music_not_in_library_says_level(monkeypatch, level):
+    level("music")
+    _no_applescript(monkeypatch)
+    monkeypatch.setattr(server.asc, "search_library", lambda *a, **k: (True, []))
+    monkeypatch.setattr(server, "get_headers", lambda: {"Authorization": "Bearer x"})
+    out = server.playback(action="play", album="Random Access Memories", artist="Daft Punk")
+    assert "--level api" in out and "Random Access Memories" in out
