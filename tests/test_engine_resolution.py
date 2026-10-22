@@ -123,3 +123,69 @@ def test_no_player_msg_native_queue(mode):
 def test_no_player_msg_api(mode):
     mode("api", mac=True)
     assert "API mode" in server._no_player_msg()
+
+
+# -- permission levels ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "level,stored,expected",
+    [
+        ("music", "safari", "native"),
+        ("music", "chrome", "native"),
+        ("music", "api", "native"),
+        ("api", "safari", "native"),
+        ("web", "safari", "safari"),
+    ],
+)
+def test_stored_mode_above_level_is_clamped(mode, monkeypatch, level, stored, expected):
+    mode(stored, mac=True)
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", level)
+    assert server._playback_engine() == expected
+
+
+def test_engine_override_cannot_exceed_level(mode, monkeypatch):
+    mode("auto", mac=True)
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "api")
+    assert server._playback_engine("safari") == "none"
+    assert server._playback_engine("chrome") == "none"
+    assert server._queue_engine() == "none"
+
+
+def test_auto_off_mac_below_web_has_no_player(mode, monkeypatch):
+    mode("auto", mac=False)
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "api")
+    assert server._playback_engine() == "none"
+
+
+def test_data_engine_native_at_music_even_if_mode_api(mode, monkeypatch):
+    mode("api", mac=True)
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "music")
+    assert server._engine() == "native"
+
+
+def test_mode_pinned_native_respects_clamp(mode, monkeypatch):
+    mode("native", mac=True)
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "music")
+    assert server._mode_pinned_native() is True
+
+
+def test_no_player_msg_names_level_not_chrome(mode, monkeypatch):
+    mode("auto", mac=True)
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "api")
+    msg = server._no_player_msg(for_queue=True)
+    assert "--level web" in msg and "Chrome" not in msg
+
+
+def test_web_player_refused_below_web(monkeypatch):
+    from applemusic_mcp.capabilities import CapabilityDenied
+
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "api")
+    with pytest.raises(CapabilityDenied):
+        server._web_player("safari")
+
+
+def test_conversational_signin_refused_below_web(monkeypatch):
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "api")
+    out = server.config(action="signin")
+    assert "--level web" in out and "applemusic-mcp login" in out

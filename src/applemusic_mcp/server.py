@@ -49,6 +49,7 @@ from .track_cache import get_track_cache, get_cache_dir
 from . import audit_log
 from . import __version__ as _pkg_version
 from . import paths
+from . import capabilities
 
 # Check if AppleScript is available (macOS only)
 APPLESCRIPT_AVAILABLE = asc.is_available()
@@ -1051,6 +1052,21 @@ def _can_use_library_api() -> bool:
     return has_any_developer_token() and _has_user_token()
 
 
+def _effective_mode(override: str = "") -> str:
+    """The `mode` pref, or a per-call ``engine=``, clamped to the permission level.
+
+    A stored mode the level doesn't allow resolves to ``auto`` (a preference saved
+    before the user picked a level must not widen it); an override the level
+    doesn't allow resolves to ``none`` so the caller reports no player."""
+    sel = (override or get_user_preferences().get("mode") or "auto").strip().lower()
+    if sel == "browser":  # legacy alias for the Chrome web player
+        sel = "chrome"
+    lvl = capabilities.current()
+    if lvl.explicit and sel not in capabilities.MODES_BY_LEVEL[lvl.name]:
+        return "none" if override else "auto"
+    return sel
+
+
 def _engine() -> str:
     """Resolve the active engine from the single ``mode`` preference:
     ``native`` (AppleScript / local Music.app) or ``api`` (the web API +
@@ -1063,7 +1079,9 @@ def _engine() -> str:
     separate playback knob. Honors APPLEMUSIC_FORCE_API_MODE for testing."""
     if os.environ.get("APPLEMUSIC_FORCE_API_MODE") == "1":
         return "api"
-    mode = (get_user_preferences().get("mode") or "auto").lower()
+    if not capabilities.current().network:
+        return "native"  # the music level never leaves Music.app
+    mode = _effective_mode()
     # safari/chrome are PLAYBACK engines — their data still comes from the REST API.
     if mode in ("web", "api", "safari", "chrome"):
         return "api"
@@ -1073,18 +1091,27 @@ def _engine() -> str:
 
 
 def _playback_engine(engine_override: Optional[str] = None, for_queue: bool = False) -> str:
-    """Resolve the playback engine: 'native' | 'safari' | 'chrome' | 'none'.
+    """Resolve the playback engine within the permission level (see
+    ``_playback_engine_unclamped`` for the routing itself). Below ``web`` the
+    Safari/Chrome players are never chosen: auto falls back to Music.app for
+    plain playback and to no engine for the queue."""
+    sel = _effective_mode(engine_override or "")
+    if sel == "none":
+        return "none"
+    eng = _playback_engine_unclamped(sel, for_queue)
+    if eng in ("safari", "chrome") and not capabilities.current().web:
+        return "native" if (APPLESCRIPT_AVAILABLE and not for_queue) else "none"
+    return eng
 
-    Priority: per-call ``engine=`` override → ``mode`` pref → ``auto`` routing.
+
+def _playback_engine_unclamped(sel: str, for_queue: bool = False) -> str:
+    """Route a selection (from ``_effective_mode``) to an engine:
+    'native' | 'safari' | 'chrome' | 'none'.
+
     'none' means no player is available for this selection (the caller turns that
     into an actionable error). ``for_queue`` distinguishes Up Next (web-player only:
     Safari on macOS, Chrome off-mac) from plain playback (native on macOS).
     AppleScript availability is the macOS proxy (native + Safari both need it)."""
-    sel = (engine_override or "").strip().lower()
-    if not sel:
-        sel = (get_user_preferences().get("mode") or "auto").lower()
-    if sel == "browser":  # legacy alias for the Chrome web player
-        sel = "chrome"
     if sel == "api":
         return "none"  # api mode has no player
     if sel == "native":
@@ -1111,6 +1138,7 @@ def _queue_engine(engine_override: Optional[str] = None) -> str:
 
 def _web_player(engine: str):
     """Return the module that drives the given web engine ('safari' | 'chrome')."""
+    capabilities.require("web", "The Safari/Chrome web player")
     if engine == "safari":
         from . import safari_player
 
@@ -1129,6 +1157,11 @@ def _platform_players() -> str:
 def _no_player_msg(engine_override: Optional[str] = None, for_queue: bool = False) -> str:
     """Actionable error when no playback/queue engine is available. System-aware: it
     names only the engines available on this platform."""
+    lvl = capabilities.current()
+    if lvl.explicit and not lvl.web:
+        return capabilities.denied_message(
+            "Up Next" if for_queue else "Playing in a Safari/Chrome web player", "web"
+        )
     mode = (engine_override or get_user_preferences().get("mode") or "auto").lower()
     if for_queue and mode == "native":
         # Only reachable on macOS (native needs AppleScript), so the macOS advice fits.
@@ -1174,7 +1207,7 @@ def _mode_pinned_native() -> bool:
     """True when the user explicitly pinned ``mode=native`` (so playback must
     stay in Music.app and never fall back to the browser). ``auto`` is NOT
     pinned, so it may use the browser as a playback safety net."""
-    return (get_user_preferences().get("mode") or "auto").lower() == "native"
+    return _effective_mode() == "native"
 
 
 def _use_browser_playback() -> bool:
@@ -8440,6 +8473,11 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
         return f"{body}\nMode: {mode}\n{engines}\nWrites: {write_rail}\n\n{nxt}"
 
     if action in ("signin", "login"):
+        if not capabilities.current().web:
+            return (
+                capabilities.denied_message("Signing in from the assistant", "web")
+                + " Or run `applemusic-mcp login` in a terminal."
+            )
         # macOS default: harvest the token from a signed-in Safari (zero-install) —
         # the same default as the CLI `login`. Only fall back to Chrome (with
         # guidance), and only try Chrome at all when Playwright is actually present.
