@@ -1151,6 +1151,8 @@ def _web_player(engine: str):
 def _platform_players() -> str:
     """The playback engines that actually exist on THIS machine — so guidance names
     only options the user can use (native/safari are macOS-only; chrome is anywhere)."""
+    if not capabilities.current().web:
+        return "native"  # the web players are outside the permission level
     return "native, safari, or chrome" if APPLESCRIPT_AVAILABLE else "chrome"
 
 
@@ -1158,11 +1160,15 @@ def _no_player_msg(engine_override: Optional[str] = None, for_queue: bool = Fals
     """Actionable error when no playback/queue engine is available. System-aware: it
     names only the engines available on this platform."""
     lvl = capabilities.current()
-    if lvl.explicit and not lvl.web:
-        return capabilities.denied_message(
-            "Up Next" if for_queue else "Playing in a Safari/Chrome web player", "web"
-        )
     mode = (engine_override or get_user_preferences().get("mode") or "auto").lower()
+    if lvl.explicit and not lvl.web:
+        # Name the level only when it's what blocked a web player; a mode that
+        # simply has no player (api) is fixed by changing the mode, not the level.
+        wanted = _playback_engine_unclamped("chrome" if mode == "browser" else mode, for_queue)
+        if wanted in ("safari", "chrome") or not APPLESCRIPT_AVAILABLE:
+            return capabilities.denied_message(
+                "Up Next" if for_queue else "Playing in a Safari/Chrome web player", "web"
+            )
     if for_queue and mode == "native":
         # Only reachable on macOS (native needs AppleScript), so the macOS advice fits.
         return (
@@ -1199,7 +1205,10 @@ def _set_active_playback(engine: str) -> None:
 
 
 def _get_active_playback() -> str:
-    """Engine for control / now_playing: the last-used one, else the auto default."""
+    """Engine for control / now_playing: the last-used one, else the auto default.
+    A web engine outside the permission level is never returned."""
+    if _active_playback_engine in ("safari", "chrome") and not capabilities.current().web:
+        return _playback_engine()
     return _active_playback_engine or _playback_engine()
 
 
@@ -2402,6 +2411,8 @@ def _search_catalog_songs(query: str, limit: int = 5) -> list[dict]:
         if response.status_code == 200:
             data = response.json()
             return data.get("results", {}).get("songs", {}).get("data", [])
+    except capabilities.CapabilityDenied:
+        raise  # a level refusal is not "not found"
     except Exception:
         pass
     return []
@@ -2430,6 +2441,8 @@ def _search_catalog_albums(query: str, limit: int = 5) -> list[dict]:
         if response.status_code == 200:
             data = response.json()
             return data.get("results", {}).get("albums", {}).get("data", [])
+    except capabilities.CapabilityDenied:
+        raise  # a level refusal is not "not found"
     except Exception:
         pass
     return []
@@ -2865,6 +2878,8 @@ def _unified_auto_search_to_playlist(
     # that broke across macOS/Music.app versions (#37) has been removed — there is
     # no UI fallback. If the API path isn't available, tell the user how to enable
     # it rather than degrading to something unreliable.
+    if not capabilities.current().network:
+        return (False, capabilities.denied_message("Adding from the catalog", "api"), steps)
     if not _can_use_library_api():
         if _forced_tokenless():
             return (False, f"Catalog add disabled: {_FORCED_TOKENLESS_MSG}", steps)
@@ -5434,6 +5449,8 @@ def _resolve_catalog_track_itunes(name: str, artist: str = "") -> Optional[dict]
         if resp.status_code != 200:
             return None
         results = resp.json().get("results", [])
+    except capabilities.CapabilityDenied:
+        raise  # a level refusal is not "not found"
     except Exception:
         return None
 
@@ -5518,6 +5535,8 @@ def _library_add(
     # that broke across macOS/Music.app versions (#37) has been removed — there
     # is no UI fallback. If the API path isn't available, tell the user how to
     # enable it.
+    if not capabilities.current().network:
+        return "Error: " + capabilities.denied_message("Adding to your library", "api")
     if not _can_use_library_api():
         if _forced_tokenless():
             return f"Error: Adding to your library is disabled: {_FORCED_TOKENLESS_MSG}"
@@ -7620,8 +7639,11 @@ def catalog(
     action = action.lower().strip().replace("-", "_")
 
     if action == "search":
-        # Try API first, fall back to UI search if no API token
+        # Try API first, fall back to UI search if no API token — or if the
+        # permission level has no network, even with a token saved.
         try:
+            if not capabilities.current().network:
+                raise FileNotFoundError("no network at this permission level")
             get_headers()  # Verify API access is available
             return _catalog_search(query, types, limit, format, export, full, clean_only)
         except (FileNotFoundError, ValueError):
@@ -8915,6 +8937,8 @@ def playback(
         def _peek(key):  # no-launch read of a non-active engine
             if key == "native":
                 return asc.now_playing_if_running() if APPLESCRIPT_AVAILABLE else None
+            if not capabilities.current().web:
+                return None  # below web, never touch Safari or Chrome, even to read
             if key == "safari":
                 return safari_player.now_playing_if_running()
             if key == "chrome":
@@ -8959,7 +8983,11 @@ def playback(
         if others:
             out += "\n\nOther engines also playing:\n" + "\n".join(others)
             out += "\n(pass engine='native' | 'safari' | 'chrome' to control a specific one)"
-        tabs = safari_player.music_tab_count() if APPLESCRIPT_AVAILABLE else 0
+        tabs = (
+            safari_player.music_tab_count()
+            if APPLESCRIPT_AVAILABLE and capabilities.current().web
+            else 0
+        )
         if tabs > 1:
             out += f"\n\nℹ️ {tabs} Apple Music tabs are open in Safari — driving a consistent one."
         return out
@@ -9404,6 +9432,17 @@ def _playback_play(
             break
 
     # Track not in library - search catalog
+    if not capabilities.current().network:
+        # The music level can't search the catalog; with --allow-ui, Music.app's
+        # own search can still find and play it.
+        ui_ok, ui_msg = _try_ui_catalog_play(
+            track_name, track_artist, source_label="ui_search", prefix="[UI Search]"
+        )
+        if ui_ok:
+            return ui_msg
+        return f"Not in your library: {track_name}. " + capabilities.denied_message(
+            "Searching the Apple Music catalog", "api"
+        )
     search_term = f"{track_name} {track_artist}".strip() if track_artist else track_name
     songs = _search_catalog_songs(search_term, limit=5)
 
@@ -9453,7 +9492,7 @@ def _playback_play(
         ui_ok, ui_msg = _try_ui_catalog_play(song_name, song_artist)
         if ui_ok:
             return ui_msg
-        if ui_msg is not None:
+        if ui_msg is not None and capabilities.current().ui:
             # UI was attempted and failed — surface the reason rather than
             # falling through to reveal/error. APPLESCRIPT_AVAILABLE=False
             # returns (False, None), in which case we do fall through.
