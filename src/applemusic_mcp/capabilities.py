@@ -77,3 +77,22 @@ def require(cap: str, feature: str) -> None:
     if getattr(current(), cap):
         return
     raise CapabilityDenied(denied_message(feature, _NEEDS.get(cap, "ui")))
+
+
+def install_network_guard() -> bool:
+    """At the music level, refuse every HTTP request the process makes.
+
+    The per-feature checks give friendlier messages; this is the backstop for
+    any path they miss. Every requests.get/post goes through Session.request.
+    Returns True if the guard was installed."""
+    if current().network:
+        return False
+    import requests
+    from urllib.parse import urlsplit
+
+    def _denied(self, method, url, *args, **kwargs):
+        host = urlsplit(str(url)).hostname or str(url)
+        raise CapabilityDenied(denied_message(f"Reaching {host}", "api"))
+
+    requests.Session.request = _denied
+    return True

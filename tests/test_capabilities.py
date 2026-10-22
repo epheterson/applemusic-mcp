@@ -80,3 +80,33 @@ def test_modes_by_level():
     assert caps.MODES_BY_LEVEL["music"] == ("auto", "native")
     assert "api" in caps.MODES_BY_LEVEL["api"] and "safari" not in caps.MODES_BY_LEVEL["api"]
     assert {"safari", "chrome", "web"} <= set(caps.MODES_BY_LEVEL["web"])
+
+
+# -- network guard at the music level ---------------------------------------
+
+import requests  # noqa: E402
+
+
+def test_guard_blocks_requests_at_music(monkeypatch):
+    monkeypatch.setattr(requests.Session, "request", requests.Session.request)  # restored on teardown
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "music")
+    assert caps.install_network_guard() is True
+    with pytest.raises(caps.CapabilityDenied, match="--level api") as e:
+        requests.get("https://api.music.apple.com/v1/catalog/us/search")
+    assert "api.music.apple.com" in str(e.value)
+
+
+@pytest.mark.parametrize("level", ["api", "web", None])
+def test_guard_not_installed_above_music(monkeypatch, level):
+    original = requests.Session.request
+    monkeypatch.setattr(requests.Session, "request", original)
+    if level:
+        monkeypatch.setenv("APPLEMUSIC_LEVEL", level)
+    assert caps.install_network_guard() is False
+    assert requests.Session.request is original
+
+
+def test_guard_is_not_a_requests_exception():
+    # Callers catch requests.RequestException as "Apple is unreachable"; a
+    # refusal must not be swallowed and reported as an outage.
+    assert not issubclass(caps.CapabilityDenied, requests.RequestException)
