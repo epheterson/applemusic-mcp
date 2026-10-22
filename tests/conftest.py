@@ -49,6 +49,14 @@ def _block_external_network(request):
 
 
 @pytest.fixture(autouse=True)
+def _unrestricted_level(monkeypatch):
+    """Tests run unrestricted unless they set a permission level themselves, so
+    a level exported in the developer's shell can't leak into the suite."""
+    monkeypatch.delenv("APPLEMUSIC_LEVEL", raising=False)
+    monkeypatch.delenv("APPLEMUSIC_ALLOW_UI", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _block_live_applescript(request, monkeypatch):
     """Hard guarantee: no non-live test runs real AppleScript against the user's
     Music.app. Every AppleScript call funnels through ``asc.run_applescript``;

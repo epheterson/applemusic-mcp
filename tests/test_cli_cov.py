@@ -371,3 +371,46 @@ def test_status_web_session_not_misreported(monkeypatch, tmp_path, capsys):
     assert "API: ok (web session)" in out
     assert "not configured" not in out
     assert "web-player token" in out  # dev-token line clarifies the web path
+
+
+# ---------------------------------------------------------------------------
+# serve --level / --allow-ui
+# ---------------------------------------------------------------------------
+
+
+def _fake_server(monkeypatch, main):
+    monkeypatch.setitem(sys.modules, "applemusic_mcp.server", types.SimpleNamespace(main=main))
+
+
+def test_serve_level_sets_env(monkeypatch):
+    import os
+
+    seen = {}
+    _fake_server(
+        monkeypatch,
+        lambda: seen.update(
+            level=os.environ.get("APPLEMUSIC_LEVEL"), ui=os.environ.get("APPLEMUSIC_ALLOW_UI")
+        ),
+    )
+    monkeypatch.setattr(sys, "argv", ["applemusic-mcp", "serve", "--level", " API ", "--allow-ui"])
+    cli.main()
+    assert seen == {"level": "api", "ui": "1"}
+
+
+def test_serve_without_level_leaves_env_unset(monkeypatch):
+    import os
+
+    seen = {}
+    _fake_server(monkeypatch, lambda: seen.update(level=os.environ.get("APPLEMUSIC_LEVEL")))
+    monkeypatch.setattr(sys, "argv", ["applemusic-mcp", "serve"])
+    cli.main()
+    assert seen == {"level": None}
+
+
+def test_serve_bad_level_exits_2(monkeypatch, capsys):
+    _fake_server(monkeypatch, lambda: pytest.fail("server started"))
+    monkeypatch.setattr(sys, "argv", ["applemusic-mcp", "serve", "--level", "apis"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 2
+    assert "music, api, web" in capsys.readouterr().err

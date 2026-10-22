@@ -271,7 +271,21 @@ def cmd_status(args):
 
 
 def cmd_serve(args):
-    """Start the MCP server."""
+    """Start the MCP server at the permission level the client config asked for."""
+    import os
+
+    from . import capabilities
+
+    level = getattr(args, "level", None)
+    if level is not None:
+        try:
+            capabilities.parse(level, None)
+        except ValueError as e:
+            print(f"applemusic-mcp: {e}", file=sys.stderr)
+            sys.exit(2)
+        os.environ[capabilities.ENV_LEVEL] = level.strip().lower()
+    if getattr(args, "allow_ui", False):
+        os.environ[capabilities.ENV_UI] = "1"
     from .server import main
 
     main()
@@ -282,7 +296,15 @@ def main():
     parser = argparse.ArgumentParser(description="MCP server for Apple Music")
     sub = parser.add_subparsers(dest="command", help="Commands")
 
-    sub.add_parser("serve", help="Run the MCP server (your client calls this)")
+    serve = sub.add_parser("serve", help="Run the MCP server (your client calls this)")
+    serve.add_argument(
+        "--level",
+        help="What the server may reach: music (Music.app only), api (+ Apple's "
+        "music APIs), web (+ the web players). Unset: everything.",
+    )
+    serve.add_argument(
+        "--allow-ui", action="store_true", help="Allow Accessibility UI scripting (clicks)"
+    )
 
     login = sub.add_parser("login", help="Sign in (web flow; --dev for an Apple Developer token)")
     login.add_argument("--dev", action="store_true", help="Apple Developer token flow (.p8)")
