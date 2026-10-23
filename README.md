@@ -28,7 +28,7 @@ You decide what this server may touch, in your MCP client's config. The assistan
 
 Start with `music` and move up when you want a feature that needs more. Leaving `--level` off is the same as `full` for now, as before 0.21.
 
-Rather skip the terminal? [@jaminben](https://github.com/jaminben)'s [secure-applemusic-mcp-for-osx](https://github.com/jaminben/secure-applemusic-mcp-for-osx) is a lovely take on this server: a notarized Mac app with a guided first-run setup and the smallest footprint. Well worth a look.
+For a Mac app with a guided setup instead of a terminal command, consider the community fork [secure-applemusic-mcp-for-osx](https://github.com/jaminben/secure-applemusic-mcp-for-osx).
 
 ## Features
 
