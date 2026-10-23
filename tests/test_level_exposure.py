@@ -124,7 +124,10 @@ def test_config_info_reports_level(args, shown, tmp_path):
 
 async def _call_result(s, tool, arguments):
     res = await s.call_tool(tool, arguments)
-    return res.isError, res.content[0].text
+    is_error = getattr(res, "is_error", None)  # mcp 2.x
+    if is_error is None:
+        is_error = res.isError  # mcp 1.x
+    return is_error, res.content[0].text
 
 
 @pytest.mark.parametrize(
