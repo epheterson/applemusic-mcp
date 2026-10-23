@@ -7,9 +7,10 @@ playlist name cannot either.
   music       Music.app via AppleScript. No network, no browser.
   api         + Apple's music APIs over the network.
   web         + the Safari and Chrome web players (Up Next queue).
+  full        everything, Accessibility included.
   --allow-ui  + Accessibility UI scripting (clicks, keystrokes), any level.
 
-Unset means unrestricted, the behavior before levels existed.
+Unset means unrestricted: the same as full, the behavior before levels existed.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-LEVELS = ("music", "api", "web")
+LEVELS = ("music", "api", "web", "full")
 ENV_LEVEL = "APPLEMUSIC_LEVEL"
 ENV_UI = "APPLEMUSIC_ALLOW_UI"
 
@@ -26,6 +27,7 @@ MODES_BY_LEVEL = {
     "music": ("auto", "native"),
     "api": ("auto", "native", "api"),
     "web": ("auto", "native", "api", "safari", "chrome", "web"),
+    "full": ("auto", "native", "api", "safari", "chrome", "web"),
 }
 
 _NEEDS = {"network": "api", "web": "web"}
@@ -52,6 +54,8 @@ def parse(level: str | None, ui: str | None) -> Level:
     name = level.strip().lower()
     if name not in LEVELS:
         raise ValueError(f"Unknown level {level!r}. Choose one of: {', '.join(LEVELS)}.")
+    if name == "full":
+        return Level("full", True, True, True, True)
     allow_ui = (ui or "").strip().lower() in ("1", "true", "yes")
     return Level(name, name in ("api", "web"), name == "web", allow_ui, True)
 

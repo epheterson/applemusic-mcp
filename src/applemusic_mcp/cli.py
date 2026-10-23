@@ -219,7 +219,8 @@ def cmd_status(args):
         from . import capabilities
 
         lvl = capabilities.current()
-        level = f"{lvl.name}{' + UI scripting' if lvl.ui and lvl.explicit else ''}"
+        ui_note = lvl.ui and lvl.explicit and lvl.name != "full"
+        level = f"{lvl.name}{' + UI scripting' if ui_note else ''}"
     except ValueError as e:
         level = f"invalid ({e})"
     print(f"Permission level: {level} (each MCP client sets its own with `serve --level`)")
@@ -308,7 +309,7 @@ def main():
     serve.add_argument(
         "--level",
         help="What the server may reach: music (Music.app only), api (+ Apple's "
-        "music APIs), web (+ the web players). Unset: everything.",
+        "music APIs), web (+ the web players), full (everything). Unset: full.",
     )
     serve.add_argument(
         "--allow-ui", action="store_true", help="Allow Accessibility UI scripting (clicks)"

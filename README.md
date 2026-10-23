@@ -23,9 +23,10 @@ You decide what this server may touch, in your MCP client's config. The assistan
 | `music` | Only the Music app on your Mac. No network, no browser. | Your library, playlists, playback, ratings, AirPlay |
 | `api` | + Apple's music service over the internet | Searching and adding from the full catalog, recommendations, Windows and Linux |
 | `web` | + a Safari or Chrome web player | The Up Next queue, and playback off the Mac |
-| `--allow-ui` (any level) | + clicking inside the Music app (macOS Accessibility) | Playing catalog songs with no sign-in |
+| `full` | Everything, including clicking inside the Music app | Every feature, nothing to decide |
+| `--allow-ui` (with any level) | + clicking inside the Music app (macOS Accessibility) | Playing catalog songs with no sign-in |
 
-Start with `music` and move up when you want a feature that needs more. Leaving `--level` off keeps everything on, as before 0.21.
+Start with `music` and move up when you want a feature that needs more. Leaving `--level` off is the same as `full` for now, as before 0.21.
 
 Rather skip the terminal? [@jaminben](https://github.com/jaminben)'s [secure-applemusic-mcp-for-osx](https://github.com/jaminben/secure-applemusic-mcp-for-osx) is a lovely take on this server: a notarized Mac app with a guided first-run setup and the smallest footprint. Well worth a look.
 

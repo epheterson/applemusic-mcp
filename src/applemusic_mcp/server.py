@@ -7910,7 +7910,8 @@ def config(
                 )
             else:
                 output.append(
-                    f"Permission level: {lvl.name}{' + UI scripting' if lvl.ui else ''} "
+                    f"Permission level: {lvl.name}"
+                    f"{' + UI scripting' if lvl.ui and lvl.name != 'full' else ''} "
                     "(set in the MCP client config)"
                 )
                 if lvl.name == "music" and not APPLESCRIPT_AVAILABLE:

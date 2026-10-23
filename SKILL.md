@@ -20,7 +20,7 @@ Invoke when users ask to:
 
 ## Permission Levels (MCP server)
 
-The applemusic-mcp server runs at a level the user picks in their MCP client config: `music` (Music.app only), `api` (+ Apple's music APIs), `web` (+ web players), optionally with `--allow-ui` (Accessibility clicks). If the server refuses something because of its level, tell the user what it needs and where to change it. Don't work around the refusal with `osascript`, a browser, or anything in this guide: the user chose that limit.
+The applemusic-mcp server runs at a level the user picks in their MCP client config: `music` (Music.app only), `api` (+ Apple's music APIs), `web` (+ web players), or `full` (everything), optionally with `--allow-ui` (Accessibility clicks). If the server refuses something because of its level, tell the user what it needs and where to change it. Don't work around the refusal with `osascript`, a browser, or anything in this guide: the user chose that limit.
 
 ## Critical Rule: Library-First Workflow
 

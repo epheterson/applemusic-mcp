@@ -31,7 +31,7 @@ def test_levels_normalize(raw, network, web):
     assert (lvl.network, lvl.web, lvl.ui, lvl.explicit) == (network, web, False, True)
 
 
-@pytest.mark.parametrize("raw", ["apis", "full", "", "native"])
+@pytest.mark.parametrize("raw", ["apis", "all", "", "native"])
 def test_bad_level_raises(raw):
     with pytest.raises(ValueError, match="music, api, web"):
         caps.parse(raw, None)
@@ -157,3 +157,25 @@ def test_server_registers_the_tools_hidden_tools_names():
     # hidden_tools names must match real registrations or hiding silently fails.
     names = {t.name for t in asyncio.run(server.mcp.list_tools())}
     assert {"catalog", "discover", "queue"} <= names
+
+
+# -- full: everything, named --------------------------------------------------
+
+
+def test_full_level_allows_everything():
+    lvl = caps.parse("full", None)
+    assert (lvl.name, lvl.network, lvl.web, lvl.ui, lvl.explicit) == ("full", True, True, True, True)
+
+
+def test_full_level_allows_every_mode():
+    assert set(caps.MODES_BY_LEVEL["full"]) == {"auto", "native", "api", "safari", "chrome", "web"}
+
+
+def test_full_level_hides_no_tools():
+    assert server.hidden_tools(caps.parse("full", None)) == set()
+
+
+def test_full_level_requires_nothing(monkeypatch):
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "full")
+    for cap in ("network", "web", "ui"):
+        caps.require(cap, "x")
