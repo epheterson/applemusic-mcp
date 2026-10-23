@@ -1280,3 +1280,60 @@ class TestSnapshotDeleteInvalidPath:
     def test_root_slash_gives_invalid_filename(self, snap_dir):
         out = server._library_snapshot_delete("/")
         assert "Invalid filename" in out
+
+
+# ---------------------------------------------------------------------------
+# Permission levels in config
+# ---------------------------------------------------------------------------
+
+
+def _info(tmp_path):
+    mock_cache = MagicMock()
+    mock_cache._cache = {}
+    mock_cache.cache_file = tmp_path / "track_cache.json"
+    from applemusic_mcp import audit_log as al
+
+    with (
+        patch.object(server, "get_track_cache", return_value=mock_cache),
+        patch.object(server, "get_cache_dir", return_value=tmp_path),
+        patch.object(al, "get_recent_entries", return_value=[]),
+        patch.object(al, "get_audit_log_path", return_value=tmp_path / "audit.log"),
+        patch.object(server, "_get_snapshot_dir", return_value=tmp_path),
+    ):
+        return server.config(action="info")
+
+
+class TestConfigLevel:
+    @pytest.mark.parametrize(
+        "level,mode,needs",
+        [("api", "safari", "--level web"), ("music", "api", "--level api"), ("music", "chrome", "--level web")],
+    )
+    def test_set_pref_mode_refuses_above_level(self, monkeypatch, mock_config_dir, level, mode, needs):
+        monkeypatch.setenv("APPLEMUSIC_LEVEL", level)
+        from applemusic_mcp import auth
+
+        monkeypatch.setattr(auth, "load_config", lambda: pytest.fail("preference was written"))
+        out = server.config(action="set-pref", preference="mode", string_value=mode)
+        assert needs in out
+
+    def test_set_pref_mode_within_level_saves(self, monkeypatch, mock_config_dir):
+        monkeypatch.setenv("APPLEMUSIC_LEVEL", "music")
+        out = server.config(action="set-pref", preference="mode", string_value="native")
+        assert "Updated: mode = native" in out
+
+    def test_info_shows_level(self, monkeypatch, mock_config_dir, tmp_path):
+        monkeypatch.setenv("APPLEMUSIC_LEVEL", "music")
+        assert "Permission level: music" in _info(tmp_path)
+
+    def test_info_shows_ui_flag(self, monkeypatch, mock_config_dir, tmp_path):
+        monkeypatch.setenv("APPLEMUSIC_LEVEL", "api")
+        monkeypatch.setenv("APPLEMUSIC_ALLOW_UI", "1")
+        assert "Permission level: api + UI scripting" in _info(tmp_path)
+
+    def test_info_unrestricted_hint(self, mock_config_dir, tmp_path):
+        assert "Permission level: unrestricted" in _info(tmp_path)
+
+    def test_info_warns_music_off_mac(self, monkeypatch, mock_config_dir, tmp_path):
+        monkeypatch.setenv("APPLEMUSIC_LEVEL", "music")
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        assert "needs macOS" in _info(tmp_path)

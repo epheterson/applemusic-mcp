@@ -215,6 +215,15 @@ def cmd_status(args):
     print("Apple Music MCP status")
     print("=" * 40)
     print(f"Config: {config_dir}")
+    try:
+        from . import capabilities
+
+        lvl = capabilities.current()
+        ui_note = lvl.ui and lvl.explicit and lvl.name != "full"
+        level = f"{lvl.name}{' + UI scripting' if ui_note else ''}"
+    except ValueError as e:
+        level = f"invalid ({e})"
+    print(f"Permission level: {level} (each MCP client sets its own with `serve --level`)")
 
     data = developer_token_info()
     if data is not None and data.get("expires", 0) > time.time():
@@ -271,7 +280,21 @@ def cmd_status(args):
 
 
 def cmd_serve(args):
-    """Start the MCP server."""
+    """Start the MCP server at the permission level the client config asked for."""
+    import os
+
+    from . import capabilities
+
+    level = getattr(args, "level", None)
+    if level is not None:
+        try:
+            capabilities.parse(level, None)
+        except ValueError as e:
+            print(f"applemusic-mcp: {e}", file=sys.stderr)
+            sys.exit(2)
+        os.environ[capabilities.ENV_LEVEL] = level.strip().lower()
+    if getattr(args, "allow_ui", False):
+        os.environ[capabilities.ENV_UI] = "1"
     from .server import main
 
     main()
@@ -282,7 +305,15 @@ def main():
     parser = argparse.ArgumentParser(description="MCP server for Apple Music")
     sub = parser.add_subparsers(dest="command", help="Commands")
 
-    sub.add_parser("serve", help="Run the MCP server (your client calls this)")
+    serve = sub.add_parser("serve", help="Run the MCP server (your client calls this)")
+    serve.add_argument(
+        "--level",
+        help="What the server may reach: music (Music.app only), api (+ Apple's "
+        "music APIs), web (+ the web players), full (everything). Unset: full.",
+    )
+    serve.add_argument(
+        "--allow-ui", action="store_true", help="Allow Accessibility UI scripting (clicks)"
+    )
 
     login = sub.add_parser("login", help="Sign in (web flow; --dev for an Apple Developer token)")
     login.add_argument("--dev", action="store_true", help="Apple Developer token flow (.p8)")

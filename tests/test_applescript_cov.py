@@ -1814,3 +1814,100 @@ def test_exact_disambiguation_queries_the_right_container(monkeypatch):
     r = setrun(monkeypatch, Recorder(True, ""))
     asc.remove_track_from_playlist("PL", track_name="T")
     assert "every track of targetPlaylist whose name is" in code_only(r.calls[0])
+
+
+# -- Accessibility UI scripting needs --allow-ui when a level is set ---------
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: asc.update_cloud_library(min_interval=0),
+        lambda: asc.open_catalog_and_play("https://music.apple.com/us/album/x/1"),
+        lambda: asc.ui_play_result_by_query("song artist"),
+    ],
+    ids=["cloud_nudge", "catalog_play", "ui_play"],
+)
+def test_ui_scripting_refused_without_flag(monkeypatch, call):
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "web")
+    ran = []
+    monkeypatch.setattr(asc, "run_applescript", lambda *a, **k: ran.append(a) or (True, ""))
+    ok, msg = call()
+    assert ok is False and "--allow-ui" in msg and ran == []
+
+
+def test_ui_search_refused_without_flag(monkeypatch):
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "music")
+    monkeypatch.setattr(asc, "run_applescript", lambda *a, **k: pytest.fail("ran AppleScript"))
+    ok, results, why = asc.ui_search_catalog("q")
+    assert (ok, results) == (False, []) and "--allow-ui" in why
+
+
+def test_ui_scripting_allowed_with_flag(monkeypatch):
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "music")
+    monkeypatch.setenv("APPLEMUSIC_ALLOW_UI", "1")
+    assert asc._ui_denied("x") is None
+
+
+def test_ui_scripting_allowed_unrestricted():
+    assert asc._ui_denied("x") is None
+
+
+def test_ui_clear_search_skipped_without_flag(monkeypatch):
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "api")
+    monkeypatch.setattr(asc, "run_applescript", lambda *a, **k: pytest.fail("ran AppleScript"))
+    assert asc.ui_clear_search() is None
+
+
+# -- backstop: no UI-scripting verb reaches osascript without --allow-ui -----
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        'tell application "System Events" to tell process "Music" to click menu item 1',
+        'tell application "System Events"\n    keystroke "f" using command down\nend tell',
+        'tell application "System Events" to key code 53',
+        'tell application "System Events" to perform action "AXPress" of button 1',
+    ],
+)
+def test_run_applescript_refuses_ui_verbs_without_flag(monkeypatch, script):
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "web")
+    monkeypatch.setattr(asc.subprocess, "run", lambda *a, **k: pytest.fail("osascript ran"))
+    ok, msg = _real_run_applescript(script)
+    assert ok is False and "--allow-ui" in msg
+
+
+def test_run_applescript_allows_music_scripts_at_level(monkeypatch):
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "music")
+    monkeypatch.setattr(
+        asc.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
+    )
+    script = 'tell application "System Events" to (exists (processes whose name is "Music"))'
+    assert _real_run_applescript(script) == (True, "ok")
+    assert _real_run_applescript('tell application "Music" to play') == (True, "ok")
+
+
+def test_run_applescript_ui_verbs_allowed_with_flag(monkeypatch):
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "music")
+    monkeypatch.setenv("APPLEMUSIC_ALLOW_UI", "1")
+    monkeypatch.setattr(
+        asc.subprocess, "run", lambda *a, **k: types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
+    )
+    assert _real_run_applescript('tell application "System Events" to key code 53') == (True, "ok")
+
+
+@pytest.mark.parametrize(
+    "fn",
+    [
+        lambda: asc._jxa_mouse_move(1, 1),
+        lambda: asc._jxa_mouse_click(1, 1),
+        lambda: asc._jxa_mouse_double_click(1, 1),
+        lambda: asc._jxa_scroll_down(1, 1),
+    ],
+    ids=["move", "click", "double_click", "scroll"],
+)
+def test_jxa_mouse_refused_without_flag(monkeypatch, fn):
+    monkeypatch.setenv("APPLEMUSIC_LEVEL", "api")
+    monkeypatch.setattr(asc.subprocess, "run", lambda *a, **k: pytest.fail("osascript ran"))
+    assert fn() is False

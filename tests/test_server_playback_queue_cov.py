@@ -2681,3 +2681,39 @@ class TestRemainingCoverage:
         out = server.playback(action="play", track="Strobe", artist="deadmau5", add_to_library=True)
         assert attempt_count[0] == 2
         assert "Playing" in out or "Strobe" in out
+
+
+# ===========================================================================
+# Permission levels: catalog-miss fallbacks stay inside the level
+# ===========================================================================
+
+
+class TestCatalogMissAtLevel:
+    """At --level api without --allow-ui, the Accessibility play is refused and
+    the browser fallback is out of level: the user gets the level message, not a
+    crash, a Chrome suggestion, or advice to grant Accessibility."""
+
+    def _setup(self, monkeypatch):
+        monkeypatch.setenv("APPLEMUSIC_LEVEL", "api")
+        monkeypatch.setattr(server, "get_user_preferences", lambda: {"mode": "auto"})
+        monkeypatch.setattr(server, "has_user_token", lambda: True)
+        monkeypatch.setattr(
+            server, "_browser_play", lambda *a, **k: pytest.fail("browser fallback ran")
+        )
+        monkeypatch.setattr(
+            server.asc, "run_applescript", lambda *a, **k: pytest.fail("ran AppleScript")
+        )
+
+    def test_catalog_miss_play(self, monkeypatch):
+        self._setup(monkeypatch)
+        out = server._catalog_miss_play(
+            "Strobe", "deadmau5", "https://music.apple.com/us/album/x/1?i=2", reveal=False
+        )
+        assert "--allow-ui" in out
+        assert "Chrome" not in out and "System Settings" not in out
+
+    def test_play_url(self, monkeypatch):
+        self._setup(monkeypatch)
+        monkeypatch.setattr(server, "_catalog_song_name", lambda i: "Strobe")
+        out = server._playback_play(url="https://music.apple.com/us/album/x/1")
+        assert out.startswith("Error") and "--allow-ui" in out

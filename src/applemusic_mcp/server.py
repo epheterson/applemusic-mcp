@@ -5,6 +5,7 @@ deleting tracks from playlists, and other operations not supported by the REST A
 """
 
 import csv
+import functools
 import io
 import json
 import os
@@ -49,6 +50,7 @@ from .track_cache import get_track_cache, get_cache_dir
 from . import audit_log
 from . import __version__ as _pkg_version
 from . import paths
+from . import capabilities
 
 # Check if AppleScript is available (macOS only)
 APPLESCRIPT_AVAILABLE = asc.is_available()
@@ -910,6 +912,29 @@ except TypeError:  # mcp 1.x
     mcp = FastMCP("Apple Music")
 
 
+def _tool(*args, **kwargs):
+    """``mcp.tool`` that answers a permission-level refusal as tool text.
+
+    A visible tool can still have an action its level can't run (an API-only
+    browse at ``music``); the refusal raised deep inside becomes a normal
+    "Error: ..." reply instead of a protocol error. The module-level name stays
+    the plain function, so direct calls behave as before."""
+    register = mcp.tool(*args, **kwargs)
+
+    def decorate(fn):
+        @functools.wraps(fn)
+        def level_safe(*a, **kw):
+            try:
+                return fn(*a, **kw)
+            except capabilities.CapabilityDenied as e:
+                return f"Error: {e}"
+
+        register(level_safe)
+        return fn
+
+    return decorate
+
+
 # ============ MCP RESOURCES ============
 
 
@@ -1051,6 +1076,21 @@ def _can_use_library_api() -> bool:
     return has_any_developer_token() and _has_user_token()
 
 
+def _effective_mode(override: str = "") -> str:
+    """The `mode` pref, or a per-call ``engine=``, clamped to the permission level.
+
+    A stored mode the level doesn't allow resolves to ``auto`` (a preference saved
+    before the user picked a level must not widen it); an override the level
+    doesn't allow resolves to ``none`` so the caller reports no player."""
+    sel = (override or get_user_preferences().get("mode") or "auto").strip().lower()
+    if sel == "browser":  # legacy alias for the Chrome web player
+        sel = "chrome"
+    lvl = capabilities.current()
+    if lvl.explicit and sel not in capabilities.MODES_BY_LEVEL[lvl.name]:
+        return "none" if override else "auto"
+    return sel
+
+
 def _engine() -> str:
     """Resolve the active engine from the single ``mode`` preference:
     ``native`` (AppleScript / local Music.app) or ``api`` (the web API +
@@ -1063,7 +1103,9 @@ def _engine() -> str:
     separate playback knob. Honors APPLEMUSIC_FORCE_API_MODE for testing."""
     if os.environ.get("APPLEMUSIC_FORCE_API_MODE") == "1":
         return "api"
-    mode = (get_user_preferences().get("mode") or "auto").lower()
+    if not capabilities.current().network:
+        return "native"  # the music level never leaves Music.app
+    mode = _effective_mode()
     # safari/chrome are PLAYBACK engines — their data still comes from the REST API.
     if mode in ("web", "api", "safari", "chrome"):
         return "api"
@@ -1073,18 +1115,27 @@ def _engine() -> str:
 
 
 def _playback_engine(engine_override: Optional[str] = None, for_queue: bool = False) -> str:
-    """Resolve the playback engine: 'native' | 'safari' | 'chrome' | 'none'.
+    """Resolve the playback engine within the permission level (see
+    ``_playback_engine_unclamped`` for the routing itself). Below ``web`` the
+    Safari/Chrome players are never chosen: auto falls back to Music.app for
+    plain playback and to no engine for the queue."""
+    sel = _effective_mode(engine_override or "")
+    if sel == "none":
+        return "none"
+    eng = _playback_engine_unclamped(sel, for_queue)
+    if eng in ("safari", "chrome") and not capabilities.current().web:
+        return "native" if (APPLESCRIPT_AVAILABLE and not for_queue) else "none"
+    return eng
 
-    Priority: per-call ``engine=`` override → ``mode`` pref → ``auto`` routing.
+
+def _playback_engine_unclamped(sel: str, for_queue: bool = False) -> str:
+    """Route a selection (from ``_effective_mode``) to an engine:
+    'native' | 'safari' | 'chrome' | 'none'.
+
     'none' means no player is available for this selection (the caller turns that
     into an actionable error). ``for_queue`` distinguishes Up Next (web-player only:
     Safari on macOS, Chrome off-mac) from plain playback (native on macOS).
     AppleScript availability is the macOS proxy (native + Safari both need it)."""
-    sel = (engine_override or "").strip().lower()
-    if not sel:
-        sel = (get_user_preferences().get("mode") or "auto").lower()
-    if sel == "browser":  # legacy alias for the Chrome web player
-        sel = "chrome"
     if sel == "api":
         return "none"  # api mode has no player
     if sel == "native":
@@ -1111,6 +1162,7 @@ def _queue_engine(engine_override: Optional[str] = None) -> str:
 
 def _web_player(engine: str):
     """Return the module that drives the given web engine ('safari' | 'chrome')."""
+    capabilities.require("web", "The Safari/Chrome web player")
     if engine == "safari":
         from . import safari_player
 
@@ -1123,13 +1175,24 @@ def _web_player(engine: str):
 def _platform_players() -> str:
     """The playback engines that actually exist on THIS machine — so guidance names
     only options the user can use (native/safari are macOS-only; chrome is anywhere)."""
+    if not capabilities.current().web:
+        return "native"  # the web players are outside the permission level
     return "native, safari, or chrome" if APPLESCRIPT_AVAILABLE else "chrome"
 
 
 def _no_player_msg(engine_override: Optional[str] = None, for_queue: bool = False) -> str:
     """Actionable error when no playback/queue engine is available. System-aware: it
     names only the engines available on this platform."""
+    lvl = capabilities.current()
     mode = (engine_override or get_user_preferences().get("mode") or "auto").lower()
+    if lvl.explicit and not lvl.web:
+        # Name the level only when it's what blocked a web player; a mode that
+        # simply has no player (api) is fixed by changing the mode, not the level.
+        wanted = _playback_engine_unclamped("chrome" if mode == "browser" else mode, for_queue)
+        if wanted in ("safari", "chrome") or not APPLESCRIPT_AVAILABLE:
+            return capabilities.denied_message(
+                "Up Next" if for_queue else "Playing in a Safari/Chrome web player", "web"
+            )
     if for_queue and mode == "native":
         # Only reachable on macOS (native needs AppleScript), so the macOS advice fits.
         return (
@@ -1166,7 +1229,10 @@ def _set_active_playback(engine: str) -> None:
 
 
 def _get_active_playback() -> str:
-    """Engine for control / now_playing: the last-used one, else the auto default."""
+    """Engine for control / now_playing: the last-used one, else the auto default.
+    A web engine outside the permission level is never returned."""
+    if _active_playback_engine in ("safari", "chrome") and not capabilities.current().web:
+        return _playback_engine()
     return _active_playback_engine or _playback_engine()
 
 
@@ -1174,7 +1240,7 @@ def _mode_pinned_native() -> bool:
     """True when the user explicitly pinned ``mode=native`` (so playback must
     stay in Music.app and never fall back to the browser). ``auto`` is NOT
     pinned, so it may use the browser as a playback safety net."""
-    return (get_user_preferences().get("mode") or "auto").lower() == "native"
+    return _effective_mode() == "native"
 
 
 def _use_browser_playback() -> bool:
@@ -2369,6 +2435,8 @@ def _search_catalog_songs(query: str, limit: int = 5) -> list[dict]:
         if response.status_code == 200:
             data = response.json()
             return data.get("results", {}).get("songs", {}).get("data", [])
+    except capabilities.CapabilityDenied:
+        raise  # a level refusal is not "not found"
     except Exception:
         pass
     return []
@@ -2397,6 +2465,8 @@ def _search_catalog_albums(query: str, limit: int = 5) -> list[dict]:
         if response.status_code == 200:
             data = response.json()
             return data.get("results", {}).get("albums", {}).get("data", [])
+    except capabilities.CapabilityDenied:
+        raise  # a level refusal is not "not found"
     except Exception:
         pass
     return []
@@ -2832,6 +2902,8 @@ def _unified_auto_search_to_playlist(
     # that broke across macOS/Music.app versions (#37) has been removed — there is
     # no UI fallback. If the API path isn't available, tell the user how to enable
     # it rather than degrading to something unreliable.
+    if not capabilities.current().network:
+        return (False, capabilities.denied_message("Adding from the catalog", "api"), steps)
     if not _can_use_library_api():
         if _forced_tokenless():
             return (False, f"Catalog add disabled: {_FORCED_TOKENLESS_MSG}", steps)
@@ -4966,7 +5038,7 @@ def _playlist_swap(
     return f"Swapped in '{playlist}': added '{track}', removed '{replace}'.\n\n{add_result}\n\n{rm}"
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Playlists & folders", readOnlyHint=False, destructiveHint=True, openWorldHint=True
     )
@@ -5145,7 +5217,7 @@ def playlist(
 # ============ LIBRARY MANAGEMENT ============
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Library", readOnlyHint=False, destructiveHint=True, openWorldHint=True
     )
@@ -5401,6 +5473,8 @@ def _resolve_catalog_track_itunes(name: str, artist: str = "") -> Optional[dict]
         if resp.status_code != 200:
             return None
         results = resp.json().get("results", [])
+    except capabilities.CapabilityDenied:
+        raise  # a level refusal is not "not found"
     except Exception:
         return None
 
@@ -5485,6 +5559,8 @@ def _library_add(
     # that broke across macOS/Music.app versions (#37) has been removed — there
     # is no UI fallback. If the API path isn't available, tell the user how to
     # enable it.
+    if not capabilities.current().network:
+        return "Error: " + capabilities.denied_message("Adding to your library", "api")
     if not _can_use_library_api():
         if _forced_tokenless():
             return f"Error: Adding to your library is disabled: {_FORCED_TOKENLESS_MSG}"
@@ -6953,7 +7029,7 @@ def _discover_personal_station() -> str:
         return str(e)
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Discover", readOnlyHint=True, destructiveHint=False, openWorldHint=True
     )
@@ -7542,7 +7618,7 @@ def _catalog_suggestions(term: str) -> str:
         return str(e)
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Catalog search", readOnlyHint=True, destructiveHint=False, openWorldHint=True
     )
@@ -7587,8 +7663,11 @@ def catalog(
     action = action.lower().strip().replace("-", "_")
 
     if action == "search":
-        # Try API first, fall back to UI search if no API token
+        # Try API first, fall back to UI search if no API token — or if the
+        # permission level has no network, even with a token saved.
         try:
+            if not capabilities.current().network:
+                raise FileNotFoundError("no network at this permission level")
             get_headers()  # Verify API access is available
             return _catalog_search(query, types, limit, format, export, full, clean_only)
         except (FileNotFoundError, ValueError):
@@ -7646,7 +7725,7 @@ def catalog(
 # ============ SYSTEM MANAGEMENT ============
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Settings & auth", readOnlyHint=False, destructiveHint=True, openWorldHint=True
     )
@@ -7705,6 +7784,17 @@ def config(
                     )
                     return f"Error: '{preference}' requires 'string_value' parameter{hint}"
                 pref_value = string_value.lower()
+                lvl = capabilities.current()
+                if (
+                    preference == "mode"
+                    and lvl.explicit
+                    and pref_value in enum_prefs["mode"]
+                    and pref_value not in capabilities.MODES_BY_LEVEL[lvl.name]
+                ):
+                    return "Error: " + capabilities.denied_message(
+                        f"Mode '{pref_value}'",
+                        "web" if pref_value in ("safari", "chrome", "web") else "api",
+                    )
                 if preference in enum_prefs and pref_value not in enum_prefs[preference]:
                     return (
                         f"Error: '{preference}' must be one of: "
@@ -7835,6 +7925,22 @@ def config(
         # === INFO (DEFAULT) ===
         if action == "info":
             output = ["=== System Info ===", ""]
+
+            lvl = capabilities.current()
+            if not lvl.explicit:
+                output.append(
+                    "Permission level: unrestricted (set --level music|api|web in the "
+                    "MCP client config to limit what this server can reach)"
+                )
+            else:
+                output.append(
+                    f"Permission level: {lvl.name}"
+                    f"{' + UI scripting' if lvl.ui and lvl.name != 'full' else ''} "
+                    "(set in the MCP client config)"
+                )
+                if lvl.name == "music" and not APPLESCRIPT_AVAILABLE:
+                    output.append("Warning: the music level needs macOS; nothing will work here.")
+            output.append("")
 
             # User Preferences
             prefs = get_user_preferences()
@@ -8440,6 +8546,11 @@ def _auth_action(action: str = "status", confirm: bool = False) -> str:
         return f"{body}\nMode: {mode}\n{engines}\nWrites: {write_rail}\n\n{nxt}"
 
     if action in ("signin", "login"):
+        if not capabilities.current().web:
+            return (
+                capabilities.denied_message("Signing in from the assistant", "web")
+                + " Or run `applemusic-mcp login` in a terminal."
+            )
         # macOS default: harvest the token from a signed-in Safari (zero-install) —
         # the same default as the CLI `login`. Only fall back to Chrome (with
         # guidance), and only try Chrome at all when Playwright is actually present.
@@ -8624,7 +8735,7 @@ def _queue_current_name(wp) -> str:
     return ""
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Up Next queue", readOnlyHint=False, destructiveHint=False, openWorldHint=True
     )
@@ -8748,7 +8859,7 @@ _PLAYBACK_NEEDS_BROWSER = (
 )
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Playback transport", readOnlyHint=False, destructiveHint=False, openWorldHint=True
     )
@@ -8851,6 +8962,8 @@ def playback(
         def _peek(key):  # no-launch read of a non-active engine
             if key == "native":
                 return asc.now_playing_if_running() if APPLESCRIPT_AVAILABLE else None
+            if not capabilities.current().web:
+                return None  # below web, never touch Safari or Chrome, even to read
             if key == "safari":
                 return safari_player.now_playing_if_running()
             if key == "chrome":
@@ -8895,7 +9008,11 @@ def playback(
         if others:
             out += "\n\nOther engines also playing:\n" + "\n".join(others)
             out += "\n(pass engine='native' | 'safari' | 'chrome' to control a specific one)"
-        tabs = safari_player.music_tab_count() if APPLESCRIPT_AVAILABLE else 0
+        tabs = (
+            safari_player.music_tab_count()
+            if APPLESCRIPT_AVAILABLE and capabilities.current().web
+            else 0
+        )
         if tabs > 1:
             out += f"\n\nℹ️ {tabs} Apple Music tabs are open in Safari — driving a consistent one."
         return out
@@ -9066,10 +9183,14 @@ def _catalog_miss_play(name: str, artist: str, url: str, reveal: bool) -> str:
     # layout this build doesn't match). In auto/browser playback, the browser
     # web player is a working fallback; pinned-native opted out of it.
     pinned_native = _mode_pinned_native()
-    if not pinned_native and has_user_token():
+    lvl = capabilities.current()
+    if not pinned_native and has_user_token() and lvl.web:
         bmsg = _browser_play(_web_player(_playback_engine("web")), url=url)
         if not bmsg.startswith("Error"):
             return f"[Catalog→Browser] {bmsg}"
+    if lvl.explicit and not lvl.ui:
+        # Refused by the level, not by macOS: granting Accessibility wouldn't help.
+        return f"[Catalog] Found {name} by {artist}. {msg}"
 
     return (
         f"[Catalog] Found {name} by {artist} — couldn't auto-play it in Music. "
@@ -9123,7 +9244,7 @@ def _playback_play(
         # Native UI play failed — fall back to the browser web player unless
         # playback is pinned to native (same policy as _catalog_miss_play).
         pinned_native = _mode_pinned_native()
-        if not pinned_native and has_user_token():
+        if not pinned_native and has_user_token() and capabilities.current().web:
             bmsg = _browser_play(_web_player(_playback_engine("web")), url=url, shuffle=shuffle)
             if not bmsg.startswith("Error"):
                 audit_log.log_action("play_url", {"url": url, "via": "browser"})
@@ -9171,6 +9292,10 @@ def _playback_play(
                 break
 
         # Not in library - search catalog
+        if not capabilities.current().network:
+            return f"Not in your library: {album}. " + capabilities.denied_message(
+                "Searching the Apple Music catalog", "api"
+            )
         try:
             headers = get_headers()
             response = requests.get(
@@ -9336,6 +9461,17 @@ def _playback_play(
             break
 
     # Track not in library - search catalog
+    if not capabilities.current().network:
+        # The music level can't search the catalog; with --allow-ui, Music.app's
+        # own search can still find and play it.
+        ui_ok, ui_msg = _try_ui_catalog_play(
+            track_name, track_artist, source_label="ui_search", prefix="[UI Search]"
+        )
+        if ui_ok:
+            return ui_msg
+        return f"Not in your library: {track_name}. " + capabilities.denied_message(
+            "Searching the Apple Music catalog", "api"
+        )
     search_term = f"{track_name} {track_artist}".strip() if track_artist else track_name
     songs = _search_catalog_songs(search_term, limit=5)
 
@@ -9385,7 +9521,7 @@ def _playback_play(
         ui_ok, ui_msg = _try_ui_catalog_play(song_name, song_artist)
         if ui_ok:
             return ui_msg
-        if ui_msg is not None:
+        if ui_msg is not None and capabilities.current().ui:
             # UI was attempted and failed — surface the reason rather than
             # falling through to reveal/error. APPLESCRIPT_AVAILABLE=False
             # returns (False, None), in which case we do fall through.
@@ -9860,6 +9996,31 @@ def _shutdown_browser_engine():  # pragma: no cover - lifecycle, not exercised u
         pass
 
 
+def hidden_tools(lvl) -> set[str]:
+    """Tools that can't do anything at this permission level, so the model
+    never sees them."""
+    hidden = set()
+    if not lvl.web:
+        hidden.add("queue")
+    if not lvl.network:
+        hidden.add("discover")
+        if not lvl.ui:
+            hidden.add("catalog")  # without the API, catalog search is UI scripting
+    return hidden
+
+
+def apply_level(app) -> list[str]:
+    """Remove the tools the current level hides from ``app``. Returns their names."""
+    removed = sorted(hidden_tools(capabilities.current()))
+    for name in removed:
+        remover = getattr(app, "remove_tool", None)
+        if remover is not None:
+            remover(name)
+        else:  # older mcp 1.x without remove_tool
+            app._tool_manager._tools.pop(name, None)
+    return removed
+
+
 def main():
     """Run the MCP server."""
     # pragma: no cover  # entrypoint: starts the MCP server, not exercised under test
@@ -9873,6 +10034,18 @@ def main():
         signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     except (ValueError, OSError):
         pass  # not the main thread / unsupported platform — atexit still covers normal exit
+    try:
+        lvl = capabilities.current()
+    except ValueError as e:  # APPLEMUSIC_LEVEL set directly in the env, not via `serve --level`
+        print(f"applemusic-mcp: {e}", file=sys.stderr)
+        sys.exit(2)
+    if lvl.name == "music" and not APPLESCRIPT_AVAILABLE:
+        print(
+            "applemusic-mcp: --level music needs macOS; nothing will work on this system.",
+            file=sys.stderr,
+        )
+    capabilities.install_network_guard()
+    apply_level(mcp)
     mcp.run()
 
 
