@@ -78,7 +78,7 @@ claude mcp add "Apple Music" -- uvx applemusic-mcp serve --level music
 
 ```bash
 pipx install applemusic-mcp        # or: pip install applemusic-mcp
-playwright install chromium        # Windows/Linux only: the Chrome web player
+playwright install chromium        # the Chrome web player: Windows/Linux, or a Mac with the [browser] extra
 ```
 
 ```json

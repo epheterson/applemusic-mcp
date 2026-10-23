@@ -5,6 +5,7 @@ deleting tracks from playlists, and other operations not supported by the REST A
 """
 
 import csv
+import functools
 import io
 import json
 import os
@@ -909,6 +910,29 @@ try:
     mcp = FastMCP("Apple Music", version=_pkg_version)
 except TypeError:  # mcp 1.x
     mcp = FastMCP("Apple Music")
+
+
+def _tool(*args, **kwargs):
+    """``mcp.tool`` that answers a permission-level refusal as tool text.
+
+    A visible tool can still have an action its level can't run (an API-only
+    browse at ``music``); the refusal raised deep inside becomes a normal
+    "Error: ..." reply instead of a protocol error. The module-level name stays
+    the plain function, so direct calls behave as before."""
+    register = mcp.tool(*args, **kwargs)
+
+    def decorate(fn):
+        @functools.wraps(fn)
+        def level_safe(*a, **kw):
+            try:
+                return fn(*a, **kw)
+            except capabilities.CapabilityDenied as e:
+                return f"Error: {e}"
+
+        register(level_safe)
+        return fn
+
+    return decorate
 
 
 # ============ MCP RESOURCES ============
@@ -5014,7 +5038,7 @@ def _playlist_swap(
     return f"Swapped in '{playlist}': added '{track}', removed '{replace}'.\n\n{add_result}\n\n{rm}"
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Playlists & folders", readOnlyHint=False, destructiveHint=True, openWorldHint=True
     )
@@ -5193,7 +5217,7 @@ def playlist(
 # ============ LIBRARY MANAGEMENT ============
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Library", readOnlyHint=False, destructiveHint=True, openWorldHint=True
     )
@@ -7005,7 +7029,7 @@ def _discover_personal_station() -> str:
         return str(e)
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Discover", readOnlyHint=True, destructiveHint=False, openWorldHint=True
     )
@@ -7594,7 +7618,7 @@ def _catalog_suggestions(term: str) -> str:
         return str(e)
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Catalog search", readOnlyHint=True, destructiveHint=False, openWorldHint=True
     )
@@ -7701,7 +7725,7 @@ def catalog(
 # ============ SYSTEM MANAGEMENT ============
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Settings & auth", readOnlyHint=False, destructiveHint=True, openWorldHint=True
     )
@@ -8711,7 +8735,7 @@ def _queue_current_name(wp) -> str:
     return ""
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Up Next queue", readOnlyHint=False, destructiveHint=False, openWorldHint=True
     )
@@ -8835,7 +8859,7 @@ _PLAYBACK_NEEDS_BROWSER = (
 )
 
 
-@mcp.tool(
+@_tool(
     annotations=ToolAnnotations(
         title="Playback transport", readOnlyHint=False, destructiveHint=False, openWorldHint=True
     )

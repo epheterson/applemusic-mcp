@@ -120,3 +120,24 @@ def test_assistant_signin_refused_below_web(level, tmp_path):
 def test_config_info_reports_level(args, shown, tmp_path):
     out = _run(args, tmp_path, lambda s: _call(s, "config", {"action": "info"}))
     assert shown in out
+
+
+async def _call_result(s, tool, arguments):
+    res = await s.call_tool(tool, arguments)
+    return res.isError, res.content[0].text
+
+
+@pytest.mark.parametrize(
+    "args,tool,arguments",
+    [
+        (["--level", "music"], "library", {"action": "browse", "item_type": "albums"}),
+        (["--level", "music", "--allow-ui"], "catalog", {"action": "song_details", "song_id": "1440857781"}),
+    ],
+    ids=["music-library-browse-albums", "music+ui-catalog-song-details"],
+)
+def test_api_only_action_at_music_returns_refusal_text(args, tool, arguments, tmp_path):
+    # Visible tools whose specific action needs the network must answer with the
+    # level refusal as normal tool text, not a raw exception.
+    is_error, text = _run(args, tmp_path, lambda s: _call_result(s, tool, arguments))
+    assert not is_error, text
+    assert text.startswith("Error: ") and "--level api" in text and "client config" in text
