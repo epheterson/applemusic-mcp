@@ -7,14 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.21.0] - 2026-10-22
 
+Choose what the server can reach. You set this in the MCP client config, and the assistant can't change it. **Leave `--level` off and nothing changes from 0.20.3.**
+
 ### Added
 
-- **Permission levels.** `serve --level music|api|web` sets what the server may reach, in the MCP client config where the assistant can't change it. `music` is Music.app only: no network, no browser. `api` adds Apple's music APIs, `web` adds the Safari and Chrome web players, and `full` is everything, the same as leaving `--level` off. Accessibility UI scripting (the clicks behind no-sign-in catalog play and the iCloud sync nudge) is a separate opt-in, `--allow-ui`, at any level. Tools that can't work at the chosen level aren't offered to the assistant. A `mode` above the level is refused, one saved earlier is ignored, and every refusal tells the user where to change the level. Under the per-feature checks, two backstops hold the line: at `music` every HTTP request is refused, and without `--allow-ui` no System Events UI script or synthetic mouse event runs. `config info` and `applemusic-mcp status` show the level, and `python -m applemusic_mcp serve --level …` honors it too. The README now leads with the choice.
+**Permission levels**: `applemusic-mcp serve --level <level>`
+
+| Level | Reaches |
+|---|---|
+| `music` | Music.app only. No network, no browser. |
+| `api` | + Apple's music APIs |
+| `web` | + the Safari and Chrome web players (Up Next queue) |
+| `full` | Everything (same as no `--level`) |
+
+- **`--allow-ui`** turns on Accessibility clicks at any level. Those clicks are what play catalog songs without signing in and nudge iCloud sync.
+- **Tools the level can't use are hidden** from the assistant entirely.
+- **The assistant can't raise the level.** A `mode` above the level is refused, and one saved earlier is ignored. Every refusal says where to change the level.
+- **Backstops:** at `music`, every network request is refused. Without `--allow-ui`, no UI script or synthetic click runs.
+- **`config info` and `applemusic-mcp status` show the level.** `python -m applemusic_mcp serve --level …` respects it too.
 
 ### Changed
 
-- Nothing, unless you set a level. Without `--level` the server behaves exactly as 0.20.3 did. The setup snippets in the README now start new installs at `--level music`.
-- **The README is half as long.** It leads with the levels and the feature table (each engine column now names the level that turns it on); sign-in, configuration and usage patterns moved to [`docs/`](docs/).
+- **The README now leads with the levels and the feature table**, and its setup snippets start new installs at `--level music`. Sign-in, configuration and usage patterns moved to [`docs/`](https://github.com/epheterson/applemusic-mcp/tree/main/docs), and the README is half as long.
+- **The live-environment check catches an expired sign-in** before the release gate runs.
 
 ## [0.20.3] - 2026-10-07
 
