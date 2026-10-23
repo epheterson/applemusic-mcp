@@ -25,16 +25,16 @@ def main() -> int:
 
     if not auth.has_any_developer_token():
         problems.append(
-            "No developer token. Run `applemusic-mcp generate-token` (App Store devs) "
-            "or rely on the harvested token — neither was obtainable."
+            "No developer token. Run `applemusic-mcp login` (web sign-in harvests one) "
+            "or `applemusic-mcp login --dev` (your own MusicKit key)."
         )
 
     try:
         auth.get_user_token()
     except Exception:
         problems.append(
-            "No media-user-token. Run `applemusic-mcp signin` (browser sign-in) "
-            "or `applemusic-mcp authorize`."
+            "No media-user-token. Run `applemusic-mcp login` "
+            "(or `applemusic-mcp login --dev`)."
         )
 
     # Catalog reachable through the amp host? (every add/rate depends on resolution)
@@ -50,6 +50,16 @@ def main() -> int:
                 "(expired token / storefront / network) — resolution is the basis of every add."
             )
 
+    # Catalog reads work with a stale sign-in; writes don't. Probe the library
+    # with the user token so a rejected session fails here, not as 403s mid-gate.
+    if not problems:
+        status = amp_api.session_status()
+        if status != "ok":
+            problems.append(
+                f"Your Apple Music sign-in was not accepted for library access ({status}). "
+                "Run `applemusic-mcp login` to refresh it."
+            )
+
     if problems:
         print("LIVE API ENVIRONMENT NOT READY:")
         for p in problems:
@@ -61,7 +71,10 @@ def main() -> int:
         )
         return 1
 
-    print("Live API environment ready: developer token + media-user-token + catalog reachable.")
+    print(
+        "Live API environment ready: developer token + media-user-token accepted + "
+        "catalog reachable."
+    )
     return 0
 
 
