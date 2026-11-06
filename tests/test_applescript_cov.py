@@ -839,6 +839,18 @@ def test_get_playlist_tracks_page_all_tracks_reads_to_the_end(monkeypatch):
     assert len(seq.calls) == 2
 
 
+def test_get_playlist_tracks_page_long_range_fails_if_the_playlist_changes(monkeypatch):
+    """limit=0 reads a long range as several calls. If the playlist's size differs
+    between them, tracks were added or removed and the pages no longer line up, so
+    the read fails instead of splicing two states of the playlist."""
+    seq = Seq([(True, _page_output(2000, 0, 500)), (True, _page_output(2001, 500, 500))])
+    setrun(monkeypatch, seq)
+    ok, message, total = asc.get_playlist_tracks_page("PL", 0, asc.ALL_TRACKS)
+
+    assert ok is False and "changed while it was being read" in message
+    assert total == 0
+
+
 def test_get_playlist_tracks_page_short_range_is_one_call(monkeypatch):
     seq = Seq([(True, _page_output(2000, 0, 500))])
     setrun(monkeypatch, seq)
