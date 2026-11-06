@@ -1519,7 +1519,7 @@ class TestPlaylistCopy:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
+            "get_all_playlist_tracks",
             lambda name: (
                 True,
                 [
@@ -1543,7 +1543,7 @@ class TestPlaylistCopy:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
-        monkeypatch.setattr(server.asc, "get_playlist_tracks", lambda name: (True, []))
+        monkeypatch.setattr(server.asc, "get_all_playlist_tracks", lambda name: (True, []))
         result = server._playlist_copy("Source PL", "Copy PL")
         assert "Error" in result
         assert "empty" in result.lower()
@@ -1553,7 +1553,7 @@ class TestPlaylistCopy:
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
         monkeypatch.setattr(
-            server.asc, "get_playlist_tracks", lambda name: (False, "Music.app error")
+            server.asc, "get_all_playlist_tracks", lambda name: (False, "Music.app error")
         )
         result = server._playlist_copy("Source PL", "Copy PL")
         assert "Error" in result
@@ -1564,7 +1564,7 @@ class TestPlaylistCopy:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
+            "get_all_playlist_tracks",
             lambda name: (
                 True,
                 [
@@ -1582,7 +1582,7 @@ class TestPlaylistCopy:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
+            "get_all_playlist_tracks",
             lambda name: (
                 True,
                 [
@@ -2110,7 +2110,7 @@ class TestPlaylistDispatcher:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
+            "get_all_playlist_tracks",
             lambda name: (
                 True,
                 [
@@ -3117,7 +3117,7 @@ class TestPlaylistCopyEdgeCases:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Src"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
+            "get_all_playlist_tracks",
             lambda name: (True, [{"name": f"Track {i}", "artist": "Artist"} for i in range(7)]),
         )
         monkeypatch.setattr(server.asc, "create_playlist", lambda name, desc="": (True, "NEWP"))
@@ -6416,3 +6416,31 @@ def test_playlist_tool_advertises_its_default_limit():
     assert inspect.signature(server.playlist).parameters["limit"].default == 500
     doc = server.playlist.__doc__ or ""
     assert "default 500; 0 = every track" in doc
+
+
+class TestPlaylistCopyLongPlaylist:
+    def test_copy_reads_the_whole_source_not_the_first_500(self, monkeypatch):
+        """Copying a 1200-track playlist must copy 1200 tracks. The source used to be
+        read through the 500-track default, so the copy silently stopped at 500."""
+        source = [{"name": f"Song {i}", "artist": "Artist"} for i in range(1200)]
+        added = []
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
+        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
+        monkeypatch.setattr(server.asc, "get_all_playlist_tracks", lambda name: (True, source))
+        monkeypatch.setattr(
+            server.asc,
+            "get_playlist_tracks",
+            lambda *a, **k: pytest.fail("copy must not use the bounded reader"),
+        )
+        monkeypatch.setattr(server.asc, "create_playlist", lambda name, desc="": (True, "NEW"))
+
+        def add(pl, name, artist):
+            added.append(name)
+            return True, "ok"
+
+        monkeypatch.setattr(server.asc, "add_track_to_playlist", add)
+        result = server._playlist_copy("Source PL", "Copy PL")
+
+        assert len(added) == 1200
+        assert "1200" in result

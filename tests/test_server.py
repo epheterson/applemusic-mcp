@@ -4578,7 +4578,7 @@ class TestPlaylistCopyNoTokenLeakOnAsFailure:
             [{"name": "Source Playlist", "id": "src.id", "smart": False, "track_count": 3}],
         )
         # AS read of source tracks succeeds with one track
-        mock_asc.get_playlist_tracks.return_value = (
+        mock_asc.get_all_playlist_tracks.return_value = (
             True,
             [{"name": "Track 1", "artist": "Artist 1", "album": "Album 1", "id": "t.1"}],
         )
@@ -4622,7 +4622,7 @@ class TestPlaylistCopyNoTokenLeakOnAsFailure:
             [{"name": "Source Playlist", "id": "src.id", "smart": False, "track_count": 3}],
         )
         # AS read of source tracks fails environmentally
-        mock_asc.get_playlist_tracks.return_value = (
+        mock_asc.get_all_playlist_tracks.return_value = (
             False,
             "execution error: Music got an error: Connection is invalid. (-609)",
         )
