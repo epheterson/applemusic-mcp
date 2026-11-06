@@ -6369,6 +6369,7 @@ class TestPlaylistTracksLongPlaylist:
         )
         result = server._playlist_tracks("Long Mix", limit=0)
         assert "=== 1-2252 of 2253 tracks ===" in result
+        assert "more tracks" not in result, "the read reached the end; nothing follows"
 
     def test_limit_zero_with_an_offset_returns_the_rest(self, long_playlist):
         result = server._playlist_tracks("Long Mix", limit=0, offset=2250)
