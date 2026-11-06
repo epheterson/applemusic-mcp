@@ -21,7 +21,7 @@ from urllib.parse import urlparse
 import sys
 import shutil
 import time
-from typing import Optional
+from typing import Any, Callable, Optional
 
 
 def is_available() -> bool:
@@ -834,30 +834,61 @@ def _clamp_track_limit(limit: int) -> Optional[int]:
         return None
 
 
-def _get_playlist_tracks_bulk(safe_name: str, limit: int) -> tuple[bool, str]:
+_BAD_OFFSET = "offset must be an integer"
+
+# Tracks read per Music.app round trip when a caller wants more than one page
+# (the whole playlist, or every match for a filter). A 500-track page takes
+# about a second; the whole playlist in one call can hit the 30s osascript
+# timeout on a 10k+ track playlist.
+_PLAYLIST_PAGE_SIZE = 500
+
+
+def _clamp_track_offset(offset: int) -> Optional[int]:
+    """Coerce `offset` to a non-negative int, or None if it isn't a number.
+
+    Interpolated into the script like `limit`, so the same two rules apply:
+    it must be a number, and a negative must not reach an AppleScript range.
+    """
+    try:
+        return max(0, int(offset))
+    except (TypeError, ValueError):
+        return None
+
+
+def _get_playlist_tracks_bulk(safe_name: str, limit: int, offset: int = 0) -> tuple[bool, str]:
     """Try bulk property fetch for playlist tracks (fast path).
+
+    Reads at most `limit` tracks starting after the first `offset` tracks.
+    The output starts with a `total:<N>` line holding the playlist's real
+    track count, so a caller can tell a page from the whole playlist.
 
     Returns (success, output) where output is raw AppleScript output or error.
     """
     safe_limit = _clamp_track_limit(limit)
     if safe_limit is None:
         return False, f"{_BAD_LIMIT}, got {limit!r}"
+    safe_offset = _clamp_track_offset(offset)
+    if safe_offset is None:
+        return False, f"{_BAD_OFFSET}, got {offset!r}"
 
     script = f"""
     tell application "Music"
 {_find_playlist_applescript(safe_name)}
 
         set trackCount to count of tracks of targetPlaylist
-        if trackCount is 0 then return ""
+        set output to "total:" & trackCount & "\\n"
+        if trackCount is 0 then return output
 
-        -- Bound the range to `limit` BEFORE reading any properties, so cost
-        -- is O(limit) instead of O(playlist size) -- large playlists must
-        -- not pay for tracks beyond what was requested. Both clamps are
-        -- load-bearing: `tracks 1 thru 0` and a range past the end are each
-        -- an AppleScript error (-1728), not an empty result.
-        set maxTracks to {safe_limit}
+        -- Bound the range to the requested page BEFORE reading any properties,
+        -- so cost is O(page) instead of O(playlist size) -- large playlists
+        -- must not pay for tracks beyond what was requested. Every clamp is
+        -- load-bearing: an empty range (`tracks 1 thru 0`) and a range past
+        -- the end are each an AppleScript error (-1728), not an empty result.
+        set startPos to {safe_offset} + 1
+        if startPos > trackCount then return output
+        set maxTracks to {safe_offset + safe_limit}
         if maxTracks > trackCount then set maxTracks to trackCount
-        if maxTracks < 1 then return ""
+        if maxTracks < startPos then return output
 
         -- One Apple Event per property, addressed as a range of
         -- targetPlaylist. This must NOT go through an intermediate
@@ -867,17 +898,16 @@ def _get_playlist_tracks_bulk(safe_name: str, limit: int) -> tuple[bool, str]:
         -- names every track in the message. `as list` because a 1-track
         -- range returns a bare value, so `item 1 of` would otherwise index
         -- into the string and yield its first character.
-        set allNames to (get name of tracks 1 thru maxTracks of targetPlaylist) as list
-        set allArtists to (get artist of tracks 1 thru maxTracks of targetPlaylist) as list
-        set allAlbums to (get album of tracks 1 thru maxTracks of targetPlaylist) as list
-        set allDurations to (get duration of tracks 1 thru maxTracks of targetPlaylist) as list
-        set allGenres to (get genre of tracks 1 thru maxTracks of targetPlaylist) as list
-        set allYears to (get year of tracks 1 thru maxTracks of targetPlaylist) as list
-        set allIds to (get persistent ID of tracks 1 thru maxTracks of targetPlaylist) as list
+        set allNames to (get name of tracks startPos thru maxTracks of targetPlaylist) as list
+        set allArtists to (get artist of tracks startPos thru maxTracks of targetPlaylist) as list
+        set allAlbums to (get album of tracks startPos thru maxTracks of targetPlaylist) as list
+        set allDurations to (get duration of tracks startPos thru maxTracks of targetPlaylist) as list
+        set allGenres to (get genre of tracks startPos thru maxTracks of targetPlaylist) as list
+        set allYears to (get year of tracks startPos thru maxTracks of targetPlaylist) as list
+        set allIds to (get persistent ID of tracks startPos thru maxTracks of targetPlaylist) as list
 
-        -- Combine into output
-        set output to ""
-        repeat with i from 1 to maxTracks
+        -- Combine into output (after the `total:` line already in `output`)
+        repeat with i from 1 to (maxTracks - startPos + 1)
             set tName to item i of allNames
             set tArtist to item i of allArtists
             set tAlbum to item i of allAlbums
@@ -893,15 +923,19 @@ def _get_playlist_tracks_bulk(safe_name: str, limit: int) -> tuple[bool, str]:
     return run_applescript(script)
 
 
-def _get_playlist_tracks_slow(safe_name: str, limit: int) -> tuple[bool, str]:
+def _get_playlist_tracks_slow(safe_name: str, limit: int, offset: int = 0) -> tuple[bool, str]:
     """Per-track iteration fallback for playlists with shared tracks (slow path).
 
     Optimized for shared tracks: skips genre/year (saves ~33% time).
+    Same page and `total:<N>` first line as the bulk path.
     Returns (success, output) where output is raw AppleScript output or error.
     """
     safe_limit = _clamp_track_limit(limit)
     if safe_limit is None:
         return False, f"{_BAD_LIMIT}, got {limit!r}"
+    safe_offset = _clamp_track_offset(offset)
+    if safe_offset is None:
+        return False, f"{_BAD_OFFSET}, got {offset!r}"
 
     script = f"""
     tell application "Music"
@@ -909,14 +943,17 @@ def _get_playlist_tracks_slow(safe_name: str, limit: int) -> tuple[bool, str]:
 
         set allTracks to tracks of targetPlaylist
         set trackCount to count of allTracks
-        if trackCount is 0 then return ""
+        set output to "total:" & trackCount & "\\n"
+        if trackCount is 0 then return output
 
         -- Per-track iteration (slower but handles shared tracks)
         -- Optimized: skip genre/year to reduce try/catch overhead
-        set output to ""
-        set maxTracks to {safe_limit}
+        set startPos to {safe_offset} + 1
+        if startPos > trackCount then return output
+        set maxTracks to {safe_offset + safe_limit}
         if trackCount < maxTracks then set maxTracks to trackCount
-        repeat with i from 1 to maxTracks
+        if maxTracks < startPos then return output
+        repeat with i from startPos to maxTracks
             set t to item i of allTracks
             try
                 set tName to name of t
@@ -936,28 +973,69 @@ def _get_playlist_tracks_slow(safe_name: str, limit: int) -> tuple[bool, str]:
     return run_applescript(script)
 
 
-def get_playlist_tracks(playlist_name: str, limit: int = 500) -> tuple[bool, list[dict]]:
-    """Get tracks in a playlist by name.
+def _parse_playlist_track_line(line: str) -> Optional[dict]:
+    """Parse one `|||`-separated track line from the playlist read scripts."""
+    if "|||" not in line:
+        return None
+    parts = line.split("|||")
+    if len(parts) < 7:
+        return None
+
+    # Format duration
+    try:
+        dur_sec = float(parts[3])
+        minutes = int(dur_sec) // 60
+        seconds = int(dur_sec) % 60
+        duration = f"{minutes}:{seconds:02d}"
+    except (ValueError, TypeError):
+        duration = ""
+
+    # Music reports an unset year as 0, and the bulk read has no
+    # per-track try/catch to turn that into "". Passing "0"
+    # through would have a consumer report a release year of 0 --
+    # report it as unknown, the same as the slow path does.
+    year = "" if parts[5].strip() == "0" else parts[5]
+
+    return {
+        "name": parts[0],
+        "artist": parts[1],
+        "album": parts[2],
+        "duration": duration,
+        "genre": parts[4],
+        "year": year,
+        "id": parts[6],
+    }
+
+
+def get_playlist_tracks_page(
+    playlist_name: str, offset: int = 0, limit: int = _PLAYLIST_PAGE_SIZE
+) -> tuple[bool, Any, int]:
+    """Get one page of a playlist's tracks, plus the playlist's real size.
 
     Uses fast bulk fetch when possible, falls back to per-track iteration
     for tracks whose properties the bulk read cannot get.
 
     Args:
         playlist_name: Name of the playlist
-        limit: Maximum number of tracks to return (default 500). A limit
-            below 1 yields an empty list.
+        offset: Zero-based index of the first track to return
+        limit: Maximum number of tracks to return. A limit below 1 yields an
+            empty page (the total is still reported).
 
     Returns:
-        Tuple of (success, list of track dicts or error string)
+        Tuple of (success, tracks or error string, total_tracks). `total_tracks`
+        is the number of tracks in the whole playlist, not in the page; it is
+        0 when the call failed.
     """
     if _clamp_track_limit(limit) is None:
-        return False, f"{_BAD_LIMIT}, got {limit!r}"
+        return False, f"{_BAD_LIMIT}, got {limit!r}", 0
+    if _clamp_track_offset(offset) is None:
+        return False, f"{_BAD_OFFSET}, got {offset!r}", 0
 
     safe_name = _escape_for_applescript(playlist_name)
 
     # Try bulk fetch first (~10x faster, and the only path that returns
     # genre/year -- the slow path deliberately skips them).
-    success, output = _get_playlist_tracks_bulk(safe_name, limit)
+    success, output = _get_playlist_tracks_bulk(safe_name, limit, offset)
 
     # Retry per-track only for a logic-level failure -- a track whose
     # properties the bulk read cannot get (-1728), which is the case the
@@ -970,45 +1048,127 @@ def get_playlist_tracks(playlist_name: str, limit: int = 500) -> tuple[bool, lis
     # not retrying -- the slow path sends ~7x more Apple Events, so a Music
     # that timed out or refused automation fails it again at double the wait.
     if not success and classify_error(output) == ERROR_UNKNOWN:
-        success, output = _get_playlist_tracks_slow(safe_name, limit)
+        success, output = _get_playlist_tracks_slow(safe_name, limit, offset)
 
     if not success:
-        return False, output
+        return False, output, 0
     if output.startswith("ERROR:"):
-        return False, output[6:]
+        return False, output[6:], 0
 
     tracks = []
+    total: Optional[int] = None
     for line in output.split("\n"):
-        if "|||" in line:
-            parts = line.split("|||")
-            if len(parts) >= 7:
-                # Format duration
-                try:
-                    dur_sec = float(parts[3])
-                    minutes = int(dur_sec) // 60
-                    seconds = int(dur_sec) % 60
-                    duration = f"{minutes}:{seconds:02d}"
-                except (ValueError, TypeError):
-                    duration = ""
+        if line.startswith("total:"):
+            try:
+                total = int(line[len("total:") :])
+            except ValueError:
+                pass
+            continue
+        track = _parse_playlist_track_line(line)
+        if track is not None:
+            tracks.append(track)
+    if total is None:
+        # No total line (an older script, or a stubbed run): the best we can
+        # say is that the playlist reaches at least the end of this page.
+        total = max(0, int(offset)) + len(tracks)
+    return True, tracks, total
 
-                # Music reports an unset year as 0, and the bulk read has no
-                # per-track try/catch to turn that into "". Passing "0"
-                # through would have a consumer report a release year of 0 --
-                # report it as unknown, the same as the slow path does.
-                year = "" if parts[5].strip() == "0" else parts[5]
 
-                tracks.append(
-                    {
-                        "name": parts[0],
-                        "artist": parts[1],
-                        "album": parts[2],
-                        "duration": duration,
-                        "genre": parts[4],
-                        "year": year,
-                        "id": parts[6],
-                    }
-                )
+def get_playlist_tracks(
+    playlist_name: str, limit: int = _PLAYLIST_PAGE_SIZE, offset: int = 0
+) -> tuple[bool, Any]:
+    """Get tracks in a playlist by name.
+
+    Args:
+        playlist_name: Name of the playlist
+        limit: Maximum number of tracks to return (default 500). A limit
+            below 1 yields an empty list. To read a whole playlist use
+            get_all_playlist_tracks(); to also learn the playlist's real
+            size use get_playlist_tracks_page().
+        offset: Zero-based index of the first track to return
+
+    Returns:
+        Tuple of (success, list of track dicts or error string)
+    """
+    success, result, _total = get_playlist_tracks_page(playlist_name, offset, limit)
+    return success, result
+
+
+def get_all_playlist_tracks(playlist_name: str) -> tuple[bool, Any]:
+    """Get every track in a playlist, however long it is.
+
+    Reads in pages of 500 so that no single Music.app call is long enough to
+    hit the 30s osascript timeout. For callers that need the whole playlist
+    (copying one); a listing should page with get_playlist_tracks_page().
+
+    Returns:
+        Tuple of (success, list of track dicts or error string)
+    """
+    success, tracks, total = get_playlist_tracks_page(playlist_name, 0, _PLAYLIST_PAGE_SIZE)
+    if not success:
+        return False, tracks
+    while len(tracks) < total:
+        success, page, total = get_playlist_tracks_page(
+            playlist_name, len(tracks), _PLAYLIST_PAGE_SIZE
+        )
+        if not success:
+            return False, page
+        if not page:
+            break  # the playlist shrank under us; return what was read
+        tracks.extend(page)
     return True, tracks
+
+
+def get_playlist_tracks_matching(
+    playlist_name: str,
+    predicate: Callable[[dict], bool],
+    offset: int = 0,
+    limit: int = 0,
+) -> tuple[bool, Any, Optional[int]]:
+    """Get the tracks of a playlist that satisfy `predicate`, one page at a time.
+
+    Reads the playlist in pages of 500, filters each page, and keeps going
+    until `limit` matches are collected (or the playlist ends). Cost scales
+    with how far into the playlist the matches are, not with its size.
+
+    Args:
+        playlist_name: Name of the playlist
+        predicate: Called with each track dict; return True to keep it
+        offset: Number of matching tracks to skip before collecting
+        limit: Maximum matches to return; below 1 means all of them
+
+    Returns:
+        Tuple of (success, matching tracks or error string, total_matches).
+        `total_matches` is the number of tracks in the whole playlist that
+        match, or None when the scan stopped at `limit` with more of the
+        playlist unread (so more matches may exist).
+    """
+    collected: list[dict] = []
+    to_skip = max(0, int(offset))
+    skipped = 0
+    position = 0
+    while True:
+        success, page, total = get_playlist_tracks_page(
+            playlist_name, position, _PLAYLIST_PAGE_SIZE
+        )
+        if not success:
+            return False, page, None
+        position += len(page)
+        for track in page:
+            if not predicate(track):
+                continue
+            if skipped < to_skip:
+                skipped += 1
+                continue
+            if limit > 0 and len(collected) >= limit:
+                # A match beyond the page we were asked for: more exist.
+                return True, collected, None
+            collected.append(track)
+        if not page or position >= total:
+            return True, collected, skipped + len(collected)
+        if limit > 0 and len(collected) >= limit:
+            # Page limit reached; the rest of the playlist is unread.
+            return True, collected, None
 
 
 def create_playlist(name: str, description: str = "") -> tuple[bool, str]:
