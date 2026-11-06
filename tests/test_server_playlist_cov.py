@@ -6446,3 +6446,84 @@ class TestPlaylistCopyLongPlaylist:
 
         assert len(added) == 1200
         assert "1200" in result
+
+
+class TestPlaylistTracksOffsets:
+    def test_negative_offset_is_treated_as_zero(self, long_playlist):
+        """A negative offset used to be labelled onto the page header and hint as given."""
+        result = server._playlist_tracks("Long Mix", limit=3, offset=-5)
+
+        assert "=== 1-3 of 2253 tracks ===" in result
+        assert "offset=3" in result
+        assert long_playlist.reads == [(0, 3)]
+
+    def _api_playlist(self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch):
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(
+            server,
+            "get_user_preferences",
+            lambda: {
+                "fetch_explicit": False,
+                "output_format": "text",
+                "mode": "auto",
+                "auto_add": False,
+                "storefront": "us",
+            },
+        )
+        responses_lib.add(
+            responses_lib.GET,
+            "https://api.music.apple.com/v1/me/library/playlists/p.pl/tracks",
+            json={
+                "meta": {"total": 8},
+                "data": [
+                    {
+                        "id": f"i.t{i}",
+                        "attributes": {
+                            "name": f"Song {i}",
+                            "artistName": "Artist",
+                            "albumName": "Alb",
+                            "durationInMillis": 180000,
+                        },
+                    }
+                    for i in range(8)
+                ],
+            },
+            status=200,
+        )
+
+    @responses_lib.activate
+    def test_api_offset_past_the_end_names_the_real_size(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """The default limit now sends a plain API call through the bounded branch,
+        which used to answer an offset past the end with an empty 'No results'."""
+        self._api_playlist(mock_config_dir, mock_developer_token, mock_user_token, monkeypatch)
+        result = server._playlist_tracks("p.pl", offset=100)
+        assert result.startswith("Offset 100 exceeds 8 items")
+
+    @responses_lib.activate
+    def test_api_negative_offset_is_treated_as_zero(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        self._api_playlist(mock_config_dir, mock_developer_token, mock_user_token, monkeypatch)
+        result = server._playlist_tracks("p.pl", limit=3, offset=-2)
+        assert "=== 1-3 of 8 tracks ===" in result
+        assert "Song 0" in result and "Song 2" in result
+
+    def test_audit_counts_the_matches_read_when_a_filtered_read_stops_early(
+        self, long_playlist, monkeypatch
+    ):
+        """total_count is None when a filter stops at its limit; the audit entry must
+        not turn that into 0 for a query that matched tracks."""
+        cache = MagicMock()
+        cache.get_explicit.return_value = "Clean"
+        monkeypatch.setattr(server, "get_track_cache", lambda: cache)
+        logged = []
+        monkeypatch.setattr(
+            server.audit_log, "log_action", lambda action, details, **kw: logged.append(details)
+        )
+
+        server._playlist_tracks("Long Mix", filter="Artist A", limit=10, fetch_explicit=True)
+
+        (details,) = logged
+        assert details["track_count"] == 10
