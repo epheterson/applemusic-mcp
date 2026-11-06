@@ -2622,6 +2622,57 @@ class TestPlaylistAddApiErrorHandling:
 # ---------------------------------------------------------------------------
 
 
+class TestPlaylistListPaging:
+    """`playlist(action="list")` honors limit/offset and shows every item it returns."""
+
+    @staticmethod
+    def _stub_playlists(monkeypatch, n):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(
+            server.asc,
+            "get_playlists",
+            lambda: (
+                True,
+                [
+                    {"id": f"P{i}", "name": f"Playlist {i}", "track_count": 1, "smart": False}
+                    for i in range(n)
+                ],
+            ),
+        )
+
+    def test_all_playlists_shown_by_default(self, monkeypatch):
+        self._stub_playlists(monkeypatch, 250)
+        result = server._playlist_list()
+        assert "=== 250 items ===" in result
+        assert "Playlist 249 " in result
+
+    def test_limit_and_offset_page_the_list(self, monkeypatch):
+        self._stub_playlists(monkeypatch, 250)
+        result = server._playlist_list(limit=50, offset=100)
+        assert "101-150 of 250 items" in result
+        assert "Playlist 100 " in result
+        assert "Playlist 149 " in result
+        assert "Playlist 99 " not in result
+        assert "Playlist 150 " not in result
+
+    def test_offset_past_end_is_an_error(self, monkeypatch):
+        self._stub_playlists(monkeypatch, 10)
+        assert "exceeds" in server._playlist_list(limit=5, offset=50)
+
+    def test_dispatcher_forwards_limit_and_offset(self, monkeypatch):
+        calls = {}
+
+        def fake(*args, **kwargs):
+            calls["args"] = args
+            calls["kwargs"] = kwargs
+            return "ok"
+
+        monkeypatch.setattr(server, "_playlist_list", fake)
+        server.playlist(action="list", limit=7, offset=3)
+        assert 7 in calls["args"] + tuple(calls["kwargs"].values())
+        assert 3 in calls["args"] + tuple(calls["kwargs"].values())
+
+
 class TestPlaylistListPaginationAndExceptions:
     @responses_lib.activate
     def test_api_pagination_100_items_then_empty(
