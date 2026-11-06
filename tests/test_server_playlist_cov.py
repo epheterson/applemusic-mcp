@@ -6335,20 +6335,28 @@ class TestPlaylistTracksLongPlaylist:
         result = server._playlist_tracks("Long Mix", limit=3, offset=5000)
         assert result.startswith("Offset 5000 exceeds 2253 items")
 
-    def test_limit_zero_returns_every_track(self, long_playlist, monkeypatch):
-        monkeypatch.setattr(
-            server.asc, "get_all_playlist_tracks", lambda name: (True, long_playlist.tracks)
-        )
+    def test_limit_zero_returns_every_track(self, long_playlist):
         result = server._playlist_tracks("Long Mix", limit=0)
 
         assert "=== 2253 tracks ===" in result
         assert "Song 2252" in result
         assert "more tracks" not in result
+        assert long_playlist.reads == [(0, 2**31 - 1)], "read to the end, a page at a time"
 
-    def test_limit_zero_with_an_offset_returns_the_rest(self, long_playlist, monkeypatch):
+    def test_limit_zero_reports_the_real_size_when_a_track_is_unreadable(
+        self, long_playlist, monkeypatch
+    ):
+        """The per-track fallback skips a track it cannot read. The total must still
+        be the playlist's size from Music.app, not a count of what came back."""
         monkeypatch.setattr(
-            server.asc, "get_all_playlist_tracks", lambda name: (True, long_playlist.tracks)
+            server.asc,
+            "get_playlist_tracks_page",
+            lambda n, offset=0, limit=500: (True, long_playlist.tracks[:2252], 2253),
         )
+        result = server._playlist_tracks("Long Mix", limit=0)
+        assert "=== 1-2252 of 2253 tracks ===" in result
+
+    def test_limit_zero_with_an_offset_returns_the_rest(self, long_playlist):
         result = server._playlist_tracks("Long Mix", limit=0, offset=2250)
         assert "=== 2251-2253 of 2253 tracks ===" in result
         assert "Song 2250" in result and "Song 2252" in result
@@ -6388,9 +6396,6 @@ class TestPlaylistTracksLongPlaylist:
         """An export holds the same page the listing shows, so limit=0 exports
         the whole playlist and the default does not pretend to."""
         monkeypatch.setenv("APPLEMUSIC_CACHE_DIR", str(tmp_path))
-        monkeypatch.setattr(
-            server.asc, "get_all_playlist_tracks", lambda name: (True, long_playlist.tracks)
-        )
 
         server._playlist_tracks("Long Mix", export="csv", format="none")
         server._playlist_tracks("Long Mix", limit=0, export="json", format="none")

@@ -823,6 +823,22 @@ def test_get_playlist_tracks_page_long_range_stops_at_the_end_of_the_playlist(mo
     assert len(seq.calls) == 2, "must not keep asking past the last track"
 
 
+def test_get_playlist_tracks_page_all_tracks_reads_to_the_end(monkeypatch):
+    """ALL_TRACKS reads from the offset to the end, a page at a time, and the total
+    is the playlist's, even when a page comes back short."""
+    seq = Seq(
+        [
+            (True, "total:1000\n" + _track_lines(0, 499)),  # one unreadable track
+            (True, _page_output(1000, 500, 500)),
+        ]
+    )
+    setrun(monkeypatch, seq)
+    ok, tracks, total = asc.get_playlist_tracks_page("PL", 0, asc.ALL_TRACKS)
+
+    assert ok and total == 1000 and len(tracks) == 999
+    assert len(seq.calls) == 2
+
+
 def test_get_playlist_tracks_page_short_range_is_one_call(monkeypatch):
     seq = Seq([(True, _page_output(2000, 0, 500))])
     setrun(monkeypatch, seq)
