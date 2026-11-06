@@ -4890,8 +4890,9 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
                 "off macOS — add by track instead."
             )
 
-        # Get tracks from source playlist via AppleScript
-        success, source_tracks = asc.get_playlist_tracks(resolved.applescript_name)
+        # Get every track of the source playlist via AppleScript. This used to read
+        # the first 500 only, so copying a longer playlist silently dropped the rest.
+        success, source_tracks = asc.get_all_playlist_tracks(resolved.applescript_name)
         if not success:
             return f"Error: {_format_applescript_error(str(source_tracks), 'read source playlist')}"
         if not source_tracks:
