@@ -6326,6 +6326,20 @@ class TestPlaylistTracksLongPlaylist:
         assert "exceeds" not in result
         assert long_playlist.reads == [(2200, 3)]
 
+    def test_next_offset_skips_past_an_unreadable_track(self, long_playlist, monkeypatch):
+        """The per-track fallback leaves out a track it cannot read, so a page can
+        show 499 rows for 500 positions. The note must point at position 500, or
+        the next page starts inside the one just shown and repeats a track."""
+        monkeypatch.setattr(
+            server.asc,
+            "get_playlist_tracks_page",
+            lambda n, offset=0, limit=500: (True, long_playlist.tracks[:499], 2253),
+        )
+        result = server._playlist_tracks("Long Mix")
+
+        assert "offset=500 " in result or "offset=500 for" in result
+        assert "1753 more tracks" in result
+
     def test_the_last_page_has_no_more_hint(self, long_playlist):
         result = server._playlist_tracks("Long Mix", limit=500, offset=2000)
         assert "=== 2001-2253 of 2253 tracks ===" in result
