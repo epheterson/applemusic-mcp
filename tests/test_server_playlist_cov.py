@@ -2669,8 +2669,37 @@ class TestPlaylistListPaging:
 
         monkeypatch.setattr(server, "_playlist_list", fake)
         server.playlist(action="list", limit=7, offset=3)
-        assert 7 in calls["args"] + tuple(calls["kwargs"].values())
-        assert 3 in calls["args"] + tuple(calls["kwargs"].values())
+        assert calls["kwargs"] == {}
+        assert calls["args"][4:6] == (7, 3)
+
+    def test_negative_offset_is_an_error(self, monkeypatch):
+        self._stub_playlists(monkeypatch, 10)
+        result = server._playlist_list(limit=3, offset=-5)
+        assert "offset" in result.lower()
+        assert "=== " not in result
+
+    @responses_lib.activate
+    def test_api_path_filters_before_paging(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        data = [
+            {"id": f"p.{i}", "attributes": {"name": f"{'Jazz' if i % 2 else 'Rock'} {i}"}}
+            for i in range(20)
+        ]
+        responses_lib.add(
+            responses_lib.GET,
+            "https://api.music.apple.com/v1/me/library/playlists",
+            json={"data": data},
+            status=200,
+        )
+        result = server._playlist_list(filter="jazz", limit=3, offset=2)
+        assert "3-5 of 10 items" in result
+        assert "Jazz 5 " in result
+        assert "Jazz 9 " in result
+        assert "Jazz 3 " not in result
+        assert "Rock" not in result
 
 
 class TestPlaylistListPaginationAndExceptions:
