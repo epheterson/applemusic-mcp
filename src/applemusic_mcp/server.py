@@ -3302,15 +3302,20 @@ def _read_playlist_window(
     )
 
 
-def _more_tracks_hint(format: str, shown: int, offset: int, total: Optional[int]) -> str:
+def _more_tracks_hint(
+    format: str, shown: int, offset: int, total: Optional[int], covered: Optional[int] = None
+) -> str:
     """Tell the caller that a listing stopped short, and how to get the rest.
 
     `total` is None when it is unknown because a filtered read stopped at its
-    limit. Only the text format gets a hint: json and csv stay pure data.
+    limit. `covered` is how many playlist positions the read spanned, when that
+    differs from the rows shown (the per-track fallback skips a track it cannot
+    read); the next page starts after the positions covered, not after the rows.
+    Only the text format gets a hint: json and csv stay pure data.
     """
     if format != "text" or shown <= 0:
         return ""
-    next_offset = offset + shown
+    next_offset = offset + (shown if covered is None else covered)
     if total is None:
         return (
             f"\n(More matching tracks may follow: pass offset={next_offset} for the next "
@@ -3560,7 +3565,12 @@ def _playlist_tracks(
             total_count=total_count or 0,
             offset=offset,
         )
-        result += _more_tracks_hint(format, len(track_data), offset, total_count)
+        # An unfiltered window spans `limit` positions even if a track in it was
+        # unreadable and left out; a filtered one counts matches, which are rows.
+        covered = None
+        if not filter and limit > 0 and total_count is not None:
+            covered = min(limit, max(0, total_count - offset))
+        result += _more_tracks_hint(format, len(track_data), offset, total_count, covered)
 
         # Add timing and stats
         elapsed = time.time() - start_time
