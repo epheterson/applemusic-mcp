@@ -836,6 +836,10 @@ def _clamp_track_limit(limit: int) -> Optional[int]:
 
 _BAD_OFFSET = "offset must be an integer"
 
+# Pass as `limit` to get_playlist_tracks_page() to read from `offset` to the end of
+# the playlist (still a page at a time). Within what AppleScript treats as an integer.
+ALL_TRACKS = 2**31 - 1
+
 # The `total:<N>` first line of the playlist read scripts (the whole line).
 _TOTAL_LINE = re.compile(r"total:(\d+)")
 

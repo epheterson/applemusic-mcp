@@ -3294,12 +3294,12 @@ def _read_playlist_window(
     offset = max(0, offset)
     if predicate is not None:
         return asc.get_playlist_tracks_matching(playlist_name, predicate, offset, limit)
-    if limit > 0:
-        return asc.get_playlist_tracks_page(playlist_name, offset, limit)
-    success, tracks = asc.get_all_playlist_tracks(playlist_name)
-    if not success:
-        return False, tracks, None
-    return True, tracks[offset:], len(tracks)
+    # limit=0 reads to the end, still a page at a time. The total comes from Music.app,
+    # not from counting the tracks returned: the per-track fallback skips a track it
+    # cannot read, and a count of what came back would undercount the playlist.
+    return asc.get_playlist_tracks_page(
+        playlist_name, offset, limit if limit > 0 else asc.ALL_TRACKS
+    )
 
 
 def _more_tracks_hint(format: str, shown: int, offset: int, total: Optional[int]) -> str:
