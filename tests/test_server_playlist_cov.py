@@ -2191,7 +2191,9 @@ class TestPlaylistDispatcher:
         monkeypatch.setattr(server, "_engine", lambda: "native")
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         # _playlist_delete reads tracks first (for the undo log); stub it offline.
-        monkeypatch.setattr(server.asc, "get_playlist_tracks", lambda name: (True, []))
+        monkeypatch.setattr(
+            server.asc, "get_playlist_tracks_page", lambda name, offset=0, limit=500: (True, [], 0)
+        )
         monkeypatch.setattr(server.asc, "delete_playlist", lambda name: (True, "Deleted"))
         result = server.playlist(action="delete", name="Old PL")
         assert "Deleted" in result
