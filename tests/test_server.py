@@ -1283,6 +1283,7 @@ class TestPaginationWithFetchExplicit:
                     {"name": f"Track {i}", "artist": "Artist", "album": "Album", "id": f"PID{i}"}
                     for i in range(5)
                 ],
+                5,
             )
 
         # Mock cache - return cached explicit status for all tracks
@@ -1295,7 +1296,7 @@ class TestPaginationWithFetchExplicit:
             server.asc, "get_playlists", lambda: (True, [{"name": "Test Playlist", "id": "PLID"}])
         )
 
-        with patch.object(server.asc, "get_playlist_tracks", side_effect=mock_asc_get_tracks):
+        with patch.object(server.asc, "get_playlist_tracks_page", side_effect=mock_asc_get_tracks):
             with patch.object(server, "get_track_cache", return_value=mock_cache):
                 # Call with playlist name and fetch_explicit=True
                 result = server.playlist(
