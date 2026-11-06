@@ -944,8 +944,7 @@ def _get_playlist_tracks_slow(safe_name: str, limit: int, offset: int = 0) -> tu
     tell application "Music"
 {_find_playlist_applescript(safe_name)}
 
-        set allTracks to tracks of targetPlaylist
-        set trackCount to count of allTracks
+        set trackCount to count of tracks of targetPlaylist
         set output to "total:" & trackCount & "\\n"
         if trackCount is 0 then return output
 
@@ -956,8 +955,13 @@ def _get_playlist_tracks_slow(safe_name: str, limit: int, offset: int = 0) -> tu
         set maxTracks to {safe_offset + safe_limit}
         if trackCount < maxTracks then set maxTracks to trackCount
         if maxTracks < startPos then return output
-        repeat with i from startPos to maxTracks
-            set t to item i of allTracks
+
+        -- Take just this page of the playlist before walking it, so a long
+        -- playlist read page by page does not re-load every track each time.
+        -- `as list` because a 1-track range returns a bare value.
+        set pageTracks to (tracks startPos thru maxTracks of targetPlaylist) as list
+        repeat with i from 1 to (maxTracks - startPos + 1)
+            set t to item i of pageTracks
             try
                 set tName to name of t
                 set tArtist to artist of t
@@ -1010,24 +1014,13 @@ def _parse_playlist_track_line(line: str) -> Optional[dict]:
     }
 
 
-def get_playlist_tracks_page(
-    playlist_name: str, offset: int = 0, limit: int = _PLAYLIST_PAGE_SIZE
+def _read_playlist_tracks_page(
+    playlist_name: str, offset: int, limit: int
 ) -> tuple[bool, Any, int]:
-    """Get one page of a playlist's tracks, plus the playlist's real size.
+    """Read one range of a playlist's tracks in a single Music.app call.
 
-    Uses fast bulk fetch when possible, falls back to per-track iteration
-    for tracks whose properties the bulk read cannot get.
-
-    Args:
-        playlist_name: Name of the playlist
-        offset: Zero-based index of the first track to return
-        limit: Maximum number of tracks to return. A limit below 1 yields an
-            empty page (the total is still reported).
-
-    Returns:
-        Tuple of (success, tracks or error string, total_tracks). `total_tracks`
-        is the number of tracks in the whole playlist, not in the page; it is
-        0 when the call failed.
+    Callers go through get_playlist_tracks_page(), which keeps each call to one
+    page so that none of them nears the 30s osascript timeout.
     """
     if _clamp_track_limit(limit) is None:
         return False, f"{_BAD_LIMIT}, got {limit!r}", 0
@@ -1060,13 +1053,15 @@ def get_playlist_tracks_page(
 
     tracks = []
     total: Optional[int] = None
-    for line in output.split("\n"):
-        # Match the whole line: a track whose title starts with "total:" has a row
-        # that begins the same way, and must reach the row parser, not vanish here.
-        header = _TOTAL_LINE.fullmatch(line.strip())
-        if header:
-            total = int(header.group(1))
-            continue
+    lines = output.split("\n")
+    # The header is the script's first line and nowhere else. Track titles are
+    # untrusted text: one that starts with "total:", or contains a newline and a
+    # line of its own that looks like the header, is data and must stay data.
+    header = _TOTAL_LINE.fullmatch(lines[0].strip())
+    if header:
+        total = int(header.group(1))
+        lines = lines[1:]
+    for line in lines:
         track = _parse_playlist_track_line(line)
         if track is not None:
             tracks.append(track)
@@ -1074,6 +1069,53 @@ def get_playlist_tracks_page(
         # No total line (an older script, or a stubbed run): the best we can
         # say is that the playlist reaches at least the end of this page.
         total = max(0, int(offset)) + len(tracks)
+    return True, tracks, total
+
+
+def get_playlist_tracks_page(
+    playlist_name: str, offset: int = 0, limit: int = _PLAYLIST_PAGE_SIZE
+) -> tuple[bool, Any, int]:
+    """Get a range of a playlist's tracks, plus the playlist's real size.
+
+    Uses fast bulk fetch when possible, falls back to per-track iteration
+    for tracks whose properties the bulk read cannot get. A range longer than
+    one page (500 tracks) is read a page at a time, so a large `limit` costs
+    several short Music.app calls and not one that can hit the 30s timeout.
+
+    Args:
+        playlist_name: Name of the playlist
+        offset: Zero-based index of the first track to return
+        limit: Maximum number of tracks to return. A limit below 1 yields an
+            empty page (the total is still reported).
+
+    Returns:
+        Tuple of (success, tracks or error string, total_tracks). `total_tracks`
+        is the number of tracks in the whole playlist, not in the page; it is
+        0 when the call failed.
+    """
+    safe_limit = _clamp_track_limit(limit)
+    if safe_limit is None:
+        return False, f"{_BAD_LIMIT}, got {limit!r}", 0
+    safe_offset = _clamp_track_offset(offset)
+    if safe_offset is None:
+        return False, f"{_BAD_OFFSET}, got {offset!r}", 0
+
+    success, tracks, total = _read_playlist_tracks_page(
+        playlist_name, safe_offset, min(safe_limit, _PLAYLIST_PAGE_SIZE)
+    )
+    position = safe_offset + _PLAYLIST_PAGE_SIZE
+    remaining = safe_limit - _PLAYLIST_PAGE_SIZE
+    while success and remaining > 0 and position < total:
+        step = min(remaining, _PLAYLIST_PAGE_SIZE)
+        success, page, total = _read_playlist_tracks_page(playlist_name, position, step)
+        if success:
+            tracks.extend(page)
+        else:
+            tracks = page
+        position += step
+        remaining -= step
+    if not success:
+        return False, tracks, 0
     return True, tracks, total
 
 
@@ -1110,6 +1152,7 @@ def get_all_playlist_tracks(playlist_name: str) -> tuple[bool, Any]:
     success, tracks, total = get_playlist_tracks_page(playlist_name, 0, _PLAYLIST_PAGE_SIZE)
     if not success:
         return False, tracks
+    first_total = total
     # Advance by the page size, not by the rows returned: the per-track fallback
     # skips a track it cannot read, so a page can hold fewer rows than it covers,
     # and stepping by len(tracks) would read the same tracks twice. `total` is
@@ -1121,6 +1164,11 @@ def get_all_playlist_tracks(playlist_name: str) -> tuple[bool, Any]:
         )
         if not success:
             return False, page
+        if total != first_total:
+            # Tracks were added or removed between pages, so later pages no longer
+            # line up with earlier ones. Fail rather than hand back (or copy) a
+            # playlist stitched together from two different states.
+            return False, "The playlist changed while it was being read; please try again."
         tracks.extend(page)
         position += _PLAYLIST_PAGE_SIZE
     return True, tracks
