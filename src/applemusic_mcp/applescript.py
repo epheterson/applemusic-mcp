@@ -836,6 +836,9 @@ def _clamp_track_limit(limit: int) -> Optional[int]:
 
 _BAD_OFFSET = "offset must be an integer"
 
+# The `total:<N>` first line of the playlist read scripts (the whole line).
+_TOTAL_LINE = re.compile(r"total:(\d+)")
+
 # Tracks read per Music.app round trip when a caller wants more than one page
 # (the whole playlist, or every match for a filter). A 500-track page takes
 # about a second; the whole playlist in one call can hit the 30s osascript
@@ -1058,11 +1061,11 @@ def get_playlist_tracks_page(
     tracks = []
     total: Optional[int] = None
     for line in output.split("\n"):
-        if line.startswith("total:"):
-            try:
-                total = int(line[len("total:") :])
-            except ValueError:
-                pass
+        # Match the whole line: a track whose title starts with "total:" has a row
+        # that begins the same way, and must reach the row parser, not vanish here.
+        header = _TOTAL_LINE.fullmatch(line.strip())
+        if header:
+            total = int(header.group(1))
             continue
         track = _parse_playlist_track_line(line)
         if track is not None:
@@ -1107,15 +1110,19 @@ def get_all_playlist_tracks(playlist_name: str) -> tuple[bool, Any]:
     success, tracks, total = get_playlist_tracks_page(playlist_name, 0, _PLAYLIST_PAGE_SIZE)
     if not success:
         return False, tracks
-    while len(tracks) < total:
+    # Advance by the page size, not by the rows returned: the per-track fallback
+    # skips a track it cannot read, so a page can hold fewer rows than it covers,
+    # and stepping by len(tracks) would read the same tracks twice. `total` is
+    # re-read each time, so a playlist that shrinks ends the loop.
+    position = _PLAYLIST_PAGE_SIZE
+    while position < total:
         success, page, total = get_playlist_tracks_page(
-            playlist_name, len(tracks), _PLAYLIST_PAGE_SIZE
+            playlist_name, position, _PLAYLIST_PAGE_SIZE
         )
         if not success:
             return False, page
-        if not page:
-            break  # the playlist shrank under us; return what was read
         tracks.extend(page)
+        position += _PLAYLIST_PAGE_SIZE
     return True, tracks
 
 
@@ -1153,7 +1160,8 @@ def get_playlist_tracks_matching(
         )
         if not success:
             return False, page, None
-        position += len(page)
+        # Step by the page size, not the rows returned (see get_all_playlist_tracks).
+        position += _PLAYLIST_PAGE_SIZE
         for track in page:
             if not predicate(track):
                 continue
@@ -1164,7 +1172,7 @@ def get_playlist_tracks_matching(
                 # A match beyond the page we were asked for: more exist.
                 return True, collected, None
             collected.append(track)
-        if not page or position >= total:
+        if position >= total:
             return True, collected, skipped + len(collected)
         if limit > 0 and len(collected) >= limit:
             # Page limit reached; the rest of the playlist is unread.
