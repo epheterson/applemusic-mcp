@@ -836,6 +836,8 @@ def _clamp_track_limit(limit: int) -> Optional[int]:
 
 _BAD_OFFSET = "offset must be an integer"
 
+_PLAYLIST_CHANGED = "The playlist changed while it was being read; please try again."
+
 # Pass as `limit` to get_playlist_tracks_page() to read from `offset` to the end of
 # the playlist (still a page at a time). Within what AppleScript treats as an integer.
 ALL_TRACKS = 2**31 - 1
@@ -1107,11 +1109,16 @@ def get_playlist_tracks_page(
     success, tracks, total = _read_playlist_tracks_page(
         playlist_name, safe_offset, min(safe_limit, _PLAYLIST_PAGE_SIZE)
     )
+    first_total = total
     position = safe_offset + _PLAYLIST_PAGE_SIZE
     remaining = safe_limit - _PLAYLIST_PAGE_SIZE
     while success and remaining > 0 and position < total:
         step = min(remaining, _PLAYLIST_PAGE_SIZE)
         success, page, total = _read_playlist_tracks_page(playlist_name, position, step)
+        if success and total != first_total:
+            # Tracks were added or removed between pages, so this page no longer
+            # lines up with the ones before it. Fail rather than splice two states.
+            return False, _PLAYLIST_CHANGED, 0
         if success:
             tracks.extend(page)
         else:
@@ -1172,7 +1179,7 @@ def get_all_playlist_tracks(playlist_name: str) -> tuple[bool, Any]:
             # Tracks were added or removed between pages, so later pages no longer
             # line up with earlier ones. Fail rather than hand back (or copy) a
             # playlist stitched together from two different states.
-            return False, "The playlist changed while it was being read; please try again."
+            return False, _PLAYLIST_CHANGED
         tracks.extend(page)
         position += _PLAYLIST_PAGE_SIZE
     return True, tracks
