@@ -3337,6 +3337,7 @@ def _playlist_tracks(
     """Internal: Get playlist tracks."""
     start_time = time.time()
     query_stats = {"cache_hits": 0, "cache_misses": 0, "api_calls": 0}
+    offset = max(0, offset)  # a negative offset would slice from the end and mislabel the page
 
     # Resolve playlist parameter
     resolved: ResolvedPlaylist = _resolve_playlist(playlist)
@@ -3571,7 +3572,11 @@ def _playlist_tracks(
                 "playlist_query",
                 {
                     "playlist": resolved.applescript_name,
-                    "track_count": total_count or 0,
+                    # Unknown (None) when a filtered read stopped at its limit: log the
+                    # matches seen so far, a lower bound, not a misleading 0.
+                    "track_count": (
+                        total_count if total_count is not None else offset + len(track_data)
+                    ),
                     "duration_sec": round(elapsed, 2),
                     "cache_hits": query_stats["cache_hits"],
                     "cache_misses": query_stats["cache_misses"],
@@ -3627,14 +3632,16 @@ def _playlist_tracks(
             if not all_tracks:
                 return "Playlist is empty"
 
+            total_count = true_total if true_total is not None else len(all_tracks)
+            if total_count and offset > total_count:
+                return f"Offset {offset} exceeds {total_count} items"
+
             track_data = [extract_track_data(t, full) for t in all_tracks]
 
             # Apply pagination locally (skip offset, take limit)
             if offset > 0:
                 track_data = track_data[offset:]
             track_data = track_data[:limit]
-
-            total_count = true_total if true_total is not None else len(all_tracks)
 
             safe_id = resolved.api_id.replace(".", "_")
             result = format_output(
