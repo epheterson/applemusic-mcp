@@ -3568,8 +3568,9 @@ def _playlist_tracks(
         # An unfiltered window spans `limit` positions even if a track in it was
         # unreadable and left out; a filtered one counts matches, which are rows.
         covered = None
-        if not filter and limit > 0 and total_count is not None:
-            covered = min(limit, max(0, total_count - offset))
+        if not filter and total_count is not None:
+            to_end = max(0, total_count - offset)
+            covered = min(limit, to_end) if limit > 0 else to_end  # limit=0 reads to the end
         result += _more_tracks_hint(format, len(track_data), offset, total_count, covered)
 
         # Add timing and stats
