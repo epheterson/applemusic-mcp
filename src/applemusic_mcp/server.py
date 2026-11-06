@@ -9980,10 +9980,13 @@ def _playlist_delete(playlist_name: str) -> str:
     # Get track count before deletion for audit log
     track_count = 0
     track_names = []
-    tracks_success, tracks = asc.get_playlist_tracks(playlist_name)
+    # Only the first 20 names go in the undo info, so read one page of 20 and take
+    # the real size from the same call. Counting the tracks it returned would cap
+    # the logged count at the page size (it used to cap it at 500).
+    tracks_success, tracks, total_tracks = asc.get_playlist_tracks_page(playlist_name, 0, 20)
     if tracks_success and isinstance(tracks, list):
-        track_count = len(tracks)
-        track_names = [f"{t.get('name', '')} - {t.get('artist', '')}" for t in tracks[:20]]
+        track_count = total_tracks
+        track_names = [f"{t.get('name', '')} - {t.get('artist', '')}" for t in tracks]
 
     success, result = asc.delete_playlist(playlist_name)
     if success:
