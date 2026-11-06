@@ -691,11 +691,90 @@ def test_get_all_playlist_tracks_reports_a_failing_page(monkeypatch):
 
 
 def test_get_all_playlist_tracks_stops_if_the_playlist_shrinks(monkeypatch):
-    """A page that comes back empty ends the read instead of looping forever."""
-    seq = Seq([(True, _page_output(1200, 0, 500)), (True, "total:1200\n")])
+    """The total is re-read on every page, so a playlist that shrinks mid-read
+    ends the loop instead of running past its end."""
+    seq = Seq([(True, _page_output(1200, 0, 500)), (True, "total:500\n")])
     setrun(monkeypatch, seq)
     ok, tracks = asc.get_all_playlist_tracks("PL")
     assert ok and len(tracks) == 500 and len(seq.calls) == 2
+
+
+def test_get_all_playlist_tracks_does_not_re_read_after_an_unreadable_track(monkeypatch):
+    """The per-track fallback skips a track it cannot read, so a page can hold
+    fewer rows than it covers. The next page must start where the last one
+    ended, not at the row count, or the overlap comes back twice (and a copy
+    adds each duplicate to the new playlist)."""
+    short_page = "total:1000\n" + _track_lines(0, 499)  # row 499 was unreadable
+    seq = Seq([(True, short_page), (True, _page_output(1000, 500, 500))])
+    setrun(monkeypatch, seq)
+    ok, tracks = asc.get_all_playlist_tracks("PL")
+
+    ids = [t["id"] for t in tracks]
+    assert ok and len(ids) == len(set(ids)) == 999
+    assert "ID499" not in ids
+    assert "set startPos to 500 + 1" in seq.calls[1]
+
+
+def test_get_all_playlist_tracks_keeps_going_past_a_page_of_unreadable_tracks(monkeypatch):
+    """An all-unreadable page comes back empty with the playlist still longer;
+    the read must carry on to the pages after it."""
+    seq = Seq(
+        [
+            (True, _page_output(1200, 0, 500)),
+            (True, "total:1200\n"),
+            (True, _page_output(1200, 1000, 200)),
+        ]
+    )
+    setrun(monkeypatch, seq)
+    ok, tracks = asc.get_all_playlist_tracks("PL")
+
+    assert ok and len(tracks) == 700
+    assert len(seq.calls) == 3
+    assert "set startPos to 1000 + 1" in seq.calls[2]
+
+
+def test_get_playlist_tracks_page_keeps_a_track_titled_like_the_header(monkeypatch):
+    """Track titles are untrusted text. One that starts with "total:" is a track
+    row, not the header, and must not be swallowed (or hide a track from a copy)."""
+    output = "total:3\n" + "total: 5|||Ar|||Al|||60|||G|||2020|||IDX\n" + _track_lines(1, 2)
+    setrun(monkeypatch, const(True, output))
+    ok, tracks, total = asc.get_playlist_tracks_page("PL", 0, 10)
+
+    assert ok and total == 3
+    assert [t["id"] for t in tracks] == ["IDX", "ID1", "ID2"]
+    assert tracks[0]["name"] == "total: 5"
+
+
+def test_get_playlist_tracks_page_ignores_a_malformed_total_line(monkeypatch):
+    """Only a whole `total:<digits>` line is the header; anything else is data."""
+    setrun(monkeypatch, const(True, "total:abc\n" + _track_lines(0, 2)))
+    ok, tracks, total = asc.get_playlist_tracks_page("PL", 0, 10)
+    assert ok and len(tracks) == 2 and total == 2  # lower bound, no header found
+
+
+def test_get_playlist_tracks_matching_does_not_re_read_after_an_unreadable_track(monkeypatch):
+    """Same stepping rule for a filtered read: no track is matched twice."""
+    short_page = "total:1000\n" + _track_lines(0, 499)
+    seq = Seq([(True, short_page), (True, _page_output(1000, 500, 500))])
+    setrun(monkeypatch, seq)
+    ok, matches, total = asc.get_playlist_tracks_matching("PL", lambda t: True, 0, 0)
+
+    ids = [t["id"] for t in matches]
+    assert ok and len(ids) == len(set(ids)) == 999 and total == 999
+    assert "set startPos to 500 + 1" in seq.calls[1]
+
+
+def test_get_playlist_tracks_matching_keeps_going_past_an_empty_page(monkeypatch):
+    seq = Seq(
+        [
+            (True, _page_output(1200, 0, 500)),
+            (True, "total:1200\n"),
+            (True, _page_output(1200, 1000, 200)),
+        ]
+    )
+    setrun(monkeypatch, seq)
+    ok, matches, total = asc.get_playlist_tracks_matching("PL", lambda t: True, 0, 0)
+    assert ok and len(matches) == 700 and total == 700
 
 
 def _even(track):
