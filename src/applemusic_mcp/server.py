@@ -3185,7 +3185,12 @@ def _playlist_list(
 ) -> str:
     """Internal: Get playlists, optionally narrowed by name (loose match) and paged.
 
-    limit=0 returns everything from offset onward."""
+    limit=0 returns everything from offset onward. Paging metadata (the
+    "a-b of N" range) appears only in text output; json and csv hold just the
+    returned page.
+    """
+    if offset < 0:
+        return f"Offset must be 0 or greater, got {offset}"
     playlist_data = []
 
     # Try AppleScript first (local, instant, no auth required)
