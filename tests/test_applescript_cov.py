@@ -575,7 +575,9 @@ def test_get_playlist_tracks_slow_offsets_the_range(monkeypatch):
 
     assert "set startPos to 10 + 1" in script
     assert "set maxTracks to 15" in script
-    assert "repeat with i from startPos to maxTracks" in script
+    assert "set pageTracks to (tracks startPos thru maxTracks of targetPlaylist) as list" in script
+    assert "repeat with i from 1 to (maxTracks - startPos + 1)" in script
+    assert "allTracks" not in script, "the whole playlist must not be loaded for one page"
 
 
 @pytest.mark.parametrize("fetch", ["_get_playlist_tracks_bulk", "_get_playlist_tracks_slow"])
@@ -690,13 +692,16 @@ def test_get_all_playlist_tracks_reports_a_failing_page(monkeypatch):
     assert asc.get_all_playlist_tracks("PL") == (False, timeout)
 
 
-def test_get_all_playlist_tracks_stops_if_the_playlist_shrinks(monkeypatch):
-    """The total is re-read on every page, so a playlist that shrinks mid-read
-    ends the loop instead of running past its end."""
+def test_get_all_playlist_tracks_fails_if_the_playlist_changes_between_pages(monkeypatch):
+    """Tracks added or removed between pages shift every later page, so the read
+    fails instead of handing back (or copying) a playlist stitched together from
+    two different states."""
     seq = Seq([(True, _page_output(1200, 0, 500)), (True, "total:500\n")])
     setrun(monkeypatch, seq)
-    ok, tracks = asc.get_all_playlist_tracks("PL")
-    assert ok and len(tracks) == 500 and len(seq.calls) == 2
+    ok, message = asc.get_all_playlist_tracks("PL")
+
+    assert ok is False and "changed while it was being read" in message
+    assert len(seq.calls) == 2
 
 
 def test_get_all_playlist_tracks_does_not_re_read_after_an_unreadable_track(monkeypatch):
@@ -775,6 +780,61 @@ def test_get_playlist_tracks_matching_keeps_going_past_an_empty_page(monkeypatch
     setrun(monkeypatch, seq)
     ok, matches, total = asc.get_playlist_tracks_matching("PL", lambda t: True, 0, 0)
     assert ok and len(matches) == 700 and total == 700
+
+
+def test_get_playlist_tracks_page_only_trusts_the_first_line_as_the_header(monkeypatch):
+    """A title with an embedded newline can put a `total:<N>` line of its own in
+    the middle of the output. Only the script's first line is the header, so it
+    cannot spoof the playlist's size."""
+    output = "total:3\nA\ntotal:99\n" + _track_lines(0, 2)
+    setrun(monkeypatch, const(True, output))
+    ok, tracks, total = asc.get_playlist_tracks_page("PL", 0, 10)
+
+    assert ok and total == 3
+    assert [t["id"] for t in tracks] == ["ID0", "ID1"]
+
+
+def test_get_playlist_tracks_page_reads_a_long_range_a_page_at_a_time(monkeypatch):
+    """limit=1200 is three short Music.app calls, not one that can hit the 30s
+    osascript timeout, and the tracks come back in order."""
+    seq = Seq(
+        [
+            (True, _page_output(2000, 100, 500)),
+            (True, _page_output(2000, 600, 500)),
+            (True, _page_output(2000, 1100, 200)),
+        ]
+    )
+    setrun(monkeypatch, seq)
+    ok, tracks, total = asc.get_playlist_tracks_page("PL", 100, 1200)
+
+    assert ok and total == 2000
+    assert [t["id"] for t in tracks] == [f"ID{i}" for i in range(100, 1300)]
+    assert len(seq.calls) == 3
+    assert "set maxTracks to 600" in seq.calls[0]
+    assert "set startPos to 600 + 1" in seq.calls[1] and "set maxTracks to 1100" in seq.calls[1]
+    assert "set startPos to 1100 + 1" in seq.calls[2] and "set maxTracks to 1300" in seq.calls[2]
+
+
+def test_get_playlist_tracks_page_long_range_stops_at_the_end_of_the_playlist(monkeypatch):
+    seq = Seq([(True, _page_output(700, 0, 500)), (True, _page_output(700, 500, 200))])
+    setrun(monkeypatch, seq)
+    ok, tracks, total = asc.get_playlist_tracks_page("PL", 0, 5000)
+    assert ok and len(tracks) == 700 and total == 700
+    assert len(seq.calls) == 2, "must not keep asking past the last track"
+
+
+def test_get_playlist_tracks_page_short_range_is_one_call(monkeypatch):
+    seq = Seq([(True, _page_output(2000, 0, 500))])
+    setrun(monkeypatch, seq)
+    ok, tracks, total = asc.get_playlist_tracks_page("PL", 0, 500)
+    assert ok and len(tracks) == 500 and len(seq.calls) == 1
+
+
+def test_get_playlist_tracks_page_long_range_reports_a_failing_chunk(monkeypatch):
+    timeout = "AppleScript timed out after 30 seconds"
+    seq = Seq([(True, _page_output(2000, 0, 500)), (False, timeout)])
+    setrun(monkeypatch, seq)
+    assert asc.get_playlist_tracks_page("PL", 0, 1200) == (False, timeout, 0)
 
 
 def _even(track):
