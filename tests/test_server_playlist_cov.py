@@ -5951,6 +5951,28 @@ class TestPlaylistAddDryRun:
         assert "DRY RUN" in result
         assert "nothing was added" in result
 
+    def test_empty_playlist_is_not_reported_unreadable(self, monkeypatch):
+        self._stub(
+            monkeypatch,
+            existing=[],
+            song={"id": "111", "attributes": {"name": "Yesterday", "artistName": "The Beatles"}},
+        )
+        result = server.playlist(
+            action="add", playlist="My Playlist", track="Yesterday", dry_run=True, auto_add=True
+        )
+        assert "couldn't read" not in result
+
+    def test_unreadable_playlist_is_noted_in_the_preview(self, monkeypatch):
+        self._stub(
+            monkeypatch,
+            song={"id": "111", "attributes": {"name": "Yesterday", "artistName": "The Beatles"}},
+        )
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: None)
+        result = server.playlist(
+            action="add", playlist="My Playlist", track="Yesterday", dry_run=True, auto_add=True
+        )
+        assert "couldn't read" in result
+
     def test_reports_duplicates_against_the_real_playlist(self, monkeypatch):
         self._stub(
             monkeypatch,
@@ -6371,6 +6393,30 @@ class TestAddReportsWhatLanded:
         )
         assert "Added 1 track(s)" in result
         assert "NOT added" not in result
+
+    def test_unreadable_playlist_on_an_expired_session_does_not_suggest_retrying(
+        self, monkeypatch
+    ):
+        """allow_duplicates=True fails the same way on an expired session, and adds
+        a write during a rate limit: the hint belongs only to a plain read failure."""
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: "p.1")
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: None)
+        for status, msg in (
+            ("expired", server._SESSION_EXPIRED_MSG),
+            ("throttled", server._SESSION_THROTTLED_MSG),
+        ):
+            monkeypatch.setattr(server.amp_api, "session_status", lambda s=status: s)
+            result = server._playlist_add_api("p.1", "1111111111", "", auto_add=True)
+            assert result == msg
+
+    def test_failed_reread_after_add_says_it_could_not_confirm(self, monkeypatch):
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: "p.1")
+        monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
+        reads = iter([[], None])  # pre-add contents, then a failed re-read
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: next(reads))
+        result = server._playlist_add_api("p.1", "1111111111", "", auto_add=True)
+        assert "Added 1 track(s)" in result
+        assert "couldn't confirm" in result.lower()
 
     def test_unreadable_playlist_on_remove_is_not_reported_missing(self, monkeypatch):
         monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: "p.1")

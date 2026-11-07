@@ -6,17 +6,20 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 import sys
+import re
 import responses
 
 from applemusic_mcp import server
 
 
-@pytest.fixture(autouse=True)
-def _empty_playlist_contents(monkeypatch):
-    """amp_api.get_tracks reads the playlist before an API add or remove. Unstubbed,
-    the network guard makes it a failed read (None), which now stops the add.
-    Default to an empty playlist; tests about the contents stub their own."""
-    monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+def _empty_amp_playlist_reads():
+    """The API add/remove read the playlist's tracks first; answer those reads
+    with an empty playlist."""
+    responses.add(
+        responses.GET,
+        re.compile(r"https://amp-api\.music\.apple\.com/v1/me/library/playlists/[^/]+/tracks"),
+        json={"data": []},
+    )
 
 
 class TestGetTokenExpirationWarning:
@@ -1900,6 +1903,7 @@ class TestUserJourneyAPIOnly:
     ):
         """Getting started: search, list playlists, get tracks, add to playlist."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        _empty_amp_playlist_reads()
         self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
 
         # 1. Search catalog
@@ -2223,6 +2227,7 @@ class TestUserJourneyFuzzyMatching:
     ):
         """User workflow with fuzzy-named playlist: get tracks, add, remove."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        _empty_amp_playlist_reads()
         self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
 
         # Playlist has special characters

@@ -40,7 +40,8 @@ logger = logging.getLogger(__name__)
 #
 #   1. The reads below swallow non-200 and return empty, so a throttle looks
 #      exactly like "no such song". Callers that would otherwise report a
-#      false "not found" ask ``throttled_recently()`` instead.
+#      false "not found" ask ``throttled_recently()`` instead. (``get_tracks``
+#      is the exception: it returns None on a failed read.)
 #   2. Probing to find out (``session_status()``) costs a REQUEST, and every
 #      request inside a rolling window pushes the recovery further out. So a
 #      known-recent 429 short-circuits the probe rather than spending one.

@@ -1618,11 +1618,13 @@ def _playlist_add_api(
     if not allow_duplicates:
         current = amp_api.get_tracks(pid)
         if current is None:
-            # Unknown contents: adding anyway could stack a duplicate.
-            return (
-                _unreadable_playlist_msg(playlist)
-                + " To add without checking for duplicates, pass allow_duplicates=True."
-            )
+            # Unknown contents: adding anyway could stack a duplicate. The bypass
+            # only helps a one-off failure; on an expired session or a throttle
+            # it would fail the same way, or add a write to a rate limit.
+            msg = _unreadable_playlist_msg(playlist)
+            if msg.startswith("Error: Couldn't read"):
+                msg += " To add without checking for duplicates, pass allow_duplicates=True."
+            return msg
         for t in current:
             if t.get("catalog_id"):
                 existing_ids.add(str(t["catalog_id"]))
@@ -1747,8 +1749,9 @@ def _playlist_add_api(
     # a failure presenting as success. Re-read and say what actually landed.
     # (One extra GET per add, not per track.)
     dropped: list[str] = []
-    after = {str(t["catalog_id"]) for t in amp_api.get_tracks(pid) or [] if t.get("catalog_id")}
-    if after:  # empty means the re-read itself failed; don't cry wolf on that
+    reread = amp_api.get_tracks(pid)
+    after = {str(t["catalog_id"]) for t in reread or [] if t.get("catalog_id")}
+    if after:  # empty can be propagation lag; don't cry wolf on that
         for it, nm in zip(items, added_names):
             # Only catalog ids are checkable: a (id, "library-songs") item is a
             # LIBRARY id, which never equals the catalogId the re-read reports, so
@@ -1772,6 +1775,8 @@ def _playlist_add_api(
             "recording), not a bad id, and it is silent unless checked:\n"
             + "\n".join(f"  ✗ {n}" for n in dropped)
         )
+    if reread is None:
+        out += "\n\n(Couldn't confirm what landed: re-reading the playlist failed.)"
     if fuzzy:
         out += f"\n{_format_fuzzy_match(fuzzy)}"
     if skipped:
@@ -4195,8 +4200,9 @@ def _playlist_add_preview(
     existing_names: set[str] = set()
     dup_known = False
     if resolved.api_id:
-        for t in amp_api.get_tracks(resolved.api_id) or []:
-            dup_known = True
+        current = amp_api.get_tracks(resolved.api_id)
+        dup_known = current is not None  # [] is an empty playlist, None a failed read
+        for t in current or []:
             if t.get("catalog_id"):
                 existing_ids.add(str(t["catalog_id"]))
             if t.get("name"):
