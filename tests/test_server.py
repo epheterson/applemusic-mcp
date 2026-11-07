@@ -345,6 +345,7 @@ class TestAddToPlaylist:
             "https://amp-api.music.apple.com/v1/me/library/playlists/p.test123/tracks",
             status=204,
         )
+        _empty_amp_playlist_reads()  # the api engine reads the playlist before adding
 
         result = server.playlist(
             action="add", playlist="p.test123", track="i.song1, i.song2, i.song3"
