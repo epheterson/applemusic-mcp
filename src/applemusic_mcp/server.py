@@ -3224,7 +3224,7 @@ def _playlist_list(
                 "playlists",
                 total_count=total_count,
                 offset=offset,
-            )
+            ) + _more_items_hint(format, len(playlist_data), offset, total_count, noun="playlists")
         # AppleScript failed on macOS — surface the actionable error
         # instead of cascading to API and leaking "Developer token not
         # found" when the real cause is Music.app not running or
@@ -3298,7 +3298,7 @@ def _playlist_list(
             "playlists",
             total_count=total_count,
             offset=offset,
-        )
+        ) + _more_items_hint(format, len(playlist_data), offset, total_count, noun="playlists")
 
     except requests.exceptions.RequestException as e:
         return _api_error(e)
@@ -3339,8 +3339,13 @@ def _read_playlist_window(
     )
 
 
-def _more_tracks_hint(
-    format: str, shown: int, offset: int, total: Optional[int], covered: Optional[int] = None
+def _more_items_hint(
+    format: str,
+    shown: int,
+    offset: int,
+    total: Optional[int],
+    covered: Optional[int] = None,
+    noun: str = "tracks",
 ) -> str:
     """Tell the caller that a listing stopped short, and how to get the rest.
 
@@ -3355,12 +3360,12 @@ def _more_tracks_hint(
     next_offset = offset + (shown if covered is None else covered)
     if total is None:
         return (
-            f"\n(More matching tracks may follow: pass offset={next_offset} for the next "
+            f"\n(More matching {noun} may follow: pass offset={next_offset} for the next "
             "page, or limit=0 for all of them.)"
         )
     if next_offset < total:
         return (
-            f"\n({total - next_offset} more tracks: pass offset={next_offset} for the next "
+            f"\n({total - next_offset} more {noun}: pass offset={next_offset} for the next "
             "page, or limit=0 for all of them.)"
         )
     return ""
@@ -3608,7 +3613,7 @@ def _playlist_tracks(
         if not filter and total_count is not None:
             to_end = max(0, total_count - offset)
             covered = min(limit, to_end) if limit > 0 else to_end  # limit=0 reads to the end
-        result += _more_tracks_hint(format, len(track_data), offset, total_count, covered)
+        result += _more_items_hint(format, len(track_data), offset, total_count, covered)
 
         # Add timing and stats
         elapsed = time.time() - start_time
@@ -3701,7 +3706,7 @@ def _playlist_tracks(
                 total_count=total_count,
                 offset=offset,
             )
-            result += _more_tracks_hint(format, len(track_data), offset, total_count)
+            result += _more_items_hint(format, len(track_data), offset, total_count)
 
             # Add stats line
             elapsed = time.time() - start_time
@@ -3760,7 +3765,7 @@ def _playlist_tracks(
             total_count=total_count,
             offset=offset,
         )
-        result += _more_tracks_hint(format, len(track_data), offset, total_count)
+        result += _more_items_hint(format, len(track_data), offset, total_count)
 
         # Add stats line
         elapsed = time.time() - start_time

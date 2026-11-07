@@ -2673,6 +2673,21 @@ class TestPlaylistListPaging:
         assert "=== 250 items ===" in result
         assert "Playlist 249 " in result
 
+    def test_tool_default_page_says_how_to_reach_the_rest(self, monkeypatch):
+        """Through the tool, `list` inherits the shared 500 default, so a longer
+        library gets one page and the same next-page note as `tracks`."""
+        self._stub_playlists(monkeypatch, 620)
+        result = server.playlist(action="list")
+        assert "=== 1-500 of 620 items ===" in result
+        assert "120 more playlists: pass offset=500" in result
+        assert "Playlist 500 " not in result
+
+    def test_last_page_has_no_more_note(self, monkeypatch):
+        self._stub_playlists(monkeypatch, 620)
+        result = server.playlist(action="list", offset=500)
+        assert "=== 501-620 of 620 items ===" in result
+        assert "more playlists" not in result
+
     def test_limit_and_offset_page_the_list(self, monkeypatch):
         self._stub_playlists(monkeypatch, 250)
         result = server._playlist_list(limit=50, offset=100)

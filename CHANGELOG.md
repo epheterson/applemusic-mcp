@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.0] - 2026-11-06
+
+Long playlists and big libraries are no longer silently cut off. Fixes from [@melodysium](https://github.com/melodysium) ([#78](https://github.com/epheterson/applemusic-mcp/pull/78), [#79](https://github.com/epheterson/applemusic-mcp/pull/79)).
+
+### Fixed
+
+| What | Before | Now |
+|---|---|---|
+| `playlist tracks` on a long playlist (macOS) | Stopped at 500 tracks, said the playlist had 500, `offset` couldn't go further | Real total (`1-500 of 2253 tracks`), `offset` pages to the end, a note says how to get the rest |
+| `playlist list` with many playlists | Text output stopped at 200 with no notice | Every playlist, with `limit`/`offset` paging |
+| Other text listings over 200 items (albums, artists) | Stopped at 200 with no notice | Every item |
+| `playlist copy` | Copied only the first 500 tracks | Copies every track, and fails if the playlist changes mid-read |
+| `playlist delete` audit log | Logged at most 500 tracks | Logs the real count |
+| `filter` on `playlist tracks` (macOS) | Searched only the first 500 tracks | Searches the whole playlist |
+
+- A track titled `total: …` can't hide itself from a listing or a copy.
+- Reading a big page or a whole playlist goes 500 tracks per Music.app call, so it stays under the AppleScript timeout.
+
+### Changed
+
+- **`playlist` now defaults to `limit=500`, on every OS.** `limit=0` means every track or playlist. macOS already returned 500 tracks by default; on Windows and Linux a call with no `limit` used to return the whole playlist. In text output the header and a closing note show when there's more. JSON and CSV hold just the page.
+- **`export` follows `limit`.** Pass `limit=0` to export a whole playlist.
+
 ## [0.21.0] - 2026-10-22
 
 Choose what the server can reach. You set this in the MCP client config, and the assistant can't change it. **Leave `--level` off and nothing changes from 0.20.3.**
