@@ -446,6 +446,41 @@ def test_get_tracks_non_200_breaks_empty():
     assert amp_api.get_tracks("p.1") == []
 
 
+def _first_page_then(**second):
+    responses.add(
+        responses.GET,
+        f"{amp_api.AMP}/me/library/playlists/p.1/tracks",
+        match=[responses.matchers.query_param_matcher({"limit": "100"})],
+        json={
+            "data": [{"id": "i.REL1", "attributes": {"name": "Song1", "artistName": "A"}}],
+            "next": "/v1/me/library/playlists/p.1/tracks?offset=100",
+        },
+        status=200,
+    )
+    responses.add(
+        responses.GET,
+        f"{amp_api.AMP}/me/library/playlists/p.1/tracks",
+        match=[responses.matchers.query_param_matcher({"offset": "100"})],
+        **second,
+    )
+
+
+@responses.activate
+def test_get_tracks_later_page_failure_is_not_a_partial_list():
+    """A throttled second page used to return page one as if it were the whole
+    playlist: add then reported tracks appended at the end as dropped, and the
+    duplicate check missed them. A failed read is now empty, which every caller
+    already treats as "couldn't read"."""
+    _first_page_then(status=429)
+    assert amp_api.get_tracks("p.1") == []
+
+
+@responses.activate
+def test_get_tracks_later_page_exception_is_not_a_partial_list():
+    _first_page_then(body=requests.exceptions.ReadTimeout("slow"))
+    assert amp_api.get_tracks("p.1") == []
+
+
 @responses.activate
 def test_get_tracks_exception_swallowed():
     responses.add(

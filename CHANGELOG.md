@@ -22,6 +22,7 @@ Long playlists and big libraries are no longer silently cut off. Fixes from [@me
 
 - A track titled `total: …` can't hide itself from a listing or a copy.
 - Reading a big page or a whole playlist goes 500 tracks per Music.app call, so it stays under the AppleScript timeout.
+- **Windows/Linux `add` and `remove`:** if Apple throttled a later page while reading a playlist, the read returned only the earlier pages as if they were the whole playlist. `add` could then report tracks that did land as dropped and miss duplicates, and `remove` could say a track wasn't there. A failed read now counts as a failed read.
 
 ### Changed
 

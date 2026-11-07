@@ -255,7 +255,11 @@ def resolve_playlist_id(name: str, api_created_only: bool = True) -> Optional[st
 
 
 def get_tracks(playlist_id: str) -> list[dict]:
-    """Tracks in a playlist: [{relationship_id, name, artist, catalog_id}]. Paginates."""
+    """Tracks in a playlist: [{relationship_id, name, artist, catalog_id}]. Paginates.
+
+    All or nothing: a failure on any page returns [], never the pages read so
+    far. Callers treat [] as "couldn't read"; a partial list would look like the
+    whole playlist and make add report landed tracks as dropped."""
     out: list[dict] = []
     url: Optional[str] = f"{AMP}/me/library/playlists/{playlist_id}/tracks?limit=100"
     try:
@@ -264,7 +268,7 @@ def get_tracks(playlist_id: str) -> list[dict]:
             r = requests.get(url, headers=h, timeout=TIMEOUT)
             note_status(r.status_code)
             if r.status_code != 200:
-                break
+                return []
             data = r.json()
             for t in data.get("data", []):
                 a = t.get("attributes", {})
@@ -280,7 +284,7 @@ def get_tracks(playlist_id: str) -> list[dict]:
             nxt = data.get("next")
             url = ("https://amp-api.music.apple.com" + nxt) if nxt else None
     except Exception:
-        pass
+        return []
     return out
 
 
