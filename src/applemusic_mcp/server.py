@@ -16,7 +16,7 @@ import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import requests
 
@@ -780,9 +780,14 @@ def format_output(
                 result_parts.append(f"=== {len(items)} tracks ===\n")
             result_parts.append("\n".join(formatted_lines))
         else:
-            # Non-track data (albums, artists) - simple format
-            result_parts.append(f"=== {len(items)} items ===\n")
-            for item in items[:200]:
+            # Non-track data (albums, artists, playlists) - simple format
+            if total_count > 0 and total_count > len(items):
+                start = offset + 1
+                end = offset + len(items)
+                result_parts.append(f"=== {start}-{end} of {total_count} items ===\n")
+            else:
+                result_parts.append(f"=== {len(items)} items ===\n")
+            for item in items:
                 if "artist" in item and "name" in item:
                     result_parts.append(
                         f"{item['name']} - {item.get('artist', '')} {item.get('id', '')}"
@@ -1429,6 +1434,16 @@ def _resolve_failure_msg(not_found_msg: str) -> str:
     return f"Error: {not_found_msg}"
 
 
+def _unreadable_playlist_msg(playlist: str) -> str:
+    """amp_api.get_tracks returned None: a page failed, so the contents are unknown."""
+    st = amp_api.session_status()
+    if st == "expired":
+        return _SESSION_EXPIRED_MSG
+    if st == "throttled":
+        return _SESSION_THROTTLED_MSG
+    return f"Error: Couldn't read the tracks of {playlist!r} from Apple Music; try again."
+
+
 def _safe_single_match(matches: list[dict], term: str) -> tuple[dict, int]:
     """Pick exactly ONE match for a destructive op — an exact (case-insensitive)
     title match if present, else the first candidate. Returns (chosen, others).
@@ -1447,6 +1462,8 @@ def _playlist_remove_api(playlist: str, track: str, artist: str = "") -> str:
     if not pid:
         return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
     tracks = amp_api.get_tracks(pid)
+    if tracks is None:
+        return _unreadable_playlist_msg(playlist)
     tl = track.lower()
     al = artist.lower()
     matches = [
@@ -1599,7 +1616,16 @@ def _playlist_add_api(
     existing_ids: set = set()
     existing_names: set = set()
     if not allow_duplicates:
-        for t in amp_api.get_tracks(pid):
+        current = amp_api.get_tracks(pid)
+        if current is None:
+            # Unknown contents: adding anyway could stack a duplicate. The bypass
+            # only helps a one-off failure; on an expired session or a throttle
+            # it would fail the same way, or add a write to a rate limit.
+            msg = _unreadable_playlist_msg(playlist)
+            if msg.startswith("Error: Couldn't read"):
+                msg += " To add without checking for duplicates, pass allow_duplicates=True."
+            return msg
+        for t in current:
             if t.get("catalog_id"):
                 existing_ids.add(str(t["catalog_id"]))
             if t.get("name"):
@@ -1723,8 +1749,9 @@ def _playlist_add_api(
     # a failure presenting as success. Re-read and say what actually landed.
     # (One extra GET per add, not per track.)
     dropped: list[str] = []
-    after = {str(t["catalog_id"]) for t in amp_api.get_tracks(pid) if t.get("catalog_id")}
-    if after:  # empty means the re-read itself failed; don't cry wolf on that
+    reread = amp_api.get_tracks(pid)
+    after = {str(t["catalog_id"]) for t in reread or [] if t.get("catalog_id")}
+    if after:  # empty can be propagation lag; don't cry wolf on that
         for it, nm in zip(items, added_names):
             # Only catalog ids are checkable: a (id, "library-songs") item is a
             # LIBRARY id, which never equals the catalogId the re-read reports, so
@@ -1748,6 +1775,8 @@ def _playlist_add_api(
             "recording), not a bad id, and it is silent unless checked:\n"
             + "\n".join(f"  ✗ {n}" for n in dropped)
         )
+    if reread is None:
+        out += "\n\n(Couldn't confirm what landed: re-reading the playlist failed.)"
     if fuzzy:
         out += f"\n{_format_fuzzy_match(fuzzy)}"
     if skipped:
@@ -3175,8 +3204,17 @@ def _playlist_list(
     export: str = "none",
     full: bool = False,
     filter: str = "",
+    limit: int = 0,
+    offset: int = 0,
 ) -> str:
-    """Internal: Get all playlists, optionally narrowed by name (loose match)."""
+    """Internal: Get playlists, optionally narrowed by name (loose match) and paged.
+
+    limit=0 returns everything from offset onward. Paging metadata (the
+    "a-b of N" range) appears only in text output; json and csv hold just the
+    returned page.
+    """
+    if offset < 0:
+        return f"Offset must be 0 or greater, got {offset}"
     playlist_data = []
 
     # Try AppleScript first (local, instant, no auth required)
@@ -3199,7 +3237,18 @@ def _playlist_list(
                 playlist_data = [p for p in playlist_data if _loose_contains(filter, p["name"])]
                 if not playlist_data:
                     return f"No playlists matching '{filter}'"
-            return format_output(playlist_data, format, export, full, "playlists")
+            playlist_data, total_count, error = _apply_pagination(playlist_data, limit, offset)
+            if error:
+                return error
+            return format_output(
+                playlist_data,
+                format,
+                export,
+                full,
+                "playlists",
+                total_count=total_count,
+                offset=offset,
+            ) + _more_items_hint(format, len(playlist_data), offset, total_count, noun="playlists")
         # AppleScript failed on macOS — surface the actionable error
         # instead of cascading to API and leaking "Developer token not
         # found" when the real cause is Music.app not running or
@@ -3211,14 +3260,14 @@ def _playlist_list(
     try:
         headers = get_headers()
         all_playlists = []
-        offset = 0
+        api_offset = 0
 
         # Paginate to get all playlists
         while True:
             response = requests.get(
                 f"{BASE_URL}/me/library/playlists",
                 headers=headers,
-                params={"limit": 100, "offset": offset},
+                params={"limit": 100, "offset": api_offset},
                 timeout=REQUEST_TIMEOUT,
             )
             if response.status_code == 404:
@@ -3230,7 +3279,7 @@ def _playlist_list(
             all_playlists.extend(playlists)
             if len(playlists) < 100:
                 break
-            offset += 100
+            api_offset += 100
 
         # Extract playlist data
         for playlist in all_playlists:
@@ -3257,11 +3306,23 @@ def _playlist_list(
             if not playlist_data:
                 return f"No playlists matching '{filter}'"
 
+        playlist_data, total_count, error = _apply_pagination(playlist_data, limit, offset)
+        if error:
+            return error
+
         # Add token warning if text format
         warning = get_token_expiration_warning()
         prefix = f"{warning}\n\n" if warning and format == "text" else ""
 
-        return prefix + format_output(playlist_data, format, export, full, "playlists")
+        return prefix + format_output(
+            playlist_data,
+            format,
+            export,
+            full,
+            "playlists",
+            total_count=total_count,
+            offset=offset,
+        ) + _more_items_hint(format, len(playlist_data), offset, total_count, noun="playlists")
 
     except requests.exceptions.RequestException as e:
         return _api_error(e)
@@ -3269,10 +3330,75 @@ def _playlist_list(
         return str(e)
 
 
+# `playlist(action="tracks")` returns one page of this many tracks unless the
+# caller passes a `limit` (0 means every track). It bounds the response for a
+# playlist with thousands of tracks; the output says when it applies.
+_PLAYLIST_TRACKS_DEFAULT_LIMIT = 500
+
+
+def _read_playlist_window(
+    playlist_name: str,
+    offset: int,
+    limit: int,
+    predicate: Optional[Callable[[dict], bool]] = None,
+) -> tuple[bool, Any, Optional[int]]:
+    """Read the tracks `limit`/`offset` ask for from Music.app, and no others.
+
+    With a `predicate` (the `filter`), pages are read and filtered until `limit`
+    matches are found; `offset` then skips matches. Without one, a positive
+    `limit` reads a single page and `limit=0` reads the rest of the playlist.
+
+    Returns (success, tracks or error string, total). `total` is the number of
+    tracks (matching tracks, with a predicate) in the whole playlist, or None
+    when a filtered read stopped at `limit` before reaching the end.
+    """
+    offset = max(0, offset)
+    if predicate is not None:
+        return asc.get_playlist_tracks_matching(playlist_name, predicate, offset, limit)
+    # limit=0 reads to the end, still a page at a time. The total comes from Music.app,
+    # not from counting the tracks returned: the per-track fallback skips a track it
+    # cannot read, and a count of what came back would undercount the playlist.
+    return asc.get_playlist_tracks_page(
+        playlist_name, offset, limit if limit > 0 else asc.ALL_TRACKS
+    )
+
+
+def _more_items_hint(
+    format: str,
+    shown: int,
+    offset: int,
+    total: Optional[int],
+    covered: Optional[int] = None,
+    noun: str = "tracks",
+) -> str:
+    """Tell the caller that a listing stopped short, and how to get the rest.
+
+    `total` is None when it is unknown because a filtered read stopped at its
+    limit. `covered` is how many playlist positions the read spanned, when that
+    differs from the rows shown (the per-track fallback skips a track it cannot
+    read); the next page starts after the positions covered, not after the rows.
+    Only the text format gets a hint: json and csv stay pure data.
+    """
+    if format != "text" or shown <= 0:
+        return ""
+    next_offset = offset + (shown if covered is None else covered)
+    if total is None:
+        return (
+            f"\n(More matching {noun} may follow: pass offset={next_offset} for the next "
+            "page, or limit=0 for all of them.)"
+        )
+    if next_offset < total:
+        return (
+            f"\n({total - next_offset} more {noun}: pass offset={next_offset} for the next "
+            "page, or limit=0 for all of them.)"
+        )
+    return ""
+
+
 def _playlist_tracks(
     playlist: str = "",
     filter: str = "",
-    limit: int = 0,
+    limit: int = _PLAYLIST_TRACKS_DEFAULT_LIMIT,
     offset: int = 0,
     format: str = "text",
     export: str = "none",
@@ -3282,6 +3408,7 @@ def _playlist_tracks(
     """Internal: Get playlist tracks."""
     start_time = time.time()
     query_stats = {"cache_hits": 0, "cache_misses": 0, "api_calls": 0}
+    offset = max(0, offset)  # a negative offset would slice from the end and mislabel the page
 
     # Resolve playlist parameter
     resolved: ResolvedPlaylist = _resolve_playlist(playlist)
@@ -3300,11 +3427,23 @@ def _playlist_tracks(
     if use_applescript and not use_api:
         if not APPLESCRIPT_AVAILABLE:
             return "Error: AppleScript (playlist_name) requires macOS"
-        success, result = asc.get_playlist_tracks(resolved.applescript_name)
+
+        # Read only the window that was asked for. A listing used to fetch a fixed
+        # 500 tracks and then page through those, so a longer playlist looked like
+        # it ended at 500 and `offset` could not reach the rest.
+        def matches_filter(t: dict) -> bool:
+            return _loose_contains(filter, t["name"]) or _loose_contains(filter, t["artist"])
+
+        predicate = matches_filter if filter else None
+        success, result, total_count = _read_playlist_window(
+            resolved.applescript_name, offset, limit, predicate
+        )
         if not success:
             return f"Error: {_format_applescript_error(str(result), 'list playlist tracks')}"
-        if not result:
+        if total_count == 0 and not filter:
             return "Playlist is empty"
+        if total_count and offset > total_count:
+            return f"Offset {offset} exceeds {total_count} items"
 
         # Format AppleScript results
         track_data = []
@@ -3482,19 +3621,6 @@ def _playlist_tracks(
             except Exception:
                 pass  # API not available - explicit stays "Unknown"
 
-        # Apply filter
-        if filter:
-            track_data = [
-                t
-                for t in track_data
-                if _loose_contains(filter, t["name"]) or _loose_contains(filter, t["artist"])
-            ]
-
-        # Apply pagination
-        track_data, total_count, error = _apply_pagination(track_data, limit, offset)
-        if error:
-            return error
-
         safe_name = "".join(c if c.isalnum() else "_" for c in resolved.applescript_name)
         result = format_output(
             track_data,
@@ -3502,9 +3628,16 @@ def _playlist_tracks(
             export,
             full,
             f"playlist_{safe_name}",
-            total_count=total_count,
+            total_count=total_count or 0,
             offset=offset,
         )
+        # An unfiltered window spans `limit` positions even if a track in it was
+        # unreadable and left out; a filtered one counts matches, which are rows.
+        covered = None
+        if not filter and total_count is not None:
+            to_end = max(0, total_count - offset)
+            covered = min(limit, to_end) if limit > 0 else to_end  # limit=0 reads to the end
+        result += _more_items_hint(format, len(track_data), offset, total_count, covered)
 
         # Add timing and stats
         elapsed = time.time() - start_time
@@ -3516,7 +3649,11 @@ def _playlist_tracks(
                 "playlist_query",
                 {
                     "playlist": resolved.applescript_name,
-                    "track_count": total_count,
+                    # Unknown (None) when a filtered read stopped at its limit: log the
+                    # matches seen so far, a lower bound, not a misleading 0.
+                    "track_count": (
+                        total_count if total_count is not None else offset + len(track_data)
+                    ),
                     "duration_sec": round(elapsed, 2),
                     "cache_hits": query_stats["cache_hits"],
                     "cache_misses": query_stats["cache_misses"],
@@ -3572,14 +3709,16 @@ def _playlist_tracks(
             if not all_tracks:
                 return "Playlist is empty"
 
+            total_count = true_total if true_total is not None else len(all_tracks)
+            if total_count and offset > total_count:
+                return f"Offset {offset} exceeds {total_count} items"
+
             track_data = [extract_track_data(t, full) for t in all_tracks]
 
             # Apply pagination locally (skip offset, take limit)
             if offset > 0:
                 track_data = track_data[offset:]
             track_data = track_data[:limit]
-
-            total_count = true_total if true_total is not None else len(all_tracks)
 
             safe_id = resolved.api_id.replace(".", "_")
             result = format_output(
@@ -3591,11 +3730,15 @@ def _playlist_tracks(
                 total_count=total_count,
                 offset=offset,
             )
+            result += _more_items_hint(format, len(track_data), offset, total_count)
 
             # Add stats line
             elapsed = time.time() - start_time
             stats_line = f"\n\n⏱️ {elapsed:.2f}s | API calls: {query_stats['api_calls']}"
-            return result + stats_line
+            # The fuzzy-match note belongs here too: the default limit now routes
+            # a plain `tracks` call through this path, which used to drop it.
+            fuzzy_info = _format_fuzzy_match(resolved.fuzzy_match)
+            return result + fuzzy_info + stats_line
 
         # Full fetch path (filter specified or no limit)
         api_offset = 0
@@ -3646,6 +3789,7 @@ def _playlist_tracks(
             total_count=total_count,
             offset=offset,
         )
+        result += _more_items_hint(format, len(track_data), offset, total_count)
 
         # Add stats line
         elapsed = time.time() - start_time
@@ -4056,8 +4200,9 @@ def _playlist_add_preview(
     existing_names: set[str] = set()
     dup_known = False
     if resolved.api_id:
-        for t in amp_api.get_tracks(resolved.api_id):
-            dup_known = True
+        current = amp_api.get_tracks(resolved.api_id)
+        dup_known = current is not None  # [] is an empty playlist, None a failed read
+        for t in current or []:
             if t.get("catalog_id"):
                 existing_ids.add(str(t["catalog_id"]))
             if t.get("name"):
@@ -4830,8 +4975,9 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
                 "off macOS — add by track instead."
             )
 
-        # Get tracks from source playlist via AppleScript
-        success, source_tracks = asc.get_playlist_tracks(resolved.applescript_name)
+        # Get every track of the source playlist via AppleScript. This used to read
+        # the first 500 only, so copying a longer playlist silently dropped the rest.
+        success, source_tracks = asc.get_all_playlist_tracks(resolved.applescript_name)
         if not success:
             return f"Error: {_format_applescript_error(str(source_tracks), 'read source playlist')}"
         if not source_tracks:
@@ -5056,7 +5202,7 @@ def playlist(
     new_name: str = "",
     description: str = "",
     filter: str = "",
-    limit: int = 0,
+    limit: int = _PLAYLIST_TRACKS_DEFAULT_LIMIT,
     offset: int = 0,
     format: str = "text",
     export: str = "none",
@@ -5068,11 +5214,11 @@ def playlist(
     auto_add: Optional[bool] = None,
     replace: str = "",
 ) -> str:
-    """Playlist and folder operations. Actions: list, folders (macOS — show the folder tree; folders are NOT in `list`), tracks, search, create, add, copy, move, path (macOS), remove, delete, rename. (move/remove/delete/rename work on every OS — via Music.app on macOS, via the web API on Windows/Linux. Only folders/path are macOS-only.) To find a playlist by name, use action='list' with filter='alice' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', `track` accepts a song NAME, a catalog song id (a numeric id like '1440857781' — pins the EXACT edition, avoiding name/album version mismatches), or a library id; set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own. Note: adding a not-yet-owned catalog track to a Music.app-made playlist is two-step — it's added to the library over the API, then attached locally once iCloud syncs it down (usually seconds). If the sync is slow it may return "added to your library — re-run to attach"; just re-run the same add. Rarely, if the sync stalls past ~20s, Music.app briefly flashes to the foreground as a last-resort sync nudge — expected, not a glitch. To SWAP one track for another, use action='add' with `replace`=<the old track to remove>: it adds the new track, confirms it actually persisted, and only THEN removes the old one — so if the add silently reverts (a Music.app bug), the old track is kept rather than lost."""
+    """Playlist and folder operations. Actions: list, folders (macOS — show the folder tree; folders are NOT in `list`), tracks, search, create, add, copy, move, path (macOS), remove, delete, rename. (move/remove/delete/rename work on every OS — via Music.app on macOS, via the web API on Windows/Linux. Only folders/path are macOS-only.) To find a playlist by name, use action='list' with filter='alice' (loose name match) rather than action='search', which searches the TRACKS inside a given playlist and needs a playlist param. action='tracks' returns one page: limit (default 500; 0 = every track) caps the tracks returned, offset pages through longer playlists, and the text header shows 'start-end of total' with a note when more remain; filter (loose match on track name or artist) is applied across the whole playlist, then paged. Folders support slash-separated paths (e.g. 'Summer/Chill/Deep'). For action='add', `track` accepts a song NAME, a catalog song id (a numeric id like '1440857781' — pins the EXACT edition, avoiding name/album version mismatches), or a library id; set auto_add=True to find tracks not already in the user's library — this is required to add catalog songs the user doesn't own. Note: adding a not-yet-owned catalog track to a Music.app-made playlist is two-step — it's added to the library over the API, then attached locally once iCloud syncs it down (usually seconds). If the sync is slow it may return "added to your library — re-run to attach"; just re-run the same add. Rarely, if the sync stalls past ~20s, Music.app briefly flashes to the foreground as a last-resort sync nudge — expected, not a glitch. To SWAP one track for another, use action='add' with `replace`=<the old track to remove>: it adds the new track, confirms it actually persisted, and only THEN removes the old one — so if the add silently reverts (a Music.app bug), the old track is kept rather than lost."""
     action = action.lower().strip().replace("-", "_")
 
     if action == "list":
-        return _playlist_list(format, export, full, filter)
+        return _playlist_list(format, export, full, filter, limit, offset)
     elif action == "tracks":
         return _playlist_tracks(
             playlist, filter, limit, offset, format, export, full, fetch_explicit
@@ -9919,10 +10065,13 @@ def _playlist_delete(playlist_name: str) -> str:
     # Get track count before deletion for audit log
     track_count = 0
     track_names = []
-    tracks_success, tracks = asc.get_playlist_tracks(playlist_name)
+    # Only the first 20 names go in the undo info, so read one page of 20 and take
+    # the real size from the same call. Counting the tracks it returned would cap
+    # the logged count at the page size (it used to cap it at 500).
+    tracks_success, tracks, total_tracks = asc.get_playlist_tracks_page(playlist_name, 0, 20)
     if tracks_success and isinstance(tracks, list):
-        track_count = len(tracks)
-        track_names = [f"{t.get('name', '')} - {t.get('artist', '')}" for t in tracks[:20]]
+        track_count = total_tracks
+        track_names = [f"{t.get('name', '')} - {t.get('artist', '')}" for t in tracks]
 
     success, result = asc.delete_playlist(playlist_name)
     if success:

@@ -6,9 +6,20 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 import sys
+import re
 import responses
 
 from applemusic_mcp import server
+
+
+def _empty_amp_playlist_reads():
+    """The API add/remove read the playlist's tracks first; answer those reads
+    with an empty playlist."""
+    responses.add(
+        responses.GET,
+        re.compile(r"https://amp-api\.music\.apple\.com/v1/me/library/playlists/[^/]+/tracks"),
+        json={"data": []},
+    )
 
 
 class TestGetTokenExpirationWarning:
@@ -334,6 +345,7 @@ class TestAddToPlaylist:
             "https://amp-api.music.apple.com/v1/me/library/playlists/p.test123/tracks",
             status=204,
         )
+        _empty_amp_playlist_reads()  # the api engine reads the playlist before adding
 
         result = server.playlist(
             action="add", playlist="p.test123", track="i.song1, i.song2, i.song3"
@@ -1283,6 +1295,7 @@ class TestPaginationWithFetchExplicit:
                     {"name": f"Track {i}", "artist": "Artist", "album": "Album", "id": f"PID{i}"}
                     for i in range(5)
                 ],
+                5,
             )
 
         # Mock cache - return cached explicit status for all tracks
@@ -1295,7 +1308,7 @@ class TestPaginationWithFetchExplicit:
             server.asc, "get_playlists", lambda: (True, [{"name": "Test Playlist", "id": "PLID"}])
         )
 
-        with patch.object(server.asc, "get_playlist_tracks", side_effect=mock_asc_get_tracks):
+        with patch.object(server.asc, "get_playlist_tracks_page", side_effect=mock_asc_get_tracks):
             with patch.object(server, "get_track_cache", return_value=mock_cache):
                 # Call with playlist name and fetch_explicit=True
                 result = server.playlist(
@@ -1891,6 +1904,7 @@ class TestUserJourneyAPIOnly:
     ):
         """Getting started: search, list playlists, get tracks, add to playlist."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        _empty_amp_playlist_reads()
         self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
 
         # 1. Search catalog
@@ -2214,6 +2228,7 @@ class TestUserJourneyFuzzyMatching:
     ):
         """User workflow with fuzzy-named playlist: get tracks, add, remove."""
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        _empty_amp_playlist_reads()
         self._setup_tokens(mock_config_dir, mock_developer_token, mock_user_token)
 
         # Playlist has special characters
@@ -4577,7 +4592,7 @@ class TestPlaylistCopyNoTokenLeakOnAsFailure:
             [{"name": "Source Playlist", "id": "src.id", "smart": False, "track_count": 3}],
         )
         # AS read of source tracks succeeds with one track
-        mock_asc.get_playlist_tracks.return_value = (
+        mock_asc.get_all_playlist_tracks.return_value = (
             True,
             [{"name": "Track 1", "artist": "Artist 1", "album": "Album 1", "id": "t.1"}],
         )
@@ -4621,7 +4636,7 @@ class TestPlaylistCopyNoTokenLeakOnAsFailure:
             [{"name": "Source Playlist", "id": "src.id", "smart": False, "track_count": 3}],
         )
         # AS read of source tracks fails environmentally
-        mock_asc.get_playlist_tracks.return_value = (
+        mock_asc.get_all_playlist_tracks.return_value = (
             False,
             "execution error: Music got an error: Connection is invalid. (-609)",
         )
