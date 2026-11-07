@@ -524,6 +524,20 @@ class TestFormatOutput:
         out = server.format_output(items, format="text")
         assert "Genre Rock" in out
 
+    def test_text_format_non_track_data_is_not_capped_at_200(self):
+        """Every non-track item is shown and the header count matches."""
+        items = [{"name": f"Item {i}", "id": f"i{i}"} for i in range(250)]
+        out = server.format_output(items, format="text")
+        assert "=== 250 items ===" in out
+        assert "Item 0 " in out
+        assert "Item 249 " in out
+        assert out.count("\nItem ") == 250
+
+    def test_text_format_non_track_data_with_pagination_header(self):
+        items = [{"name": f"Item {i}", "id": f"i{i}"} for i in range(5)]
+        out = server.format_output(items, format="text", total_count=250, offset=10)
+        assert "11-15 of 250 items" in out
+
     def test_format_none_returns_count(self):
         tracks = self._sample_tracks(3)
         out = server.format_output(tracks, format="none")

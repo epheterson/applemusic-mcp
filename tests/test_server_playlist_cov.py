@@ -2622,6 +2622,86 @@ class TestPlaylistAddApiErrorHandling:
 # ---------------------------------------------------------------------------
 
 
+class TestPlaylistListPaging:
+    """`playlist(action="list")` honors limit/offset and shows every item it returns."""
+
+    @staticmethod
+    def _stub_playlists(monkeypatch, n):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(
+            server.asc,
+            "get_playlists",
+            lambda: (
+                True,
+                [
+                    {"id": f"P{i}", "name": f"Playlist {i}", "track_count": 1, "smart": False}
+                    for i in range(n)
+                ],
+            ),
+        )
+
+    def test_all_playlists_shown_by_default(self, monkeypatch):
+        self._stub_playlists(monkeypatch, 250)
+        result = server._playlist_list()
+        assert "=== 250 items ===" in result
+        assert "Playlist 249 " in result
+
+    def test_limit_and_offset_page_the_list(self, monkeypatch):
+        self._stub_playlists(monkeypatch, 250)
+        result = server._playlist_list(limit=50, offset=100)
+        assert "101-150 of 250 items" in result
+        assert "Playlist 100 " in result
+        assert "Playlist 149 " in result
+        assert "Playlist 99 " not in result
+        assert "Playlist 150 " not in result
+
+    def test_offset_past_end_is_an_error(self, monkeypatch):
+        self._stub_playlists(monkeypatch, 10)
+        assert "exceeds" in server._playlist_list(limit=5, offset=50)
+
+    def test_dispatcher_forwards_limit_and_offset(self, monkeypatch):
+        calls = {}
+
+        def fake(*args, **kwargs):
+            calls["args"] = args
+            calls["kwargs"] = kwargs
+            return "ok"
+
+        monkeypatch.setattr(server, "_playlist_list", fake)
+        server.playlist(action="list", limit=7, offset=3)
+        assert calls["kwargs"] == {}
+        assert calls["args"][4:6] == (7, 3)
+
+    def test_negative_offset_is_an_error(self, monkeypatch):
+        self._stub_playlists(monkeypatch, 10)
+        result = server._playlist_list(limit=3, offset=-5)
+        assert "offset" in result.lower()
+        assert "=== " not in result
+
+    @responses_lib.activate
+    def test_api_path_filters_before_paging(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        data = [
+            {"id": f"p.{i}", "attributes": {"name": f"{'Jazz' if i % 2 else 'Rock'} {i}"}}
+            for i in range(20)
+        ]
+        responses_lib.add(
+            responses_lib.GET,
+            "https://api.music.apple.com/v1/me/library/playlists",
+            json={"data": data},
+            status=200,
+        )
+        result = server._playlist_list(filter="jazz", limit=3, offset=2)
+        assert "3-5 of 10 items" in result
+        assert "Jazz 5 " in result
+        assert "Jazz 9 " in result
+        assert "Jazz 3 " not in result
+        assert "Rock" not in result
+
+
 class TestPlaylistListPaginationAndExceptions:
     @responses_lib.activate
     def test_api_pagination_100_items_then_empty(

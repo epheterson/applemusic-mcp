@@ -780,9 +780,14 @@ def format_output(
                 result_parts.append(f"=== {len(items)} tracks ===\n")
             result_parts.append("\n".join(formatted_lines))
         else:
-            # Non-track data (albums, artists) - simple format
-            result_parts.append(f"=== {len(items)} items ===\n")
-            for item in items[:200]:
+            # Non-track data (albums, artists, playlists) - simple format
+            if total_count > 0 and total_count > len(items):
+                start = offset + 1
+                end = offset + len(items)
+                result_parts.append(f"=== {start}-{end} of {total_count} items ===\n")
+            else:
+                result_parts.append(f"=== {len(items)} items ===\n")
+            for item in items:
                 if "artist" in item and "name" in item:
                     result_parts.append(
                         f"{item['name']} - {item.get('artist', '')} {item.get('id', '')}"
@@ -3175,8 +3180,17 @@ def _playlist_list(
     export: str = "none",
     full: bool = False,
     filter: str = "",
+    limit: int = 0,
+    offset: int = 0,
 ) -> str:
-    """Internal: Get all playlists, optionally narrowed by name (loose match)."""
+    """Internal: Get playlists, optionally narrowed by name (loose match) and paged.
+
+    limit=0 returns everything from offset onward. Paging metadata (the
+    "a-b of N" range) appears only in text output; json and csv hold just the
+    returned page.
+    """
+    if offset < 0:
+        return f"Offset must be 0 or greater, got {offset}"
     playlist_data = []
 
     # Try AppleScript first (local, instant, no auth required)
@@ -3199,7 +3213,18 @@ def _playlist_list(
                 playlist_data = [p for p in playlist_data if _loose_contains(filter, p["name"])]
                 if not playlist_data:
                     return f"No playlists matching '{filter}'"
-            return format_output(playlist_data, format, export, full, "playlists")
+            playlist_data, total_count, error = _apply_pagination(playlist_data, limit, offset)
+            if error:
+                return error
+            return format_output(
+                playlist_data,
+                format,
+                export,
+                full,
+                "playlists",
+                total_count=total_count,
+                offset=offset,
+            )
         # AppleScript failed on macOS — surface the actionable error
         # instead of cascading to API and leaking "Developer token not
         # found" when the real cause is Music.app not running or
@@ -3211,14 +3236,14 @@ def _playlist_list(
     try:
         headers = get_headers()
         all_playlists = []
-        offset = 0
+        api_offset = 0
 
         # Paginate to get all playlists
         while True:
             response = requests.get(
                 f"{BASE_URL}/me/library/playlists",
                 headers=headers,
-                params={"limit": 100, "offset": offset},
+                params={"limit": 100, "offset": api_offset},
                 timeout=REQUEST_TIMEOUT,
             )
             if response.status_code == 404:
@@ -3230,7 +3255,7 @@ def _playlist_list(
             all_playlists.extend(playlists)
             if len(playlists) < 100:
                 break
-            offset += 100
+            api_offset += 100
 
         # Extract playlist data
         for playlist in all_playlists:
@@ -3257,11 +3282,23 @@ def _playlist_list(
             if not playlist_data:
                 return f"No playlists matching '{filter}'"
 
+        playlist_data, total_count, error = _apply_pagination(playlist_data, limit, offset)
+        if error:
+            return error
+
         # Add token warning if text format
         warning = get_token_expiration_warning()
         prefix = f"{warning}\n\n" if warning and format == "text" else ""
 
-        return prefix + format_output(playlist_data, format, export, full, "playlists")
+        return prefix + format_output(
+            playlist_data,
+            format,
+            export,
+            full,
+            "playlists",
+            total_count=total_count,
+            offset=offset,
+        )
 
     except requests.exceptions.RequestException as e:
         return _api_error(e)
@@ -5072,7 +5109,7 @@ def playlist(
     action = action.lower().strip().replace("-", "_")
 
     if action == "list":
-        return _playlist_list(format, export, full, filter)
+        return _playlist_list(format, export, full, filter, limit, offset)
     elif action == "tracks":
         return _playlist_tracks(
             playlist, filter, limit, offset, format, export, full, fetch_explicit
