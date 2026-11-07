@@ -6,6 +6,7 @@ Strategy:
 - No real network, no real AppleScript, no real files.
 """
 
+import csv
 import json
 import time
 from typing import Optional
@@ -32,6 +33,22 @@ def _write_tokens(config_dir, dev_token: str, user_token: str) -> None:
 # ---------------------------------------------------------------------------
 # _resolve_failure_msg  (lines 1003-1012)
 # ---------------------------------------------------------------------------
+
+
+def _as_page(read):
+    """Adapt an old-style `lambda name: (ok, tracks)` stub to the paged reader.
+
+    `_playlist_tracks` now asks Music.app for one page and the playlist's real
+    size, so a stub returns (ok, tracks_in_page, total_tracks).
+    """
+
+    def page(name, offset=0, limit=500):
+        ok, tracks = read(name)
+        if not ok:
+            return False, tracks, 0
+        return True, tracks[offset : offset + limit], len(tracks)
+
+    return page
 
 
 class TestResolveFailureMsg:
@@ -1249,7 +1266,9 @@ class TestPlaylistTracks:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Jazz Mix"}]))
-        monkeypatch.setattr(server.asc, "get_playlist_tracks", lambda name: (True, []))
+        monkeypatch.setattr(
+            server.asc, "get_playlist_tracks_page", _as_page(lambda name: (True, []))
+        )
         monkeypatch.setattr(
             server,
             "get_user_preferences",
@@ -1270,20 +1289,22 @@ class TestPlaylistTracks:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Jazz Mix"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "So What",
-                        "artist": "Miles Davis",
-                        "album": "Kind of Blue",
-                        "duration": "9:22",
-                        "genre": "Jazz",
-                        "year": "1959",
-                        "id": "",
-                    },
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "So What",
+                            "artist": "Miles Davis",
+                            "album": "Kind of Blue",
+                            "duration": "9:22",
+                            "genre": "Jazz",
+                            "year": "1959",
+                            "id": "",
+                        },
+                    ],
+                )
             ),
         )
         monkeypatch.setattr(
@@ -1306,7 +1327,9 @@ class TestPlaylistTracks:
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Jazz Mix"}]))
         monkeypatch.setattr(
-            server.asc, "get_playlist_tracks", lambda name: (False, "Music.app error")
+            server.asc,
+            "get_playlist_tracks_page",
+            _as_page(lambda name: (False, "Music.app error")),
         )
         monkeypatch.setattr(
             server,
@@ -1496,7 +1519,7 @@ class TestPlaylistCopy:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
+            "get_all_playlist_tracks",
             lambda name: (
                 True,
                 [
@@ -1520,7 +1543,7 @@ class TestPlaylistCopy:
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
-        monkeypatch.setattr(server.asc, "get_playlist_tracks", lambda name: (True, []))
+        monkeypatch.setattr(server.asc, "get_all_playlist_tracks", lambda name: (True, []))
         result = server._playlist_copy("Source PL", "Copy PL")
         assert "Error" in result
         assert "empty" in result.lower()
@@ -1530,7 +1553,7 @@ class TestPlaylistCopy:
         monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
         monkeypatch.setattr(
-            server.asc, "get_playlist_tracks", lambda name: (False, "Music.app error")
+            server.asc, "get_all_playlist_tracks", lambda name: (False, "Music.app error")
         )
         result = server._playlist_copy("Source PL", "Copy PL")
         assert "Error" in result
@@ -1541,7 +1564,7 @@ class TestPlaylistCopy:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
+            "get_all_playlist_tracks",
             lambda name: (
                 True,
                 [
@@ -1559,7 +1582,7 @@ class TestPlaylistCopy:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
+            "get_all_playlist_tracks",
             lambda name: (
                 True,
                 [
@@ -1887,20 +1910,22 @@ class TestPlaylistDispatcher:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Jazz Mix"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "So What",
-                        "artist": "Miles Davis",
-                        "album": "",
-                        "duration": "9:22",
-                        "genre": "Jazz",
-                        "year": "1959",
-                        "id": "",
-                    },
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "So What",
+                            "artist": "Miles Davis",
+                            "album": "",
+                            "duration": "9:22",
+                            "genre": "Jazz",
+                            "year": "1959",
+                            "id": "",
+                        },
+                    ],
+                )
             ),
         )
         monkeypatch.setattr(
@@ -2085,7 +2110,7 @@ class TestPlaylistDispatcher:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
+            "get_all_playlist_tracks",
             lambda name: (
                 True,
                 [
@@ -2166,7 +2191,9 @@ class TestPlaylistDispatcher:
         monkeypatch.setattr(server, "_engine", lambda: "native")
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
         # _playlist_delete reads tracks first (for the undo log); stub it offline.
-        monkeypatch.setattr(server.asc, "get_playlist_tracks", lambda name: (True, []))
+        monkeypatch.setattr(
+            server.asc, "get_playlist_tracks_page", lambda name, offset=0, limit=500: (True, [], 0)
+        )
         monkeypatch.setattr(server.asc, "delete_playlist", lambda name: (True, "Deleted"))
         result = server.playlist(action="delete", name="Old PL")
         assert "Deleted" in result
@@ -3172,7 +3199,7 @@ class TestPlaylistCopyEdgeCases:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Src"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
+            "get_all_playlist_tracks",
             lambda name: (True, [{"name": f"Track {i}", "artist": "Artist"} for i in range(7)]),
         )
         monkeypatch.setattr(server.asc, "create_playlist", lambda name, desc="": (True, "NEWP"))
@@ -3352,20 +3379,22 @@ class TestPlaylistTracksFetchExplicit:
         # Return tracks with no IDs (forces cache miss + API lookup)
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "So What",
-                        "artist": "Miles Davis",
-                        "album": "Kind of Blue",
-                        "duration": "9:22",
-                        "genre": "Jazz",
-                        "year": "1959",
-                        "id": "",
-                    },
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "So What",
+                            "artist": "Miles Davis",
+                            "album": "Kind of Blue",
+                            "duration": "9:22",
+                            "genre": "Jazz",
+                            "year": "1959",
+                            "id": "",
+                        },
+                    ],
+                )
             ),
         )
         # Mock track cache
@@ -3419,20 +3448,22 @@ class TestPlaylistTracksFetchExplicit:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Jazz Mix"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "So What",
-                        "artist": "Miles Davis",
-                        "album": "Kind of Blue",
-                        "duration": "9:22",
-                        "genre": "Jazz",
-                        "year": "1959",
-                        "id": "",
-                    },
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "So What",
+                            "artist": "Miles Davis",
+                            "album": "Kind of Blue",
+                            "duration": "9:22",
+                            "genre": "Jazz",
+                            "year": "1959",
+                            "id": "",
+                        },
+                    ],
+                )
             ),
         )
         mock_cache = MagicMock()
@@ -3456,20 +3487,22 @@ class TestPlaylistTracksFetchExplicit:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Jazz Mix"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "So What",
-                        "artist": "Miles Davis",
-                        "album": "Kind of Blue",
-                        "duration": "9:22",
-                        "genre": "Jazz",
-                        "year": "1959",
-                        "id": "i.t1",
-                    },
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "So What",
+                            "artist": "Miles Davis",
+                            "album": "Kind of Blue",
+                            "duration": "9:22",
+                            "genre": "Jazz",
+                            "year": "1959",
+                            "id": "i.t1",
+                        },
+                    ],
+                )
             ),
         )
         mock_cache = MagicMock()
@@ -3962,29 +3995,31 @@ class TestPlaylistTracksAppleScriptFilter:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Jazz Mix"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "So What",
-                        "artist": "Miles Davis",
-                        "album": "Kind of Blue",
-                        "duration": "9:22",
-                        "genre": "Jazz",
-                        "year": "1959",
-                        "id": "",
-                    },
-                    {
-                        "name": "Autumn Leaves",
-                        "artist": "Bill Evans",
-                        "album": "Portrait",
-                        "duration": "5:12",
-                        "genre": "Jazz",
-                        "year": "1959",
-                        "id": "",
-                    },
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "So What",
+                            "artist": "Miles Davis",
+                            "album": "Kind of Blue",
+                            "duration": "9:22",
+                            "genre": "Jazz",
+                            "year": "1959",
+                            "id": "",
+                        },
+                        {
+                            "name": "Autumn Leaves",
+                            "artist": "Bill Evans",
+                            "album": "Portrait",
+                            "duration": "5:12",
+                            "genre": "Jazz",
+                            "year": "1959",
+                            "id": "",
+                        },
+                    ],
+                )
             ),
         )
         monkeypatch.setattr(
@@ -4009,20 +4044,22 @@ class TestPlaylistTracksAppleScriptFilter:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Jazz Mix"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "So What",
-                        "artist": "Miles Davis",
-                        "album": "",
-                        "duration": "9:22",
-                        "genre": "Jazz",
-                        "year": "1959",
-                        "id": "",
-                    }
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "So What",
+                            "artist": "Miles Davis",
+                            "album": "",
+                            "duration": "9:22",
+                            "genre": "Jazz",
+                            "year": "1959",
+                            "id": "",
+                        }
+                    ],
+                )
             ),
         )
         monkeypatch.setattr(
@@ -4775,20 +4812,22 @@ class TestFetchExplicitDetailBranches:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Jazz Mix"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "So What",
-                        "artist": "Miles Davis",
-                        "album": "Kind of Blue",
-                        "duration": "9:22",
-                        "genre": "Jazz",
-                        "year": "1959",
-                        "id": "",
-                    }
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "So What",
+                            "artist": "Miles Davis",
+                            "album": "Kind of Blue",
+                            "duration": "9:22",
+                            "genre": "Jazz",
+                            "year": "1959",
+                            "id": "",
+                        }
+                    ],
+                )
             ),
         )
         mock_cache = MagicMock()
@@ -4820,20 +4859,22 @@ class TestFetchExplicitDetailBranches:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Jazz Mix"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "So What",
-                        "artist": "Miles Davis",
-                        "album": "Kind of Blue",
-                        "duration": "9:22",
-                        "genre": "Jazz",
-                        "year": "1959",
-                        "id": "i.t1",
-                    }
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "So What",
+                            "artist": "Miles Davis",
+                            "album": "Kind of Blue",
+                            "duration": "9:22",
+                            "genre": "Jazz",
+                            "year": "1959",
+                            "id": "i.t1",
+                        }
+                    ],
+                )
             ),
         )
         mock_cache = MagicMock()
@@ -4892,20 +4933,22 @@ class TestFetchExplicitDetailBranches:
         # Track with album="" (AS) but API has album filled in -> full key mismatch, partial matches
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "So What",
-                        "artist": "Miles Davis",
-                        "album": "",  # empty album -> full key fails
-                        "duration": "9:22",
-                        "genre": "Jazz",
-                        "year": "1959",
-                        "id": "",
-                    }
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "So What",
+                            "artist": "Miles Davis",
+                            "album": "",  # empty album -> full key fails
+                            "duration": "9:22",
+                            "genre": "Jazz",
+                            "year": "1959",
+                            "id": "",
+                        }
+                    ],
+                )
             ),
         )
         mock_cache = MagicMock()
@@ -4951,20 +4994,22 @@ class TestFetchExplicitDetailBranches:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Jazz Mix"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "Rare Track",
-                        "artist": "Unknown Artist",
-                        "album": "Rare Album",
-                        "duration": "3:00",
-                        "genre": "Jazz",
-                        "year": "1960",
-                        "id": "PERSIST123ABC",  # persistent ID set
-                    }
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "Rare Track",
+                            "artist": "Unknown Artist",
+                            "album": "Rare Album",
+                            "duration": "3:00",
+                            "genre": "Jazz",
+                            "year": "1960",
+                            "id": "PERSIST123ABC",  # persistent ID set
+                        }
+                    ],
+                )
             ),
         )
         mock_cache = MagicMock()
@@ -5168,8 +5213,8 @@ class TestFetchExplicitInnerLoopBranches:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "My PL"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (True, self._as_tracks([("Come Together", "Beatles")])),
+            "get_playlist_tracks_page",
+            _as_page(lambda name: (True, self._as_tracks([("Come Together", "Beatles")]))),
         )
         mock_cache = MagicMock()
         mock_cache.get_explicit.return_value = None
@@ -5203,8 +5248,8 @@ class TestFetchExplicitInnerLoopBranches:
         # One AS track so fetch_explicit path is entered
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (True, self._as_tracks([("Song 0", "Artist")])),
+            "get_playlist_tracks_page",
+            _as_page(lambda name: (True, self._as_tracks([("Song 0", "Artist")]))),
         )
         mock_cache = MagicMock()
         mock_cache.get_explicit.return_value = None
@@ -5258,29 +5303,31 @@ class TestFetchExplicitInnerLoopBranches:
         # Two AS tracks: one cached, one not
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "Cached Song",
-                        "artist": "Artist A",
-                        "album": "Alb",
-                        "duration": "3:00",
-                        "genre": "Pop",
-                        "year": "2020",
-                        "id": "i.cached",
-                    },
-                    {
-                        "name": "Unknown Song",
-                        "artist": "Artist B",
-                        "album": "Alb",
-                        "duration": "3:00",
-                        "genre": "Pop",
-                        "year": "2020",
-                        "id": "i.unknown",
-                    },
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "Cached Song",
+                            "artist": "Artist A",
+                            "album": "Alb",
+                            "duration": "3:00",
+                            "genre": "Pop",
+                            "year": "2020",
+                            "id": "i.cached",
+                        },
+                        {
+                            "name": "Unknown Song",
+                            "artist": "Artist B",
+                            "album": "Alb",
+                            "duration": "3:00",
+                            "genre": "Pop",
+                            "year": "2020",
+                            "id": "i.unknown",
+                        },
+                    ],
+                )
             ),
         )
         # "i.cached" returns "Yes" from cache, "i.unknown" returns None
@@ -5337,20 +5384,22 @@ class TestFetchExplicitInnerLoopBranches:
         # AS track with artist "Lennon" but API has artist "Beatles" -> partial match fails
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {
-                        "name": "Come Together",
-                        "artist": "Lennon",  # Different from API artist
-                        "album": "Different Album",  # Different from API album
-                        "duration": "3:00",
-                        "genre": "Rock",
-                        "year": "1969",
-                        "id": "i.ct",
-                    }
-                ],
+            "get_playlist_tracks_page",
+            _as_page(
+                lambda name: (
+                    True,
+                    [
+                        {
+                            "name": "Come Together",
+                            "artist": "Lennon",  # Different from API artist
+                            "album": "Different Album",  # Different from API album
+                            "duration": "3:00",
+                            "genre": "Rock",
+                            "year": "1969",
+                            "id": "i.ct",
+                        }
+                    ],
+                )
             ),
         )
         mock_cache = MagicMock()
@@ -5398,8 +5447,8 @@ class TestFetchExplicitInnerLoopBranches:
         monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "My PL"}]))
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda name: (True, self._as_tracks([("Song X", "Artist X")])),
+            "get_playlist_tracks_page",
+            _as_page(lambda name: (True, self._as_tracks([("Song X", "Artist X")]))),
         )
 
         # get_track_cache() throws -> caught by except Exception at 2711
@@ -6274,3 +6323,307 @@ class TestAddReportsWhatLanded:
         result = server._playlist_add_api("p.1", "1111111111,2222222222", "", auto_add=True)
         assert "Added 2 track(s)" in result
         assert "NOT added" not in result
+
+
+# ---------------------------------------------------------------------------
+# playlist(action="tracks") on macOS: paging a playlist longer than 500 tracks
+# ---------------------------------------------------------------------------
+
+
+def _long_playlist(n):
+    return [
+        {
+            "name": f"Song {i}",
+            "artist": "Artist A" if i % 2 == 0 else "Artist B",
+            "album": "Album",
+            "duration": "3:00",
+            "genre": "Jazz",
+            "year": "2020",
+            "id": f"PID{i}",
+        }
+        for i in range(n)
+    ]
+
+
+@pytest.fixture
+def long_playlist(monkeypatch):
+    """A 2253-track playlist on macOS, behind the paged readers.
+
+    Stubs Music.app one level down (`get_playlist_tracks_page`) so the real
+    paging, filtering and "read the whole playlist" logic runs; `reads` records
+    every (offset, limit) pair that was requested from Music.app.
+    """
+    tracks = _long_playlist(2253)
+    reads = []
+
+    def page(name, offset=0, limit=500):
+        reads.append((offset, limit))
+        return True, tracks[offset : offset + limit], len(tracks)
+
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+    monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
+    monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Long Mix"}]))
+    monkeypatch.setattr(server.asc, "get_playlist_tracks_page", page)
+    monkeypatch.setattr(
+        server,
+        "get_user_preferences",
+        lambda: {
+            "fetch_explicit": False,
+            "output_format": "text",
+            "mode": "auto",
+            "auto_add": False,
+            "storefront": "us",
+        },
+    )
+    return types_namespace(tracks=tracks, reads=reads)
+
+
+def types_namespace(**kw):
+    import types
+
+    return types.SimpleNamespace(**kw)
+
+
+class TestPlaylistTracksLongPlaylist:
+    def test_default_reads_one_page_and_reports_the_real_total(self, long_playlist):
+        result = server._playlist_tracks("Long Mix")
+
+        assert "=== 1-500 of 2253 tracks ===" in result
+        assert "Song 499" in result and "Song 500" not in result
+        assert long_playlist.reads == [(0, 500)], "must not read the other 1753 tracks"
+
+    def test_a_truncated_listing_says_how_to_get_the_rest(self, long_playlist):
+        result = server._playlist_tracks("Long Mix")
+        assert "1753 more tracks" in result
+        assert "offset=500" in result and "limit=0" in result
+
+    def test_offset_reaches_past_the_first_500(self, long_playlist):
+        """The bug: offset=2200 failed with 'Offset 2200 exceeds 500 items'."""
+        result = server._playlist_tracks("Long Mix", limit=3, offset=2200)
+
+        assert "=== 2201-2203 of 2253 tracks ===" in result
+        assert "Song 2200" in result and "Song 2202" in result
+        assert "exceeds" not in result
+        assert long_playlist.reads == [(2200, 3)]
+
+    def test_next_offset_skips_past_an_unreadable_track(self, long_playlist, monkeypatch):
+        """The per-track fallback leaves out a track it cannot read, so a page can
+        show 499 rows for 500 positions. The note must point at position 500, or
+        the next page starts inside the one just shown and repeats a track."""
+        monkeypatch.setattr(
+            server.asc,
+            "get_playlist_tracks_page",
+            lambda n, offset=0, limit=500: (True, long_playlist.tracks[:499], 2253),
+        )
+        result = server._playlist_tracks("Long Mix")
+
+        assert "offset=500 " in result or "offset=500 for" in result
+        assert "1753 more tracks" in result
+
+    def test_the_last_page_has_no_more_hint(self, long_playlist):
+        result = server._playlist_tracks("Long Mix", limit=500, offset=2000)
+        assert "=== 2001-2253 of 2253 tracks ===" in result
+        assert "more tracks" not in result
+
+    def test_offset_past_the_end_names_the_real_size(self, long_playlist):
+        result = server._playlist_tracks("Long Mix", limit=3, offset=5000)
+        assert result.startswith("Offset 5000 exceeds 2253 items")
+
+    def test_limit_zero_returns_every_track(self, long_playlist):
+        result = server._playlist_tracks("Long Mix", limit=0)
+
+        assert "=== 2253 tracks ===" in result
+        assert "Song 2252" in result
+        assert "more tracks" not in result
+        assert long_playlist.reads == [(0, 2**31 - 1)], "read to the end, a page at a time"
+
+    def test_limit_zero_reports_the_real_size_when_a_track_is_unreadable(
+        self, long_playlist, monkeypatch
+    ):
+        """The per-track fallback skips a track it cannot read. The total must still
+        be the playlist's size from Music.app, not a count of what came back."""
+        monkeypatch.setattr(
+            server.asc,
+            "get_playlist_tracks_page",
+            lambda n, offset=0, limit=500: (True, long_playlist.tracks[:2252], 2253),
+        )
+        result = server._playlist_tracks("Long Mix", limit=0)
+        assert "=== 1-2252 of 2253 tracks ===" in result
+        assert "more tracks" not in result, "the read reached the end; nothing follows"
+
+    def test_limit_zero_with_an_offset_returns_the_rest(self, long_playlist):
+        result = server._playlist_tracks("Long Mix", limit=0, offset=2250)
+        assert "=== 2251-2253 of 2253 tracks ===" in result
+        assert "Song 2250" in result and "Song 2252" in result
+
+    def test_json_stays_pure_data_without_a_hint(self, long_playlist):
+        result = server._playlist_tracks("Long Mix", limit=2, format="json")
+        assert "more tracks" not in result and "offset=" not in result
+
+    def test_filter_searches_the_whole_playlist_not_the_first_500(self, long_playlist):
+        """Song 2250 is far past the first page; the filter must still find it."""
+        result = server._playlist_tracks("Long Mix", filter="Song 2250")
+
+        assert "Song 2250" in result
+        assert len(long_playlist.reads) > 1, "pages were read until a match turned up"
+
+    def test_filter_stops_reading_once_it_has_enough_matches(self, long_playlist):
+        result = server._playlist_tracks("Long Mix", filter="Artist A", limit=10)
+
+        assert "Song 0 " in result and "Song 18 " in result
+        assert "Song 20 " not in result
+        assert long_playlist.reads == [(0, 500)], "ten matches are in the first page"
+        assert "More matching tracks may follow" in result and "offset=10" in result
+
+    def test_filter_that_reaches_the_end_reports_the_match_count(self, long_playlist):
+        result = server._playlist_tracks("Long Mix", filter="Song 22", limit=0)
+
+        # Song 22, 220-229, 2200-2252 (53 of them, 2253 tracks run to 2252)
+        assert "=== 64 tracks ===" in result
+        assert "More matching tracks" not in result
+
+    def test_filter_with_no_match_is_empty_not_an_error(self, long_playlist):
+        result = server._playlist_tracks("Long Mix", filter="no such song")
+        assert "No results" in result
+        assert "Error" not in result
+
+    def test_export_follows_limit(self, long_playlist, monkeypatch, tmp_path):
+        """An export holds the same page the listing shows, so limit=0 exports
+        the whole playlist and the default does not pretend to."""
+        monkeypatch.setenv("APPLEMUSIC_CACHE_DIR", str(tmp_path))
+
+        server._playlist_tracks("Long Mix", export="csv", format="none")
+        server._playlist_tracks("Long Mix", limit=0, export="json", format="none")
+
+        (csv_file,) = tmp_path.glob("playlist_*.csv")
+        (json_file,) = tmp_path.glob("playlist_*.json")
+        with open(csv_file, newline="", encoding="utf-8") as f:
+            assert len(list(csv.DictReader(f))) == 500
+        assert len(json.loads(json_file.read_text())) == 2253
+
+    def test_music_app_failure_is_reported(self, long_playlist, monkeypatch):
+        monkeypatch.setattr(
+            server.asc,
+            "get_playlist_tracks_page",
+            lambda n, offset=0, limit=500: (False, "boom", 0),
+        )
+        assert server._playlist_tracks("Long Mix").startswith("Error:")
+
+
+def test_playlist_tool_advertises_its_default_limit():
+    """The default is in the tool's signature, so it shows up in the MCP schema,
+    and the description says what it does and how to lift it."""
+    import inspect
+
+    assert inspect.signature(server.playlist).parameters["limit"].default == 500
+    doc = server.playlist.__doc__ or ""
+    assert "default 500; 0 = every track" in doc
+
+
+class TestPlaylistCopyLongPlaylist:
+    def test_copy_reads_the_whole_source_not_the_first_500(self, monkeypatch):
+        """Copying a 1200-track playlist must copy 1200 tracks. The source used to be
+        read through the 500-track default, so the copy silently stopped at 500."""
+        source = [{"name": f"Song {i}", "artist": "Artist"} for i in range(1200)]
+        added = []
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
+        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
+        monkeypatch.setattr(server.asc, "get_all_playlist_tracks", lambda name: (True, source))
+        monkeypatch.setattr(
+            server.asc,
+            "get_playlist_tracks",
+            lambda *a, **k: pytest.fail("copy must not use the bounded reader"),
+        )
+        monkeypatch.setattr(server.asc, "create_playlist", lambda name, desc="": (True, "NEW"))
+
+        def add(pl, name, artist):
+            added.append(name)
+            return True, "ok"
+
+        monkeypatch.setattr(server.asc, "add_track_to_playlist", add)
+        result = server._playlist_copy("Source PL", "Copy PL")
+
+        assert len(added) == 1200
+        assert "1200" in result
+
+
+class TestPlaylistTracksOffsets:
+    def test_negative_offset_is_treated_as_zero(self, long_playlist):
+        """A negative offset used to be labelled onto the page header and hint as given."""
+        result = server._playlist_tracks("Long Mix", limit=3, offset=-5)
+
+        assert "=== 1-3 of 2253 tracks ===" in result
+        assert "offset=3" in result
+        assert long_playlist.reads == [(0, 3)]
+
+    def _api_playlist(self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch):
+        _write_tokens(mock_config_dir, mock_developer_token, mock_user_token)
+        monkeypatch.setattr(
+            server,
+            "get_user_preferences",
+            lambda: {
+                "fetch_explicit": False,
+                "output_format": "text",
+                "mode": "auto",
+                "auto_add": False,
+                "storefront": "us",
+            },
+        )
+        responses_lib.add(
+            responses_lib.GET,
+            "https://api.music.apple.com/v1/me/library/playlists/p.pl/tracks",
+            json={
+                "meta": {"total": 8},
+                "data": [
+                    {
+                        "id": f"i.t{i}",
+                        "attributes": {
+                            "name": f"Song {i}",
+                            "artistName": "Artist",
+                            "albumName": "Alb",
+                            "durationInMillis": 180000,
+                        },
+                    }
+                    for i in range(8)
+                ],
+            },
+            status=200,
+        )
+
+    @responses_lib.activate
+    def test_api_offset_past_the_end_names_the_real_size(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        """The default limit now sends a plain API call through the bounded branch,
+        which used to answer an offset past the end with an empty 'No results'."""
+        self._api_playlist(mock_config_dir, mock_developer_token, mock_user_token, monkeypatch)
+        result = server._playlist_tracks("p.pl", offset=100)
+        assert result.startswith("Offset 100 exceeds 8 items")
+
+    @responses_lib.activate
+    def test_api_negative_offset_is_treated_as_zero(
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
+    ):
+        self._api_playlist(mock_config_dir, mock_developer_token, mock_user_token, monkeypatch)
+        result = server._playlist_tracks("p.pl", limit=3, offset=-2)
+        assert "=== 1-3 of 8 tracks ===" in result
+        assert "Song 0" in result and "Song 2" in result
+
+    def test_audit_counts_the_matches_read_when_a_filtered_read_stops_early(
+        self, long_playlist, monkeypatch
+    ):
+        """total_count is None when a filter stops at its limit; the audit entry must
+        not turn that into 0 for a query that matched tracks."""
+        cache = MagicMock()
+        cache.get_explicit.return_value = "Clean"
+        monkeypatch.setattr(server, "get_track_cache", lambda: cache)
+        logged = []
+        monkeypatch.setattr(
+            server.audit_log, "log_action", lambda action, details, **kw: logged.append(details)
+        )
+
+        server._playlist_tracks("Long Mix", filter="Artist A", limit=10, fetch_explicit=True)
+
+        (details,) = logged
+        assert details["track_count"] == 10

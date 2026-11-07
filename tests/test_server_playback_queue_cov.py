@@ -2174,8 +2174,12 @@ class TestPlaylistDelete:
         """Lines 7893-7910: successful deletion."""
         monkeypatch.setattr(
             server.asc,
-            "get_playlist_tracks",
-            lambda n: (True, [{"name": "T1", "artist": "A1"}, {"name": "T2", "artist": "A2"}]),
+            "get_playlist_tracks_page",
+            lambda n, offset=0, limit=500: (
+                True,
+                [{"name": "T1", "artist": "A1"}, {"name": "T2", "artist": "A2"}],
+                2,
+            ),
         )
         monkeypatch.setattr(
             server.asc, "delete_playlist", lambda n: (True, "Deleted Rock Classics")
@@ -2184,15 +2188,19 @@ class TestPlaylistDelete:
         assert "Deleted Rock Classics" in out
 
     def test_get_tracks_fails_but_delete_succeeds(self, monkeypatch):
-        """Lines 7893-7910: get_playlist_tracks fails -> track_count=0, but delete ok."""
-        monkeypatch.setattr(server.asc, "get_playlist_tracks", lambda n: (False, []))
+        """Lines 7893-7910: the track read fails -> track_count=0, but delete ok."""
+        monkeypatch.setattr(
+            server.asc, "get_playlist_tracks_page", lambda n, offset=0, limit=500: (False, [], 0)
+        )
         monkeypatch.setattr(server.asc, "delete_playlist", lambda n: (True, "Deleted"))
         out = server._playlist_delete("Rock Classics")
         assert "Deleted" in out
 
     def test_delete_failure(self, monkeypatch):
         """Line 7911: delete_playlist fails."""
-        monkeypatch.setattr(server.asc, "get_playlist_tracks", lambda n: (False, []))
+        monkeypatch.setattr(
+            server.asc, "get_playlist_tracks_page", lambda n, offset=0, limit=500: (False, [], 0)
+        )
         monkeypatch.setattr(server.asc, "delete_playlist", lambda n: (False, "Playlist not found"))
         out = server._playlist_delete("Nonexistent")
         assert "Error" in out and "not found" in out.lower()
@@ -2200,10 +2208,42 @@ class TestPlaylistDelete:
     def test_many_tracks_truncated(self, monkeypatch):
         """Lines 7895-7896: >20 tracks, track_names is sliced to 20."""
         tracks = [{"name": f"T{i}", "artist": "A"} for i in range(30)]
-        monkeypatch.setattr(server.asc, "get_playlist_tracks", lambda n: (True, tracks))
+        monkeypatch.setattr(
+            server.asc,
+            "get_playlist_tracks_page",
+            lambda n, offset=0, limit=500: (True, tracks[offset : offset + limit], len(tracks)),
+        )
         monkeypatch.setattr(server.asc, "delete_playlist", lambda n: (True, "Deleted"))
         out = server._playlist_delete("Big Playlist")
         assert "Deleted" in out
+
+
+class TestPlaylistDeleteAuditLog:
+    def test_logs_the_real_track_count_for_a_long_playlist(self, monkeypatch):
+        """Deleting is permanent, so the audit entry has to say how much was lost:
+        it used to log at most 500, and a count of the tracks read would be 20."""
+        tracks = [{"name": f"T{i}", "artist": "A"} for i in range(2253)]
+        reads = []
+
+        def page(n, offset=0, limit=500):
+            reads.append((offset, limit))
+            return True, tracks[offset : offset + limit], len(tracks)
+
+        logged = []
+        monkeypatch.setattr(server.asc, "get_playlist_tracks_page", page)
+        monkeypatch.setattr(server.asc, "delete_playlist", lambda n: (True, "Deleted"))
+        monkeypatch.setattr(
+            server.audit_log,
+            "log_action",
+            lambda action, details, **kw: logged.append((details, kw)),
+        )
+
+        server._playlist_delete("Big Playlist")
+
+        ((details, kw),) = logged
+        assert details == {"name": "Big Playlist", "track_count": 2253}
+        assert kw["undo_info"]["tracks"] == [f"T{i} - A" for i in range(20)]
+        assert reads == [(0, 20)], "only the 20 names the undo info keeps are read"
 
 
 # ===========================================================================
