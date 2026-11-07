@@ -134,7 +134,7 @@ def _wait_for_track(playlist_id: str, name_fragment: str, timeout: float = 12.0)
     deadline = time.time() + timeout
     frag = name_fragment.lower()
     while time.time() < deadline:
-        for t in amp_api.get_tracks(playlist_id):
+        for t in amp_api.get_tracks(playlist_id) or []:
             if frag in t.get("name", "").lower():
                 return t
         time.sleep(1.0)

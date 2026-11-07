@@ -18,6 +18,14 @@ import responses as responses_lib
 from applemusic_mcp import server
 from applemusic_mcp import amp_api as _amp_api_module
 
+
+@pytest.fixture(autouse=True)
+def _empty_playlist_contents(monkeypatch):
+    """amp_api.get_tracks reads the playlist before an API add or remove. Unstubbed,
+    the network guard makes it a failed read (None), which now stops the add.
+    Default to an empty playlist; tests about the contents stub their own."""
+    monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+
 # ---------------------------------------------------------------------------
 # Token helpers
 # ---------------------------------------------------------------------------
@@ -6338,6 +6346,42 @@ class TestAddReportsWhatLanded:
         result = server._playlist_add_api("p.1", "1111111111,2222222222", "", auto_add=True)
         assert "Added 2 track(s)" in result
         assert "NOT added" not in result
+
+    def test_unreadable_playlist_stops_the_add_instead_of_skipping_the_dup_check(
+        self, monkeypatch
+    ):
+        """get_tracks returns None when any page fails. Treating that as an empty
+        playlist would skip the duplicate check and could add a track twice."""
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: "p.1")
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda *a: pytest.fail("added without a dup check")
+        )
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: None)
+        monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
+        result = server._playlist_add_api("p.1", "1111111111", "", auto_add=True)
+        assert "Couldn't read" in result
+        assert "allow_duplicates=True" in result
+
+    def test_unreadable_playlist_with_allow_duplicates_still_adds(self, monkeypatch):
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: "p.1")
+        monkeypatch.setattr(server.amp_api, "add_tracks", lambda pid, items: (True, "ok"))
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: None)
+        result = server._playlist_add_api(
+            "p.1", "1111111111", "", auto_add=True, allow_duplicates=True
+        )
+        assert "Added 1 track(s)" in result
+        assert "NOT added" not in result
+
+    def test_unreadable_playlist_on_remove_is_not_reported_missing(self, monkeypatch):
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: "p.1")
+        monkeypatch.setattr(
+            server.amp_api, "remove_track", lambda *a: pytest.fail("removed blind")
+        )
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: None)
+        monkeypatch.setattr(server.amp_api, "session_status", lambda: "ok")
+        result = server._playlist_remove_api("p.1", "Song")
+        assert "not found in" not in result
+        assert "Couldn't read" in result
 
 
 # ---------------------------------------------------------------------------

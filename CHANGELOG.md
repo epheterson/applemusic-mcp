@@ -21,8 +21,9 @@ Long playlists and big libraries are no longer silently cut off. Fixes from [@me
 | `filter` on `playlist tracks` (macOS) | Searched only the first 500 tracks | Searches the whole playlist |
 
 - A track titled `total: …` can't hide itself from a listing or a copy.
+- A filtered `playlist tracks` read fails if the playlist changes mid-read, rather than reporting a short count as complete.
 - Reading a big page or a whole playlist goes 500 tracks per Music.app call, so it stays under the AppleScript timeout.
-- **Windows/Linux `add` and `remove`:** if Apple throttled a later page while reading a playlist, the read returned only the earlier pages as if they were the whole playlist. `add` could then report tracks that did land as dropped and miss duplicates, and `remove` could say a track wasn't there. A failed read now counts as a failed read.
+- **Windows/Linux `add` and `remove`:** if Apple throttled a later page while reading a playlist, the read returned only the earlier pages as if they were the whole playlist. `add` could then report tracks that did land as dropped and miss duplicates, and `remove` could say a track wasn't there. Now a failed read is reported as one: `add` stops instead of skipping its duplicate check (pass `allow_duplicates=True` to add anyway), and `remove` says it couldn't read the playlist.
 
 ### Changed
 

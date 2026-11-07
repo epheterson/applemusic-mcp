@@ -931,6 +931,17 @@ def test_get_playlist_tracks_matching_reports_a_failing_page(monkeypatch):
     assert asc.get_playlist_tracks_matching("PL", _even, 0, 0) == (False, timeout, None)
 
 
+def test_get_playlist_tracks_matching_fails_if_the_playlist_changes(monkeypatch):
+    """A filtered scan reads page after page. If the playlist shrinks between them,
+    the scan would end early and report a short total as complete."""
+    seq = Seq([(True, _page_output(1500, 0, 500)), (True, _page_output(900, 500, 400))])
+    setrun(monkeypatch, seq)
+    ok, message, total = asc.get_playlist_tracks_matching("PL", _even, 0, 0)
+
+    assert ok is False and "changed while it was being read" in message
+    assert total is None
+
+
 def test_create_playlist(monkeypatch):
     r = setrun(monkeypatch, Recorder(True, "PID"))
     assert asc.create_playlist("X") == (True, "PID")

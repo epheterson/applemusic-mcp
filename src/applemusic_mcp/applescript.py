@@ -1213,12 +1213,19 @@ def get_playlist_tracks_matching(
     to_skip = max(0, int(offset))
     skipped = 0
     position = 0
+    first_total = None
     while True:
         success, page, total = get_playlist_tracks_page(
             playlist_name, position, _PLAYLIST_PAGE_SIZE
         )
         if not success:
             return False, page, None
+        if first_total is None:
+            first_total = total
+        elif total != first_total:
+            # Same guard as get_all_playlist_tracks: a shrunk playlist would end
+            # the scan early and pass a short count off as the whole.
+            return False, _PLAYLIST_CHANGED, None
         # Step by the page size, not the rows returned (see get_all_playlist_tracks).
         position += _PLAYLIST_PAGE_SIZE
         for track in page:

@@ -1434,6 +1434,16 @@ def _resolve_failure_msg(not_found_msg: str) -> str:
     return f"Error: {not_found_msg}"
 
 
+def _unreadable_playlist_msg(playlist: str) -> str:
+    """amp_api.get_tracks returned None: a page failed, so the contents are unknown."""
+    st = amp_api.session_status()
+    if st == "expired":
+        return _SESSION_EXPIRED_MSG
+    if st == "throttled":
+        return _SESSION_THROTTLED_MSG
+    return f"Error: Couldn't read the tracks of {playlist!r} from Apple Music; try again."
+
+
 def _safe_single_match(matches: list[dict], term: str) -> tuple[dict, int]:
     """Pick exactly ONE match for a destructive op — an exact (case-insensitive)
     title match if present, else the first candidate. Returns (chosen, others).
@@ -1452,6 +1462,8 @@ def _playlist_remove_api(playlist: str, track: str, artist: str = "") -> str:
     if not pid:
         return _resolve_failure_msg(f"playlist {playlist!r} not found in your library")
     tracks = amp_api.get_tracks(pid)
+    if tracks is None:
+        return _unreadable_playlist_msg(playlist)
     tl = track.lower()
     al = artist.lower()
     matches = [
@@ -1604,7 +1616,14 @@ def _playlist_add_api(
     existing_ids: set = set()
     existing_names: set = set()
     if not allow_duplicates:
-        for t in amp_api.get_tracks(pid):
+        current = amp_api.get_tracks(pid)
+        if current is None:
+            # Unknown contents: adding anyway could stack a duplicate.
+            return (
+                _unreadable_playlist_msg(playlist)
+                + " To add without checking for duplicates, pass allow_duplicates=True."
+            )
+        for t in current:
             if t.get("catalog_id"):
                 existing_ids.add(str(t["catalog_id"]))
             if t.get("name"):
@@ -1728,7 +1747,7 @@ def _playlist_add_api(
     # a failure presenting as success. Re-read and say what actually landed.
     # (One extra GET per add, not per track.)
     dropped: list[str] = []
-    after = {str(t["catalog_id"]) for t in amp_api.get_tracks(pid) if t.get("catalog_id")}
+    after = {str(t["catalog_id"]) for t in amp_api.get_tracks(pid) or [] if t.get("catalog_id")}
     if after:  # empty means the re-read itself failed; don't cry wolf on that
         for it, nm in zip(items, added_names):
             # Only catalog ids are checkable: a (id, "library-songs") item is a
@@ -4176,7 +4195,7 @@ def _playlist_add_preview(
     existing_names: set[str] = set()
     dup_known = False
     if resolved.api_id:
-        for t in amp_api.get_tracks(resolved.api_id):
+        for t in amp_api.get_tracks(resolved.api_id) or []:
             dup_known = True
             if t.get("catalog_id"):
                 existing_ids.add(str(t["catalog_id"]))

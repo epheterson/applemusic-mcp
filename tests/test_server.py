@@ -11,6 +11,14 @@ import responses
 from applemusic_mcp import server
 
 
+@pytest.fixture(autouse=True)
+def _empty_playlist_contents(monkeypatch):
+    """amp_api.get_tracks reads the playlist before an API add or remove. Unstubbed,
+    the network guard makes it a failed read (None), which now stops the add.
+    Default to an empty playlist; tests about the contents stub their own."""
+    monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+
+
 class TestGetTokenExpirationWarning:
     """Tests for get_token_expiration_warning function."""
 

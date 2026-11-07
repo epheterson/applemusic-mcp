@@ -441,9 +441,9 @@ def test_get_tracks_paginates_and_shapes():
 
 
 @responses.activate
-def test_get_tracks_non_200_breaks_empty():
+def test_get_tracks_non_200_is_a_failed_read():
     responses.add(responses.GET, f"{amp_api.AMP}/me/library/playlists/p.1/tracks", status=503)
-    assert amp_api.get_tracks("p.1") == []
+    assert amp_api.get_tracks("p.1") is None
 
 
 def _first_page_then(**second):
@@ -469,15 +469,23 @@ def _first_page_then(**second):
 def test_get_tracks_later_page_failure_is_not_a_partial_list():
     """A throttled second page used to return page one as if it were the whole
     playlist: add then reported tracks appended at the end as dropped, and the
-    duplicate check missed them. A failed read is now empty, which every caller
-    already treats as "couldn't read"."""
+    duplicate check missed them. A failed read is now None, distinct from an
+    empty playlist."""
     _first_page_then(status=429)
-    assert amp_api.get_tracks("p.1") == []
+    assert amp_api.get_tracks("p.1") is None
 
 
 @responses.activate
 def test_get_tracks_later_page_exception_is_not_a_partial_list():
     _first_page_then(body=requests.exceptions.ReadTimeout("slow"))
+    assert amp_api.get_tracks("p.1") is None
+
+
+@responses.activate
+def test_get_tracks_empty_playlist_404_is_empty_not_a_failure():
+    """Apple answers an empty playlist's tracks with 404; that is contents, not a
+    failed read."""
+    responses.add(responses.GET, f"{amp_api.AMP}/me/library/playlists/p.1/tracks", status=404)
     assert amp_api.get_tracks("p.1") == []
 
 
@@ -488,7 +496,7 @@ def test_get_tracks_exception_swallowed():
         f"{amp_api.AMP}/me/library/playlists/p.1/tracks",
         body=requests.exceptions.ReadTimeout("slow"),
     )
-    assert amp_api.get_tracks("p.1") == []
+    assert amp_api.get_tracks("p.1") is None
 
 
 # --- search_library_songs (non-200, exception) -----------------------------
