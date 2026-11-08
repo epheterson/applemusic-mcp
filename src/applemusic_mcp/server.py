@@ -1552,7 +1552,7 @@ def _playlist_move_api(playlist: str, folder: str) -> str:
 
 
 def _pick_resolved_song(
-    candidates: list[dict], name: str, artist: str = ""
+    candidates: list[dict], name: str, artist: str = "", strict_artist: bool = False
 ) -> tuple[Optional[dict], str]:
     """Pick a DEFENSIBLE match from resolver candidates, or nothing.
 
@@ -1567,6 +1567,9 @@ def _pick_resolved_song(
 
     Candidates are the flat ``{name, artist, ...}`` dicts the amp_api searches return.
     Returns (chosen, confidence) where confidence is "exact" | "partial" | "".
+
+    With ``strict_artist`` a given artist must match. Library searches go by title
+    alone, so without it "Hey Jude" by Wilson Pickett would pick the Beatles' one.
     """
     nl = name.strip().lower()
     al = artist.strip().lower()
@@ -1574,7 +1577,7 @@ def _pick_resolved_song(
     def artist_ok(c: dict) -> bool:
         return not al or al in (c.get("artist", "") or "").strip().lower()
 
-    for want_artist in (True, False) if al else (False,):
+    for want_artist in ((True,) if strict_artist else (True, False)) if al else (False,):
         pool = [c for c in candidates if artist_ok(c)] if want_artist else candidates
         for c in pool:
             if (c.get("name", "") or "").strip().lower() == nl:
@@ -1668,10 +1671,15 @@ def _playlist_add_api(
                 pick, _conf = _pick_resolved_song(songs, r.value, want_artist)
                 hit = {"id": pick["id"], **pick} if pick else None
             else:
-                libs = amp_api.search_library_songs(q, 5)
-                pick, _conf = _pick_resolved_song(libs, r.value, want_artist)
+                # By title alone: Apple's library search finds nothing for
+                # "title artist". The picker matches the artist on the results.
+                libs = amp_api.search_library_songs(r.value, 25)
+                pick, _conf = _pick_resolved_song(libs, r.value, want_artist, strict_artist=True)
                 if pick:
-                    hit = {"id": pick.get("catalog_id"), **pick}
+                    # The catalog id goes in "id"; the library id is kept for a song
+                    # that has no catalog id. (Spreading pick last let its library
+                    # id overwrite the catalog id.)
+                    hit = {**pick, "id": pick.get("catalog_id"), "library_id": pick.get("id")}
                 else:
                     skipped.append(
                         f"{r.value} (not in your library — set auto_add=True to add it from the catalog)"
@@ -1691,7 +1699,7 @@ def _playlist_add_api(
                 skipped.append(f"{hit.get('name')} - {hit.get('artist')}")
             else:
                 cid = hit.get("id")
-                items.append(cid if cid else (hit["id"], "library-songs"))
+                items.append(cid if cid else (hit.get("library_id"), "library-songs"))
                 added_names.append(f"{hit.get('name')} - {hit.get('artist')}")
                 if cid:
                     existing_ids.add(str(cid))
@@ -1791,8 +1799,9 @@ def _library_remove_api(track: str, artist: str = "") -> str:
     find matching library songs, then DELETE each by its library-song id."""
     if not track:
         return "Error: Provide track parameter"
-    term = f"{track} {artist}".strip()
-    songs = amp_api.search_library_songs(term)
+    # By title alone: Apple's library search finds nothing for "title artist".
+    # The artist is matched on the results below.
+    songs = amp_api.search_library_songs(track)
     tl = track.lower()
     al = artist.lower()
     matches = [
@@ -2602,8 +2611,9 @@ def _find_track_id(name: str, artist: str = "") -> tuple[str | None, str | None,
     """
     search_term = f"{name} {artist}".strip() if artist else name
 
-    # 1. Search library first
-    library_songs = _search_library_songs(search_term, limit=5)
+    # 1. Search library first, by title alone: Apple's library search finds
+    # nothing for "title artist". The artist is matched on the results.
+    library_songs = _search_library_songs(name, limit=25)
     for song in library_songs:
         attrs = song.get("attributes", {})
         song_name = attrs.get("name", "")
@@ -4232,8 +4242,11 @@ def _playlist_add_preview(
             # Mirror the real add: with auto_add off it attaches only what's ALREADY
             # in your library and never pulls from the catalog. Searching the catalog
             # here would promise adds that the real run skips.
-            libs = amp_api.search_library_songs(f"{r.value} {r.artist or artist}".strip(), 5)
-            pick, lib_conf = _pick_resolved_song(libs, r.value, r.artist or artist)
+            # By title alone, as the real add does (see _playlist_add_api).
+            libs = amp_api.search_library_songs(r.value, 25)
+            pick, lib_conf = _pick_resolved_song(
+                libs, r.value, r.artist or artist, strict_artist=True
+            )
             libs = [pick] if pick else []
             if not libs:
                 would_skip.append(
@@ -5010,19 +5023,6 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
             undo_info={"playlist_name": new_name, "playlist_id": new_playlist_id},
         )
         fuzzy_info = _format_fuzzy_match(resolved.fuzzy_match)
-        return (
-            f"Created '{new_name}' (ID: {new_playlist_id}) with {added} tracks (macOS){fuzzy_info}"
-        )
-
-    # === API mode (by ID) ===
-    # Token is only required in this branch — AS-mode above doesn't need it.
-    try:
-        headers = get_headers()
-
-        # Get source playlist tracks
-        all_tracks = []
-        offset = 0
-        while True:
         if added < total:
             failed_list = ", ".join(refused[:5])
             if len(refused) > 5:
@@ -5037,6 +5037,19 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
                 f"Created '{new_name}' (ID: {new_playlist_id}) with {added}/{total} tracks. "
                 f"Music.app couldn't copy {total - added}{failed_note}{fuzzy_info}"
             )
+        return (
+            f"Created '{new_name}' (ID: {new_playlist_id}) with {added} tracks (macOS){fuzzy_info}"
+        )
+
+    # === API mode (by ID) ===
+    # Token is only required in this branch — AS-mode above doesn't need it.
+    try:
+        headers = get_headers()
+
+        # Get source playlist tracks
+        all_tracks = []
+        offset = 0
+        while True:
             response = requests.get(
                 f"{BASE_URL}/me/library/playlists/{resolved.api_id}/tracks",
                 headers=headers,

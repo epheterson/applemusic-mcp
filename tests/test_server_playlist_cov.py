@@ -6676,3 +6676,99 @@ class TestPlaylistTracksOffsets:
 
         (details,) = logged
         assert details["track_count"] == 10
+
+
+class TestLibrarySearchByTitle:
+    """Apple's library search finds nothing for "title artist": verified live, three
+    library songs that "Hey Jude" alone finds came back empty with the artist
+    appended. So every web-API library lookup by name and artist missed, and add
+    said "not in your library" about songs that were. Search the title; the
+    artist is matched on the results."""
+
+    SONG = {"id": "i.lib1", "name": "Hey Jude", "artist": "The Beatles", "catalog_id": "123"}
+
+    def _apple_like_search(self, monkeypatch):
+        terms = []
+
+        def search(term, limit=25):
+            terms.append(term)
+            return [dict(self.SONG)] if term == "Hey Jude" else []
+
+        monkeypatch.setattr(server.amp_api, "search_library_songs", search)
+        return terms
+
+    def test_add_finds_a_library_song_named_with_its_artist(self, monkeypatch):
+        """Also sends the song's catalog id. The library id used to overwrite it, so
+        add posted i.lib1 as a catalog song and then reported it as not stored
+        (live: "Added 0 ... NOT added" for a track that was in the playlist)."""
+        self._apple_like_search(monkeypatch)
+        sent = []
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda pid, items: sent.extend(items) or (True, "ok")
+        )
+        reads = iter([[], [{"catalog_id": "123", "name": "Hey Jude"}]])
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: next(reads))
+
+        result = server._playlist_add_api("p.1", "Hey Jude", "The Beatles", auto_add=False)
+
+        assert sent == ["123"]
+        assert "Added 1 track(s)" in result and "NOT added" not in result
+
+    def test_add_a_library_song_without_a_catalog_id(self, monkeypatch):
+        """An uploaded or matched-only song has no catalog id: add it by its library id."""
+        monkeypatch.setattr(
+            server.amp_api,
+            "search_library_songs",
+            lambda term, limit=25: [dict(self.SONG, catalog_id=None)],
+        )
+        sent = []
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda pid, items: sent.extend(items) or (True, "ok")
+        )
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+
+        server._playlist_add_api("p.1", "Hey Jude", "The Beatles", auto_add=False)
+
+        assert sent == [("i.lib1", "library-songs")]
+
+    def test_add_still_matches_the_artist(self, monkeypatch):
+        self._apple_like_search(monkeypatch)
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda *a: pytest.fail("wrong artist must not be added")
+        )
+
+        result = server._playlist_add_api("p.1", "Hey Jude", "Wilson Pickett", auto_add=False)
+
+        assert "not in your library" in result
+
+    def test_preview_finds_it_too(self, monkeypatch):
+        self._apple_like_search(monkeypatch)
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: "p.1")
+        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda n: ("p.1", None))
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+
+        result = server._playlist_add_preview("Mix", "Hey Jude", "The Beatles", auto_add=False)
+
+        assert "not in your library" not in result
+        assert "Hey Jude" in result
+
+    def test_library_remove_finds_it(self, monkeypatch):
+        self._apple_like_search(monkeypatch)
+        monkeypatch.setattr(server.amp_api, "remove_from_library", lambda lid: (True, "ok"))
+
+        result = server._library_remove_api("Hey Jude", "The Beatles")
+
+        assert result.startswith("Removed from your library: Hey Jude")
+
+    def test_find_track_id_prefers_the_library_copy(self, monkeypatch):
+        song = {"id": "i.lib1", "attributes": {"name": "Hey Jude", "artistName": "The Beatles"}}
+        monkeypatch.setattr(
+            server,
+            "_search_library_songs",
+            lambda q, limit=5: [song] if q == "Hey Jude" else [],
+        )
+        monkeypatch.setattr(server, "_search_catalog_songs", lambda q, limit=5: [])
+
+        assert server._find_track_id("Hey Jude", "The Beatles")[0] == "i.lib1"
