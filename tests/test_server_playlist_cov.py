@@ -1515,6 +1515,42 @@ class TestPlaylistSearch:
 # ---------------------------------------------------------------------------
 
 
+def _as_copy_source(monkeypatch, total, copied=None, copy_error=None, refused=()):
+    """Stub the macOS copy path: a source of `total` tracks, `copied` of which land."""
+    calls = []
+    monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+    monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
+    monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
+    monkeypatch.setattr(
+        server.asc, "get_playlist_tracks_page", lambda name, offset, limit: (True, [], total)
+    )
+    monkeypatch.setattr(
+        server.asc,
+        "get_playlist_persistent_id",
+        lambda name: calls.append(("id", name)) or (True, "SRCPERSIST"),
+    )
+
+    def create(name, desc=""):
+        calls.append(("create", name))
+        return True, "NEWPERSIST"
+
+    monkeypatch.setattr(server.asc, "create_playlist", create)
+
+    def copy(source, dest_id):
+        calls.append((source, dest_id))
+        if copy_error:
+            return False, copy_error
+        return True, (total if copied is None else copied, total, list(refused))
+
+    monkeypatch.setattr(server.asc, "copy_playlist_tracks", copy)
+    monkeypatch.setattr(
+        server.asc,
+        "add_track_to_playlist",
+        lambda *a, **k: pytest.fail("copy must not look tracks up by name"),
+    )
+    return calls
+
+
 class TestPlaylistCopy:
     def test_no_new_name_error(self, monkeypatch):
         result = server._playlist_copy("Source", "")
@@ -1522,96 +1558,74 @@ class TestPlaylistCopy:
         assert "new_name" in result.lower()
 
     def test_applescript_success(self, monkeypatch):
-        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
-        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
-        monkeypatch.setattr(
-            server.asc,
-            "get_all_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {"name": "Hey Jude", "artist": "Beatles"},
-                    {"name": "Let It Be", "artist": "Beatles"},
-                ],
-            ),
-        )
-        monkeypatch.setattr(
-            server.asc, "create_playlist", lambda name, desc="": (True, "NEWPERSIST")
-        )
-        monkeypatch.setattr(
-            server.asc, "add_track_to_playlist", lambda pl, name, artist: (True, "ok")
-        )
+        calls = _as_copy_source(monkeypatch, 2)
         result = server._playlist_copy("Source PL", "Copy PL")
         assert "Copy PL" in result
         assert "NEWPERSIST" in result
-        assert "2" in result
+        assert "with 2 tracks" in result
+        assert calls == [("id", "Source PL"), ("create", "Copy PL"), ("SRCPERSIST", "NEWPERSIST")]
 
     def test_applescript_empty_source(self, monkeypatch):
-        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
-        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
-        monkeypatch.setattr(server.asc, "get_all_playlist_tracks", lambda name: (True, []))
+        calls = _as_copy_source(monkeypatch, 0)
         result = server._playlist_copy("Source PL", "Copy PL")
         assert "Error" in result
         assert "empty" in result.lower()
+        assert [c for c in calls if c[0] == "create"] == []
 
     def test_applescript_source_read_fails(self, monkeypatch):
-        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
-        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
+        _as_copy_source(monkeypatch, 2)
         monkeypatch.setattr(
-            server.asc, "get_all_playlist_tracks", lambda name: (False, "Music.app error")
+            server.asc, "get_playlist_tracks_page", lambda *a: (False, "Music.app error", 0)
         )
         result = server._playlist_copy("Source PL", "Copy PL")
         assert "Error" in result
 
     def test_applescript_create_fails(self, monkeypatch):
-        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
-        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
-        monkeypatch.setattr(
-            server.asc,
-            "get_all_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {"name": "Hey Jude", "artist": "Beatles"},
-                ],
-            ),
-        )
+        calls = _as_copy_source(monkeypatch, 1)
         monkeypatch.setattr(server.asc, "create_playlist", lambda name, desc="": (False, "error"))
         result = server._playlist_copy("Source PL", "Copy PL")
         assert "Error" in result
+        assert calls == [("id", "Source PL")]
+
+    def test_applescript_copy_to_the_same_name_copies_the_original(self, monkeypatch):
+        """The source is pinned by persistent ID before the copy exists, so copying
+        "Mix" to a new "Mix" can't pick the empty new one (Sourcery, PR #81)."""
+        calls = _as_copy_source(monkeypatch, 3)
+        server._playlist_copy("Source PL", "Source PL")
+        assert calls[0] == ("id", "Source PL")
+        assert calls[-1] == ("SRCPERSIST", "NEWPERSIST")
 
     def test_applescript_some_tracks_fail(self, monkeypatch):
-        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
-        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
-        monkeypatch.setattr(
-            server.asc,
-            "get_all_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {"name": "Hey Jude", "artist": "Beatles"},
-                    {"name": "Missing Track", "artist": "Unknown"},
-                ],
-            ),
-        )
-        monkeypatch.setattr(
-            server.asc, "create_playlist", lambda name, desc="": (True, "NEWPERSIST")
-        )
-        call_count = [0]
-
-        def mock_add(pl, name, artist):
-            call_count[0] += 1
-            return (True, "ok") if call_count[0] == 1 else (False, "not found")
-
-        monkeypatch.setattr(server.asc, "add_track_to_playlist", mock_add)
+        _as_copy_source(monkeypatch, 972, copied=971, refused=["Blue"])
         result = server._playlist_copy("Source PL", "Copy PL")
         assert "NEWPERSIST" in result
-        assert "Failed" in result
+        assert "with 971/972 tracks" in result
+        assert "Music.app couldn't copy 1: Blue" in result
+
+    def test_applescript_unnamed_drops_are_not_passed_off_as_the_whole_list(self, monkeypatch):
+        """Live, a 12,466-track copy lost 43 tracks and Music.app raised an error
+        for one of them; the rest it dropped silently."""
+        _as_copy_source(monkeypatch, 12466, copied=12423, refused=["Blue"])
+        result = server._playlist_copy("Source PL", "Copy PL")
+        assert "Music.app couldn't copy 43, including Blue" in result
+
+        _as_copy_source(monkeypatch, 10, copied=8)
+        result = server._playlist_copy("Source PL", "Copy PL")
+        assert result.endswith("Music.app couldn't copy 2")
+
+    def test_applescript_copy_fails_names_the_new_playlist(self, monkeypatch):
+        """The playlist exists by the time copying fails; say so, with its ID, and
+        log it so it can be found and undone."""
+        logged = []
+        monkeypatch.setattr(
+            server.audit_log, "log_action", lambda a, d, **k: logged.append((a, d, k))
+        )
+        _as_copy_source(monkeypatch, 5, copy_error="AppleScript timed out after 30 seconds")
+        result = server._playlist_copy("Source PL", "Copy PL")
+        assert result.startswith("Error: created 'Copy PL' (ID: NEWPERSIST)")
+        action, details, extra = logged[0]
+        assert action == "copy_playlist" and details["error"]
+        assert extra["undo_info"]["playlist_id"] == "NEWPERSIST"
 
     def test_no_applescript_for_name_error(self, monkeypatch):
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
@@ -2113,25 +2127,7 @@ class TestPlaylistDispatcher:
 
     # --- copy ---
     def test_action_copy(self, monkeypatch):
-        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
-        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
-        monkeypatch.setattr(
-            server.asc,
-            "get_all_playlist_tracks",
-            lambda name: (
-                True,
-                [
-                    {"name": "Song A", "artist": "Artist A"},
-                ],
-            ),
-        )
-        monkeypatch.setattr(
-            server.asc, "create_playlist", lambda name, desc="": (True, "NEWPERSIST")
-        )
-        monkeypatch.setattr(
-            server.asc, "add_track_to_playlist", lambda pl, name, artist: (True, "ok")
-        )
+        _as_copy_source(monkeypatch, 1)
         result = server.playlist(action="copy", source="Source PL", new_name="Copy PL")
         assert "Copy PL" in result
 
@@ -3215,23 +3211,14 @@ class TestPlaylistAddApiMode:
 
 
 class TestPlaylistCopyEdgeCases:
-    def test_applescript_many_failures_truncated(self, monkeypatch):
-        """Line 3862: >5 failures -> truncated failed list."""
-        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
-        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Src"}]))
-        monkeypatch.setattr(
-            server.asc,
-            "get_all_playlist_tracks",
-            lambda name: (True, [{"name": f"Track {i}", "artist": "Artist"} for i in range(7)]),
-        )
-        monkeypatch.setattr(server.asc, "create_playlist", lambda name, desc="": (True, "NEWP"))
-        monkeypatch.setattr(
-            server.asc, "add_track_to_playlist", lambda pl, name, artist: (False, "not found")
-        )
+    def test_applescript_failures_audited(self, monkeypatch):
+        logged = []
+        monkeypatch.setattr(server.audit_log, "log_action", lambda a, d, **k: logged.append(d))
+        _as_copy_source(monkeypatch, 7, copied=0, refused=[f"Track {i}" for i in range(7)])
         result = server._playlist_copy("Src", "Copy")
-        assert "Failed" in result
-        assert "..." in result  # truncation indicator
+        assert "with 0/7 tracks" in result
+        assert "Track 4, ... (+2 more)" in result
+        assert logged[0]["failed_count"] == 7 and logged[0]["track_count"] == 0
 
     @responses_lib.activate
     def test_api_copy_empty_tracks_from_200(
@@ -6626,31 +6613,15 @@ def test_playlist_tool_advertises_its_default_limit():
 
 
 class TestPlaylistCopyLongPlaylist:
-    def test_copy_reads_the_whole_source_not_the_first_500(self, monkeypatch):
-        """Copying a 1200-track playlist must copy 1200 tracks. The source used to be
-        read through the 500-track default, so the copy silently stopped at 500."""
-        source = [{"name": f"Song {i}", "artist": "Artist"} for i in range(1200)]
-        added = []
-        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
-        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda name: (None, None))
-        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, [{"name": "Source PL"}]))
-        monkeypatch.setattr(server.asc, "get_all_playlist_tracks", lambda name: (True, source))
-        monkeypatch.setattr(
-            server.asc,
-            "get_playlist_tracks",
-            lambda *a, **k: pytest.fail("copy must not use the bounded reader"),
-        )
-        monkeypatch.setattr(server.asc, "create_playlist", lambda name, desc="": (True, "NEW"))
-
-        def add(pl, name, artist):
-            added.append(name)
-            return True, "ok"
-
-        monkeypatch.setattr(server.asc, "add_track_to_playlist", add)
+    def test_copy_copies_the_whole_source_not_the_first_500(self, monkeypatch):
+        """A 1200-track copy reports all 1200. The copy used to stop at 500; the
+        paging itself is covered by test_copy_playlist_tracks_duplicates_in_chunks
+        in test_applescript_cov.py."""
+        calls = _as_copy_source(monkeypatch, 1200)
         result = server._playlist_copy("Source PL", "Copy PL")
 
-        assert len(added) == 1200
-        assert "1200" in result
+        assert calls == [("id", "Source PL"), ("create", "Copy PL"), ("SRCPERSIST", "NEWPERSIST")]
+        assert "with 1200 tracks" in result
 
 
 class TestPlaylistTracksOffsets:
@@ -6732,3 +6703,99 @@ class TestPlaylistTracksOffsets:
 
         (details,) = logged
         assert details["track_count"] == 10
+
+
+class TestLibrarySearchByTitle:
+    """Apple's library search finds nothing for "title artist": verified live, three
+    library songs that "Hey Jude" alone finds came back empty with the artist
+    appended. So every web-API library lookup by name and artist missed, and add
+    said "not in your library" about songs that were. Search the title; the
+    artist is matched on the results."""
+
+    SONG = {"id": "i.lib1", "name": "Hey Jude", "artist": "The Beatles", "catalog_id": "123"}
+
+    def _apple_like_search(self, monkeypatch):
+        terms = []
+
+        def search(term, limit=25):
+            terms.append(term)
+            return [dict(self.SONG)] if term == "Hey Jude" else []
+
+        monkeypatch.setattr(server.amp_api, "search_library_songs", search)
+        return terms
+
+    def test_add_finds_a_library_song_named_with_its_artist(self, monkeypatch):
+        """Also sends the song's catalog id. The library id used to overwrite it, so
+        add posted i.lib1 as a catalog song and then reported it as not stored
+        (live: "Added 0 ... NOT added" for a track that was in the playlist)."""
+        self._apple_like_search(monkeypatch)
+        sent = []
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda pid, items: sent.extend(items) or (True, "ok")
+        )
+        reads = iter([[], [{"catalog_id": "123", "name": "Hey Jude"}]])
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: next(reads))
+
+        result = server._playlist_add_api("p.1", "Hey Jude", "The Beatles", auto_add=False)
+
+        assert sent == ["123"]
+        assert "Added 1 track(s)" in result and "NOT added" not in result
+
+    def test_add_a_library_song_without_a_catalog_id(self, monkeypatch):
+        """An uploaded or matched-only song has no catalog id: add it by its library id."""
+        monkeypatch.setattr(
+            server.amp_api,
+            "search_library_songs",
+            lambda term, limit=25: [dict(self.SONG, catalog_id=None)],
+        )
+        sent = []
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda pid, items: sent.extend(items) or (True, "ok")
+        )
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+
+        server._playlist_add_api("p.1", "Hey Jude", "The Beatles", auto_add=False)
+
+        assert sent == [("i.lib1", "library-songs")]
+
+    def test_add_still_matches_the_artist(self, monkeypatch):
+        self._apple_like_search(monkeypatch)
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+        monkeypatch.setattr(
+            server.amp_api, "add_tracks", lambda *a: pytest.fail("wrong artist must not be added")
+        )
+
+        result = server._playlist_add_api("p.1", "Hey Jude", "Wilson Pickett", auto_add=False)
+
+        assert "not in your library" in result
+
+    def test_preview_finds_it_too(self, monkeypatch):
+        self._apple_like_search(monkeypatch)
+        monkeypatch.setattr(server.amp_api, "get_tracks", lambda pid: [])
+        monkeypatch.setattr(server.amp_api, "resolve_playlist_id", lambda n, **k: "p.1")
+        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda n: ("p.1", None))
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
+
+        result = server._playlist_add_preview("Mix", "Hey Jude", "The Beatles", auto_add=False)
+
+        assert "not in your library" not in result
+        assert "Hey Jude" in result
+
+    def test_library_remove_finds_it(self, monkeypatch):
+        self._apple_like_search(monkeypatch)
+        monkeypatch.setattr(server.amp_api, "remove_from_library", lambda lid: (True, "ok"))
+
+        result = server._library_remove_api("Hey Jude", "The Beatles")
+
+        assert result.startswith("Removed from your library: Hey Jude")
+
+    def test_find_track_id_prefers_the_library_copy(self, monkeypatch):
+        song = {"id": "i.lib1", "attributes": {"name": "Hey Jude", "artistName": "The Beatles"}}
+        monkeypatch.setattr(
+            server,
+            "_search_library_songs",
+            lambda q, limit=5: [song] if q == "Hey Jude" else [],
+        )
+        monkeypatch.setattr(server, "_search_catalog_songs", lambda q, limit=5: [])
+
+        assert server._find_track_id("Hey Jude", "The Beatles")[0] == "i.lib1"

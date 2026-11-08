@@ -1552,7 +1552,7 @@ def _playlist_move_api(playlist: str, folder: str) -> str:
 
 
 def _pick_resolved_song(
-    candidates: list[dict], name: str, artist: str = ""
+    candidates: list[dict], name: str, artist: str = "", strict_artist: bool = False
 ) -> tuple[Optional[dict], str]:
     """Pick a DEFENSIBLE match from resolver candidates, or nothing.
 
@@ -1567,6 +1567,9 @@ def _pick_resolved_song(
 
     Candidates are the flat ``{name, artist, ...}`` dicts the amp_api searches return.
     Returns (chosen, confidence) where confidence is "exact" | "partial" | "".
+
+    With ``strict_artist`` a given artist must match. Library searches go by title
+    alone, so without it "Hey Jude" by Wilson Pickett would pick the Beatles' one.
     """
     nl = name.strip().lower()
     al = artist.strip().lower()
@@ -1574,7 +1577,7 @@ def _pick_resolved_song(
     def artist_ok(c: dict) -> bool:
         return not al or al in (c.get("artist", "") or "").strip().lower()
 
-    for want_artist in (True, False) if al else (False,):
+    for want_artist in ((True,) if strict_artist else (True, False)) if al else (False,):
         pool = [c for c in candidates if artist_ok(c)] if want_artist else candidates
         for c in pool:
             if (c.get("name", "") or "").strip().lower() == nl:
@@ -1668,10 +1671,15 @@ def _playlist_add_api(
                 pick, _conf = _pick_resolved_song(songs, r.value, want_artist)
                 hit = {"id": pick["id"], **pick} if pick else None
             else:
-                libs = amp_api.search_library_songs(q, 5)
-                pick, _conf = _pick_resolved_song(libs, r.value, want_artist)
+                # By title alone: Apple's library search finds nothing for
+                # "title artist". The picker matches the artist on the results.
+                libs = amp_api.search_library_songs(r.value, 25)
+                pick, _conf = _pick_resolved_song(libs, r.value, want_artist, strict_artist=True)
                 if pick:
-                    hit = {"id": pick.get("catalog_id"), **pick}
+                    # The catalog id goes in "id"; the library id is kept for a song
+                    # that has no catalog id. (Spreading pick last let its library
+                    # id overwrite the catalog id.)
+                    hit = {**pick, "id": pick.get("catalog_id"), "library_id": pick.get("id")}
                 else:
                     skipped.append(
                         f"{r.value} (not in your library — set auto_add=True to add it from the catalog)"
@@ -1691,7 +1699,7 @@ def _playlist_add_api(
                 skipped.append(f"{hit.get('name')} - {hit.get('artist')}")
             else:
                 cid = hit.get("id")
-                items.append(cid if cid else (hit["id"], "library-songs"))
+                items.append(cid if cid else (hit.get("library_id"), "library-songs"))
                 added_names.append(f"{hit.get('name')} - {hit.get('artist')}")
                 if cid:
                     existing_ids.add(str(cid))
@@ -1791,8 +1799,9 @@ def _library_remove_api(track: str, artist: str = "") -> str:
     find matching library songs, then DELETE each by its library-song id."""
     if not track:
         return "Error: Provide track parameter"
-    term = f"{track} {artist}".strip()
-    songs = amp_api.search_library_songs(term)
+    # By title alone: Apple's library search finds nothing for "title artist".
+    # The artist is matched on the results below.
+    songs = amp_api.search_library_songs(track)
     tl = track.lower()
     al = artist.lower()
     matches = [
@@ -2621,8 +2630,9 @@ def _find_track_id(name: str, artist: str = "") -> tuple[str | None, str | None,
     """
     search_term = f"{name} {artist}".strip() if artist else name
 
-    # 1. Search library first
-    library_songs = _search_library_songs(search_term, limit=5)
+    # 1. Search library first, by title alone: Apple's library search finds
+    # nothing for "title artist". The artist is matched on the results.
+    library_songs = _search_library_songs(name, limit=25)
     for song in library_songs:
         attrs = song.get("attributes", {})
         song_name = attrs.get("name", "")
@@ -4253,8 +4263,11 @@ def _playlist_add_preview(
             # Mirror the real add: with auto_add off it attaches only what's ALREADY
             # in your library and never pulls from the catalog. Searching the catalog
             # here would promise adds that the real run skips.
-            libs = amp_api.search_library_songs(f"{r.value} {r.artist or artist}".strip(), 5)
-            pick, lib_conf = _pick_resolved_song(libs, r.value, r.artist or artist)
+            # By title alone, as the real add does (see _playlist_add_api).
+            libs = amp_api.search_library_songs(r.value, 25)
+            pick, lib_conf = _pick_resolved_song(
+                libs, r.value, r.artist or artist, strict_artist=True
+            )
             libs = [pick] if pick else []
             if not libs:
                 would_skip.append(
@@ -4994,62 +5007,72 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
                 "off macOS — add by track instead."
             )
 
-        # Get every track of the source playlist via AppleScript. This used to read
-        # the first 500 only, so copying a longer playlist silently dropped the rest.
-        success, source_tracks = asc.get_all_playlist_tracks(resolved.applescript_name)
+        success, _page, total = asc.get_playlist_tracks_page(resolved.applescript_name, 0, 1)
         if not success:
-            return f"Error: {_format_applescript_error(str(source_tracks), 'read source playlist')}"
-        if not source_tracks:
+            return f"Error: {_format_applescript_error(str(_page), 'read source playlist')}"
+        if not total:
             return f"Error: Playlist '{resolved.applescript_name}' is empty"
+        # Pin the source before the copy exists: by name, copying "Mix" to a new
+        # "Mix" could find the new, empty one.
+        success, source_id = asc.get_playlist_persistent_id(resolved.applescript_name)
+        if not success:
+            return f"Error: {_format_applescript_error(str(source_id), 'read source playlist')}"
 
-        # Create new playlist via AppleScript
         success, new_playlist_id = asc.create_playlist(new_name, "")
         if not success:
             return f"Error creating playlist: {_format_applescript_error(str(new_playlist_id), 'create destination playlist')}"
 
-        # Add tracks to new playlist via AppleScript
-        added = 0
-        failed = []
-        for track in source_tracks:
-            track_name = track.get("name", "")
-            artist = track.get("artist", "")
-            if track_name:
-                success, _ = asc.add_track_to_playlist(
-                    new_name, track_name, artist if artist else None
-                )
-                if success:
-                    added += 1
-                else:
-                    failed.append(track_name)
-
-        if failed:
-            failed_list = ", ".join(failed[:5])
-            if len(failed) > 5:
-                failed_list += f", ... (+{len(failed) - 5} more)"
+        # Copy the source's own tracks into the new playlist, found by its
+        # persistent ID. Looking each track up by name took ~0.4s a track and
+        # could add a different version, or add to an older playlist that
+        # already had the new name.
+        success, result = asc.copy_playlist_tracks(source_id, new_playlist_id)
+        if not success:
+            # The playlist exists now, possibly with some tracks: log it so it can
+            # be found and undone.
             audit_log.log_action(
                 "copy_playlist",
                 {
                     "source": resolved.applescript_name,
                     "destination": new_name,
-                    "track_count": added,
-                    "failed_count": len(failed),
+                    "error": str(result),
                     "method": "applescript",
                 },
                 undo_info={"playlist_name": new_name, "playlist_id": new_playlist_id},
             )
-            fuzzy_info = _format_fuzzy_match(resolved.fuzzy_match)
-            return f"Created '{new_name}' (ID: {new_playlist_id}) with {added}/{len(source_tracks)} tracks. Failed: {failed_list}{fuzzy_info}"
+            return (
+                f"Error: created '{new_name}' (ID: {new_playlist_id}) but copying into it failed: "
+                f"{_format_applescript_error(str(result), 'copy tracks')}"
+            )
+        added, total, refused = result
+        details = {
+            "source": resolved.applescript_name,
+            "destination": new_name,
+            "track_count": added,
+            "method": "applescript",
+        }
+        if added < total:
+            details["failed_count"] = total - added
         audit_log.log_action(
             "copy_playlist",
-            {
-                "source": resolved.applescript_name,
-                "destination": new_name,
-                "track_count": added,
-                "method": "applescript",
-            },
+            details,
             undo_info={"playlist_name": new_name, "playlist_id": new_playlist_id},
         )
         fuzzy_info = _format_fuzzy_match(resolved.fuzzy_match)
+        if added < total:
+            failed_list = ", ".join(refused[:5])
+            if len(refused) > 5:
+                failed_list += f", ... (+{len(refused) - 5} more)"
+            # Music.app drops some tracks from a range copy without an error, so
+            # the names can cover fewer tracks than are missing.
+            failed_note = ""
+            if refused:
+                partial = len(refused) < total - added
+                failed_note = f", including {failed_list}" if partial else f": {failed_list}"
+            return (
+                f"Created '{new_name}' (ID: {new_playlist_id}) with {added}/{total} tracks. "
+                f"Music.app couldn't copy {total - added}{failed_note}{fuzzy_info}"
+            )
         return (
             f"Created '{new_name}' (ID: {new_playlist_id}) with {added} tracks (macOS){fuzzy_info}"
         )

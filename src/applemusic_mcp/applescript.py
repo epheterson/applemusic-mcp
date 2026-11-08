@@ -1245,6 +1245,125 @@ def get_playlist_tracks_matching(
             return True, collected, None
 
 
+def get_playlist_persistent_id(playlist_name: str) -> tuple[bool, str]:
+    """Persistent ID of the playlist a name resolves to (as the readers find it)."""
+    safe_name = _escape_for_applescript(playlist_name)
+    script = f"""
+    tell application "Music"
+{_find_playlist_applescript(safe_name)}
+        return persistent ID of targetPlaylist
+    end tell
+    """
+    success, output = run_applescript(script)
+    if output.startswith("ERROR:"):
+        return False, output[6:]
+    return success, output
+
+
+def copy_playlist_tracks(source_id: str, dest_id: str) -> tuple[bool, Any]:
+    """Copy every track of a playlist into another, in source order.
+
+    Duplicates the source's own track references a page at a time, so each
+    Music.app call stays far under the 30s osascript timeout (about half a
+    second per 500 tracks). Copying used to look every track up again by name,
+    one call each: slow, and it could pick a different version of the song.
+    A track Music.app refuses is skipped and named, not fatal.
+
+    Args:
+        source_id: Persistent ID of the playlist to copy from. By ID, because
+            by name it could be the new copy itself when the names are the same.
+        dest_id: Persistent ID of the playlist to copy into
+
+    Returns:
+        (True, (tracks_in_destination, tracks_in_source, refused_names))
+        or (False, error).
+    """
+    safe_source = _escape_for_applescript(source_id)
+    safe_dest = _escape_for_applescript(dest_id)
+    first_total = None
+    position = 1
+    refused: list[str] = []
+    while True:
+        script = f"""
+    tell application "Music"
+        try
+            set targetPlaylist to first playlist whose persistent ID is "{safe_source}"
+        on error
+            return "ERROR:Source playlist not found"
+        end try
+        try
+            set destPlaylist to first user playlist whose persistent ID is "{safe_dest}"
+        on error
+            return "ERROR:Destination playlist not found"
+        end try
+        set trackCount to count of tracks of targetPlaylist
+        set skipped to ""
+        set startPos to {position}
+        if trackCount >= startPos then
+            set endPos to startPos + {_PLAYLIST_PAGE_SIZE - 1}
+            if endPos > trackCount then set endPos to trackCount
+            set pos to startPos
+            repeat while pos is less than or equal to endPos
+                set countBefore to count of tracks of destPlaylist
+                try
+                    duplicate (tracks pos thru endPos of targetPlaylist) to destPlaylist
+                    set pos to endPos + 1
+                on error
+                    -- A range copy stops at the first track Music.app refuses,
+                    -- with the tracks before it already copied. Copying the range
+                    -- again duplicates them, so find where it stopped: the last
+                    -- track that landed, by persistent ID, in the source range.
+                    -- (The count that landed isn't enough: Music.app also drops
+                    -- some tracks without an error.)
+                    set countNow to count of tracks of destPlaylist
+                    set landed to countNow - countBefore
+                    if landed > 0 then
+                        set lastID to persistent ID of track countNow of destPlaylist
+                        set rangeIDs to persistent ID of tracks pos thru endPos of targetPlaylist
+                        set stopAt to 0
+                        -- At least `landed` source tracks were processed, so start
+                        -- there; that also skips an earlier copy of the same track.
+                        repeat with i from landed to count of rangeIDs
+                            if item i of rangeIDs is lastID then
+                                set stopAt to i
+                                exit repeat
+                            end if
+                        end repeat
+                        if stopAt is 0 then set stopAt to landed
+                        set pos to pos + stopAt
+                    end if
+                    try
+                        set skipped to skipped & linefeed & (name of track pos of targetPlaylist)
+                    on error
+                        set skipped to skipped & linefeed & "track " & pos
+                    end try
+                    set pos to pos + 1
+                end try
+            end repeat
+        end if
+        return (trackCount as text) & "," & ((count of tracks of destPlaylist) as text) & skipped
+    end tell
+    """
+        success, output = run_applescript(script)
+        if not success:
+            return False, output
+        if output.startswith("ERROR:"):
+            return False, output[6:]
+        header, *names = output.split("\n")
+        try:
+            total, copied = (int(n) for n in header.split(","))
+        except ValueError:
+            return False, f"Unexpected reply from Music.app: {output[:80]}"
+        refused.extend(names)
+        if first_total is None:
+            first_total = total
+        elif total != first_total:
+            return False, _PLAYLIST_CHANGED
+        position += _PLAYLIST_PAGE_SIZE
+        if position > total:
+            return True, (copied, total, refused)
+
+
 def create_playlist(name: str, description: str = "") -> tuple[bool, str]:
     """Create a new playlist.
 
