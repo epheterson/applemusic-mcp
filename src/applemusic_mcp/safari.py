@@ -32,7 +32,7 @@ tell application "Safari"
     set theTab to missing value
     repeat with w in windows
         repeat with t in tabs of w
-            if (URL of t) starts with "https://music.apple.com" then
+            if (URL of t) is "https://music.apple.com" or (URL of t) starts with "https://music.apple.com/" then
                 set theTab to t
                 exit repeat
             end if
@@ -63,7 +63,7 @@ tell application "Safari"
     activate
     repeat with w in windows
         repeat with t in tabs of w
-            if (URL of t) starts with "https://music.apple.com" then
+            if (URL of t) is "https://music.apple.com" or (URL of t) starts with "https://music.apple.com/" then
                 set current tab of w to t
                 set index of w to 1
                 return "shown"
@@ -108,9 +108,9 @@ def media_user_token() -> tuple[bool, str]:
     return True, token
 
 
-def show_sign_in() -> None:
+def show_sign_in() -> tuple[bool, str]:
     """Bring Safari's Apple Music tab to the front so the person can sign in."""
-    run_applescript(_SHOW_SCRIPT)
+    return run_applescript(_SHOW_SCRIPT)
 
 
 def wait_for_sign_in(
@@ -118,11 +118,14 @@ def wait_for_sign_in(
 ) -> tuple[bool, str]:
     """Check Safari every `interval` seconds until the person has signed in.
 
-    Returns as soon as there's a token, or on any other error (waiting won't
-    fix a blocked setting), or with the not-signed-in result at `timeout`."""
+    Returns as soon as there's a token, when the JavaScript setting is off
+    (waiting won't turn it on), or with the last result at `timeout`. Other
+    errors, such as one osascript timeout, are retried."""
     deadline = clock() + timeout
     while True:
         ok, res = media_user_token()
-        if ok or res != _NOT_SIGNED_IN_MSG or clock() >= deadline:
+        if ok or res == _SETTING_OFF_MSG:
+            return ok, res
+        if clock() + interval >= deadline:
             return ok, res
         sleep(interval)

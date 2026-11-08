@@ -1290,9 +1290,28 @@ def copy_playlist_tracks(source_name: str, dest_id: str) -> tuple[bool, Any]:
                     set pos to endPos + 1
                 on error
                     -- A range copy stops at the first track Music.app refuses,
-                    -- with the tracks before it already copied. Note that track
-                    -- and resume after it; copying the range again duplicates.
-                    set pos to pos + ((count of tracks of destPlaylist) - countBefore)
+                    -- with the tracks before it already copied. Copying the range
+                    -- again duplicates them, so find where it stopped: the last
+                    -- track that landed, by persistent ID, in the source range.
+                    -- (The count that landed isn't enough: Music.app also drops
+                    -- some tracks without an error.)
+                    set countNow to count of tracks of destPlaylist
+                    set landed to countNow - countBefore
+                    if landed > 0 then
+                        set lastID to persistent ID of track countNow of destPlaylist
+                        set rangeIDs to persistent ID of tracks pos thru endPos of targetPlaylist
+                        set stopAt to 0
+                        -- At least `landed` source tracks were processed, so start
+                        -- there; that also skips an earlier copy of the same track.
+                        repeat with i from landed to count of rangeIDs
+                            if item i of rangeIDs is lastID then
+                                set stopAt to i
+                                exit repeat
+                            end if
+                        end repeat
+                        if stopAt is 0 then set stopAt to landed
+                        set pos to pos + stopAt
+                    end if
                     try
                         set skipped to skipped & linefeed & (name of track pos of targetPlaylist)
                     on error

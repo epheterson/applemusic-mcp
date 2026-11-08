@@ -970,8 +970,12 @@ def test_copy_playlist_tracks_resumes_after_a_refused_track(monkeypatch):
     asc.copy_playlist_tracks("PL", "ABC")
     script = code_only(recorder.calls[0])
 
-    assert "set pos to pos + ((count of tracks of destPlaylist) - countBefore)" in script
-    assert "repeat with i from" not in script
+    # Where the copy stopped comes from the last track that landed, found in the
+    # source by persistent ID. The count of tracks that landed alone is wrong when
+    # Music.app also dropped a track silently in the same range (cubic, PR #81).
+    assert "persistent ID of track countNow of destPlaylist" in script
+    assert "persistent ID of tracks pos thru endPos of targetPlaylist" in script
+    assert "set pos to pos + ((count of tracks of destPlaylist) - countBefore)" not in script
     # A track whose name can't be read is still listed, by position.
     assert '"track " & pos' in script
 

@@ -18,8 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Which tracks land in the copy | Each track looked up again by title and artist, which could pick a different song with a similar title | The source playlist's own tracks, in order |
 | A new playlist with the same name as an existing one | Tracks could go into the older playlist | Tracks go into the new one, found by its ID |
 
-- A track Music.app won't copy is skipped and named in the result, as before.
-- **Web API (Windows/Linux, and `engine=web` on macOS): songs already in your library were reported as missing.** Since 0.16.0, `playlist add` with `auto_add` off (the default), its `dry_run` preview, and `library remove` searched your library for "title artist", which Apple's library search never matches. They said "not in your library" about songs that were. They now search by title and match the artist on the results; a different artist's song with the same title is never picked.
+- The result says how many tracks didn't copy and names up to five of the ones Music.app refused. It also drops some tracks without an error; those are counted but not named.
+- **Web API (Windows/Linux, and `engine=web` on macOS): songs already in your library were reported as missing.** Since 0.16.0, `playlist add` with `auto_add` off (the default), its `dry_run` preview, and `library remove` searched your library for "title artist", which Apple's library search never matches. They said "not in your library" about songs that were. They now search by title, then keep only results whose artist contains the one you gave, so "Hey Jude" with artist "Beatles" won't pick another artist's recording. The match is by substring: "Adele" also matches "Adele Tribute".
 - **Web API `playlist add` of a library song reported it as not stored when it was.** It sent the song's library id where a catalog id belongs, then didn't find that id when it checked the playlist. It now sends the catalog id, or the library id for a song without one.
 
 ### Changed

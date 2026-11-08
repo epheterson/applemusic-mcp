@@ -5004,6 +5004,18 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
         # already had the new name.
         success, result = asc.copy_playlist_tracks(resolved.applescript_name, new_playlist_id)
         if not success:
+            # The playlist exists now, possibly with some tracks: log it so it can
+            # be found and undone.
+            audit_log.log_action(
+                "copy_playlist",
+                {
+                    "source": resolved.applescript_name,
+                    "destination": new_name,
+                    "error": str(result),
+                    "method": "applescript",
+                },
+                undo_info={"playlist_name": new_name, "playlist_id": new_playlist_id},
+            )
             return (
                 f"Error: created '{new_name}' (ID: {new_playlist_id}) but copying into it failed: "
                 f"{_format_applescript_error(str(result), 'copy tracks')}"

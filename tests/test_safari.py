@@ -5,6 +5,8 @@ by hand on a signed-in Safari. These lock the parsing, the two recoverable-error
 classifications, and the CLI wiring.
 """
 
+import pytest
+
 from applemusic_mcp import safari
 
 
@@ -124,7 +126,7 @@ def test_wait_for_sign_in_gives_up_at_the_timeout(monkeypatch):
         False,
         safari.NOT_SIGNED_IN,
     )
-    assert clock.now == 9
+    assert clock.now == 6  # the last poll is at 6s; one at 9s would start past the deadline
 
 
 def test_wait_for_sign_in_stops_on_a_different_error(monkeypatch):
@@ -138,8 +140,8 @@ def test_wait_for_sign_in_stops_on_a_different_error(monkeypatch):
 
 def test_show_sign_in_brings_the_apple_music_tab_forward(monkeypatch):
     calls = []
-    monkeypatch.setattr(safari, "run_applescript", lambda s: calls.append(s) or (True, ""))
-    safari.show_sign_in()
+    monkeypatch.setattr(safari, "run_applescript", lambda s: calls.append(s) or (True, "shown"))
+    assert safari.show_sign_in() == (True, "shown")
 
     assert "activate" in calls[0] and "https://music.apple.com" in calls[0]
 
@@ -153,7 +155,7 @@ def test_cli_login_safari_waits_for_you_to_sign_in(monkeypatch, capsys):
     saved, shown = {}, []
     monkeypatch.setattr("platform.system", lambda: "Darwin")
     monkeypatch.setattr(safari_mod, "media_user_token", lambda: (False, safari_mod.NOT_SIGNED_IN))
-    monkeypatch.setattr(safari_mod, "show_sign_in", lambda: shown.append(1))
+    monkeypatch.setattr(safari_mod, "show_sign_in", lambda: shown.append(1) or (True, "shown"))
     monkeypatch.setattr(safari_mod, "wait_for_sign_in", lambda: (True, "TOK"))
     monkeypatch.setattr(auth, "save_user_token", lambda t: saved.setdefault("t", t))
 
@@ -169,7 +171,7 @@ def test_cli_login_safari_wait_times_out(monkeypatch, capsys):
 
     monkeypatch.setattr("platform.system", lambda: "Darwin")
     monkeypatch.setattr(safari_mod, "media_user_token", lambda: (False, safari_mod.NOT_SIGNED_IN))
-    monkeypatch.setattr(safari_mod, "show_sign_in", lambda: None)
+    monkeypatch.setattr(safari_mod, "show_sign_in", lambda: (True, "shown"))
     monkeypatch.setattr(safari_mod, "wait_for_sign_in", lambda: (False, safari_mod.NOT_SIGNED_IN))
 
     assert cli.cmd_login(types.SimpleNamespace(dev=False, safari=True)) == 1
@@ -185,8 +187,57 @@ def test_cli_login_safari_ctrl_c_while_waiting(monkeypatch, capsys):
 
     monkeypatch.setattr("platform.system", lambda: "Darwin")
     monkeypatch.setattr(safari_mod, "media_user_token", lambda: (False, safari_mod.NOT_SIGNED_IN))
-    monkeypatch.setattr(safari_mod, "show_sign_in", lambda: None)
+    monkeypatch.setattr(safari_mod, "show_sign_in", lambda: (True, "shown"))
     monkeypatch.setattr(safari_mod, "wait_for_sign_in", interrupted)
 
     assert cli.cmd_login(types.SimpleNamespace(dev=False, safari=True)) == 1
     assert "Stopped waiting" in capsys.readouterr().out
+
+
+def test_scripts_only_trust_the_real_apple_music_host():
+    """`starts with "https://music.apple.com"` also matched
+    https://music.apple.com.example.net, so login could bring that tab forward and
+    read its cookies (cubic, PR #81)."""
+    for script in (safari._HARVEST_SCRIPT, safari._SHOW_SCRIPT):
+        assert 'starts with "https://music.apple.com"' not in script
+        assert 'starts with "https://music.apple.com/"' in script
+
+
+def test_show_sign_in_reports_failure(monkeypatch):
+    monkeypatch.setattr(safari, "run_applescript", lambda s: (False, "Safari isn't there"))
+    assert safari.show_sign_in() == (False, "Safari isn't there")
+
+
+def test_wait_for_sign_in_keeps_going_through_a_passing_error(monkeypatch):
+    """One osascript hiccup shouldn't end a five-minute wait."""
+    replies = [(False, "Couldn't read the session from Safari: timed out"), (True, "TOK")]
+    monkeypatch.setattr(safari, "media_user_token", lambda: replies.pop(0))
+    clock = _Clock()
+
+    assert safari.wait_for_sign_in(300, 3, sleep=clock.sleep, clock=clock) == (True, "TOK")
+
+
+def test_wait_for_sign_in_does_not_poll_past_the_deadline(monkeypatch):
+    polls = []
+    monkeypatch.setattr(
+        safari, "media_user_token", lambda: polls.append(1) or (False, safari.NOT_SIGNED_IN)
+    )
+    clock = _Clock()
+    safari.wait_for_sign_in(9, 3, sleep=clock.sleep, clock=clock)
+
+    assert len(polls) == 3  # at t=0, 3 and 6; none starts at the 9s deadline
+
+
+def test_cli_login_safari_says_when_it_cannot_open_safari(monkeypatch, capsys):
+    from applemusic_mcp import cli, safari as safari_mod
+    import types
+
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    monkeypatch.setattr(safari_mod, "media_user_token", lambda: (False, safari_mod.NOT_SIGNED_IN))
+    monkeypatch.setattr(safari_mod, "show_sign_in", lambda: (False, "Safari isn't there"))
+    monkeypatch.setattr(
+        safari_mod, "wait_for_sign_in", lambda: pytest.fail("don't wait on a tab that isn't there")
+    )
+
+    assert cli.cmd_login(types.SimpleNamespace(dev=False, safari=True)) == 1
+    assert "Safari isn't there" in capsys.readouterr().out

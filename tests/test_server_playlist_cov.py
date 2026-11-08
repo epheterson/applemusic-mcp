@@ -1596,10 +1596,18 @@ class TestPlaylistCopy:
         assert result.endswith("Music.app couldn't copy 2")
 
     def test_applescript_copy_fails_names_the_new_playlist(self, monkeypatch):
-        """The playlist exists by the time copying fails; say so, with its ID."""
+        """The playlist exists by the time copying fails; say so, with its ID, and
+        log it so it can be found and undone."""
+        logged = []
+        monkeypatch.setattr(
+            server.audit_log, "log_action", lambda a, d, **k: logged.append((a, d, k))
+        )
         _as_copy_source(monkeypatch, 5, copy_error="AppleScript timed out after 30 seconds")
         result = server._playlist_copy("Source PL", "Copy PL")
         assert result.startswith("Error: created 'Copy PL' (ID: NEWPERSIST)")
+        action, details, extra = logged[0]
+        assert action == "copy_playlist" and details["error"]
+        assert extra["undo_info"]["playlist_id"] == "NEWPERSIST"
 
     def test_no_applescript_for_name_error(self, monkeypatch):
         monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", False)
@@ -6588,8 +6596,9 @@ def test_playlist_tool_advertises_its_default_limit():
 
 class TestPlaylistCopyLongPlaylist:
     def test_copy_copies_the_whole_source_not_the_first_500(self, monkeypatch):
-        """Copying a 1200-track playlist must copy 1200 tracks. The source used to be
-        read through the 500-track default, so the copy silently stopped at 500."""
+        """A 1200-track copy reports all 1200. The copy used to stop at 500; the
+        paging itself is covered by test_copy_playlist_tracks_duplicates_in_chunks
+        in test_applescript_cov.py."""
         calls = _as_copy_source(monkeypatch, 1200)
         result = server._playlist_copy("Source PL", "Copy PL")
 

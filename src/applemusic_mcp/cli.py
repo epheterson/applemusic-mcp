@@ -94,7 +94,10 @@ def _login_safari():
     print("Reading your Apple Music session from Safari…")
     ok, res = safari.media_user_token()
     if not ok and res == safari.NOT_SIGNED_IN:
-        safari.show_sign_in()
+        shown, why = safari.show_sign_in()
+        if not shown:
+            print(f"{res}\nCouldn't bring Safari forward to sign in: {why}")
+            return 1
         print("Sign in to Apple Music in Safari (the music.apple.com tab is in front).")
         print("Waiting up to 5 minutes; this finishes on its own once you're in. Ctrl-C stops.")
         try:
