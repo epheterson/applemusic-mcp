@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Web API `playlist add` of a library song reported it as not stored when it was.** It sent the song's library id where a catalog id belongs, then didn't find that id when it checked the playlist. It now sends the catalog id, or the library id for a song without one.
 - **Signed in to the web API on macOS, a playlist name could pick the wrong playlist.** A loose match from the web API beat an exact match in Music.app, so "Music" picked "New Music", and `playlist copy` copied that one. An exact name in Music.app now wins.
 - **Changes to Music.app's built-in playlists are refused.** "Music" is your whole library, so removing a track from it would most likely delete the song. Delete, rename, move and remove-track now refuse a built-in playlist. Folders still work.
-- **Two Music.app playlists with exactly the same name are refused** instead of taking the first. Rename one so it's clear which to use.
+- **Two Music.app playlists with exactly the same name:** delete, rename, move and remove-track refuse them, as before. A loose web-API match no longer stands in for them either: the result asks you to rename one. Reads and copy still take the first, until playlists can be picked by ID.
 - **Moving a playlist into a folder took the first partial match.** It now follows the same rule as delete and rename: an exact name wins, a single partial match is used, and several are refused.
 
 ### Changed

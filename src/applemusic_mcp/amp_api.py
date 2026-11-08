@@ -314,7 +314,7 @@ def search_library_songs(term: str, limit: int = 25) -> list[dict]:
                     "id": s.get("id"),  # library-song id (i.xxx) — needed for removal
                     "name": a.get("name", ""),
                     "artist": a.get("artistName", ""),
-                    "catalog_id": pp.get("catalogId") or pp.get("id"),
+                    "catalog_id": pp.get("catalogId") or "",  # playParams.id is the library id
                 }
             )
         return out

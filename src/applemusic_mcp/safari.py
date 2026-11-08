@@ -27,6 +27,8 @@ MUSIC_URL = "https://music.apple.com"
 
 # Reuse an open music.apple.com tab if there is one (no navigation/side effect);
 # otherwise open one, give it a moment to set cookies, then read document.cookie.
+# _POLL_SCRIPT never opens one: while waiting, a missing tab means "not yet".
+_NO_TAB = "NO_MUSIC_TAB"
 _HARVEST_SCRIPT = """
 tell application "Safari"
     set theTab to missing value
@@ -47,6 +49,16 @@ tell application "Safari"
     return (do JavaScript "document.cookie" in theTab)
 end tell
 """
+_OPEN_TAB = """    if theTab is missing value then
+        set newDoc to make new document with properties {URL:"https://music.apple.com"}
+        delay 4
+        set theTab to front document
+    end if
+"""
+assert _OPEN_TAB in _HARVEST_SCRIPT
+_POLL_SCRIPT = _HARVEST_SCRIPT.replace(
+    _OPEN_TAB, f'    if theTab is missing value then return "{_NO_TAB}"\n'
+)
 
 # Concise reasons only — the CLI (cmd_login) owns the full guidance menu.
 _SETTING_OFF_MSG = (
@@ -88,14 +100,15 @@ def _looks_like_js_blocked(err: str) -> bool:
     return "javascript" in e and ("apple events" in e or "not allowed" in e or "turned off" in e)
 
 
-def media_user_token() -> tuple[bool, str]:
+def media_user_token(open_tab: bool = True) -> tuple[bool, str]:
     """Harvest the media-user-token from a signed-in Safari.
 
     Returns ``(True, token)`` on success, or ``(False, actionable_message)`` —
     distinguishing the two recoverable cases (the JS-from-Apple-Events setting is
     off; Safari isn't signed into Apple Music) so the caller can guide the user or
-    fall back to the Chrome flow."""
-    ok, out = run_applescript(_HARVEST_SCRIPT)
+    fall back to the Chrome flow. With ``open_tab=False`` a missing
+    music.apple.com tab reads as not signed in, instead of opening one."""
+    ok, out = run_applescript(_HARVEST_SCRIPT if open_tab else _POLL_SCRIPT)
     if not ok:
         return False, (
             _SETTING_OFF_MSG
@@ -123,7 +136,7 @@ def wait_for_sign_in(
     errors, such as one osascript timeout, are retried."""
     deadline = clock() + timeout
     while True:
-        ok, res = media_user_token()
+        ok, res = media_user_token(open_tab=False)
         if ok or res == _SETTING_OFF_MSG:
             return ok, res
         if clock() + interval >= deadline:

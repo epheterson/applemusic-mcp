@@ -116,6 +116,34 @@ def test_search_library_songs_shape():
 
 
 @responses.activate
+def test_search_library_songs_no_catalog_id_for_an_upload():
+    """An uploaded song's playParams carry only its library id. Passing that off as
+    the catalog id made `add` send `{"id": "i.UP", "type": "songs"}` (final review,
+    0.22.1)."""
+    responses.add(
+        responses.GET,
+        f"{amp_api.AMP}/me/library/search",
+        json={
+            "results": {
+                "library-songs": {
+                    "data": [
+                        {
+                            "id": "i.UP",
+                            "attributes": {
+                                "name": "Demo",
+                                "artistName": "Me",
+                                "playParams": {"id": "i.UP", "kind": "song", "isLibrary": True},
+                            },
+                        }
+                    ]
+                }
+            }
+        },
+        status=200,
+    )
+    assert amp_api.search_library_songs("Demo")[0]["catalog_id"] == ""
+
+@responses.activate
 def test_delete_playlist_hits_amp_host():
     responses.add(responses.DELETE, f"{amp_api.AMP}/me/library/playlists/p.1", status=204)
     ok, _ = amp_api.delete_playlist("p.1")
