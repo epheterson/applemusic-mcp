@@ -4975,59 +4975,38 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
                 "off macOS — add by track instead."
             )
 
-        # Get every track of the source playlist via AppleScript. This used to read
-        # the first 500 only, so copying a longer playlist silently dropped the rest.
-        success, source_tracks = asc.get_all_playlist_tracks(resolved.applescript_name)
+        success, _page, total = asc.get_playlist_tracks_page(resolved.applescript_name, 0, 1)
         if not success:
-            return f"Error: {_format_applescript_error(str(source_tracks), 'read source playlist')}"
-        if not source_tracks:
+            return f"Error: {_format_applescript_error(str(_page), 'read source playlist')}"
+        if not total:
             return f"Error: Playlist '{resolved.applescript_name}' is empty"
 
-        # Create new playlist via AppleScript
         success, new_playlist_id = asc.create_playlist(new_name, "")
         if not success:
             return f"Error creating playlist: {_format_applescript_error(str(new_playlist_id), 'create destination playlist')}"
 
-        # Add tracks to new playlist via AppleScript
-        added = 0
-        failed = []
-        for track in source_tracks:
-            track_name = track.get("name", "")
-            artist = track.get("artist", "")
-            if track_name:
-                success, _ = asc.add_track_to_playlist(
-                    new_name, track_name, artist if artist else None
-                )
-                if success:
-                    added += 1
-                else:
-                    failed.append(track_name)
-
-        if failed:
-            failed_list = ", ".join(failed[:5])
-            if len(failed) > 5:
-                failed_list += f", ... (+{len(failed) - 5} more)"
-            audit_log.log_action(
-                "copy_playlist",
-                {
-                    "source": resolved.applescript_name,
-                    "destination": new_name,
-                    "track_count": added,
-                    "failed_count": len(failed),
-                    "method": "applescript",
-                },
-                undo_info={"playlist_name": new_name, "playlist_id": new_playlist_id},
+        # Copy the source's own tracks into the new playlist, found by its
+        # persistent ID. Looking each track up by name took ~0.4s a track and
+        # could add a different version, or add to an older playlist that
+        # already had the new name.
+        success, result = asc.copy_playlist_tracks(resolved.applescript_name, new_playlist_id)
+        if not success:
+            return (
+                f"Error: created '{new_name}' (ID: {new_playlist_id}) but copying into it failed: "
+                f"{_format_applescript_error(str(result), 'copy tracks')}"
             )
-            fuzzy_info = _format_fuzzy_match(resolved.fuzzy_match)
-            return f"Created '{new_name}' (ID: {new_playlist_id}) with {added}/{len(source_tracks)} tracks. Failed: {failed_list}{fuzzy_info}"
+        added, total, refused = result
+        details = {
+            "source": resolved.applescript_name,
+            "destination": new_name,
+            "track_count": added,
+            "method": "applescript",
+        }
+        if added < total:
+            details["failed_count"] = total - added
         audit_log.log_action(
             "copy_playlist",
-            {
-                "source": resolved.applescript_name,
-                "destination": new_name,
-                "track_count": added,
-                "method": "applescript",
-            },
+            details,
             undo_info={"playlist_name": new_name, "playlist_id": new_playlist_id},
         )
         fuzzy_info = _format_fuzzy_match(resolved.fuzzy_match)
@@ -5044,6 +5023,20 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
         all_tracks = []
         offset = 0
         while True:
+        if added < total:
+            failed_list = ", ".join(refused[:5])
+            if len(refused) > 5:
+                failed_list += f", ... (+{len(refused) - 5} more)"
+            # Music.app drops some tracks from a range copy without an error, so
+            # the names can cover fewer tracks than are missing.
+            failed_note = ""
+            if refused:
+                partial = len(refused) < total - added
+                failed_note = f", including {failed_list}" if partial else f": {failed_list}"
+            return (
+                f"Created '{new_name}' (ID: {new_playlist_id}) with {added}/{total} tracks. "
+                f"Music.app couldn't copy {total - added}{failed_note}{fuzzy_info}"
+            )
             response = requests.get(
                 f"{BASE_URL}/me/library/playlists/{resolved.api_id}/tracks",
                 headers=headers,

@@ -4591,15 +4591,16 @@ class TestPlaylistCopyNoTokenLeakOnAsFailure:
             True,
             [{"name": "Source Playlist", "id": "src.id", "smart": False, "track_count": 3}],
         )
-        # AS read of source tracks succeeds with one track
-        mock_asc.get_all_playlist_tracks.return_value = (
+        # AS read of the source's size succeeds: one track
+        mock_asc.get_playlist_tracks_page.return_value = (
             True,
             [{"name": "Track 1", "artist": "Artist 1", "album": "Album 1", "id": "t.1"}],
+            1,
         )
         # AS create of destination succeeds
         mock_asc.create_playlist.return_value = (True, "p.dest")
-        # AS add per track succeeds
-        mock_asc.add_track_to_playlist.return_value = (True, "Added")
+        # AS copy of the tracks succeeds
+        mock_asc.copy_playlist_tracks.return_value = (True, (1, 1, []))
         self._wire_error_constants(mock_asc, real_asc)
         monkeypatch.setattr(server, "asc", mock_asc)
         mock_asc.get_playlist_names.return_value = (
@@ -4636,9 +4637,10 @@ class TestPlaylistCopyNoTokenLeakOnAsFailure:
             [{"name": "Source Playlist", "id": "src.id", "smart": False, "track_count": 3}],
         )
         # AS read of source tracks fails environmentally
-        mock_asc.get_all_playlist_tracks.return_value = (
+        mock_asc.get_playlist_tracks_page.return_value = (
             False,
             "execution error: Music got an error: Connection is invalid. (-609)",
+            0,
         )
         self._wire_error_constants(mock_asc, real_asc)
         monkeypatch.setattr(server, "asc", mock_asc)

@@ -942,6 +942,55 @@ def test_get_playlist_tracks_matching_fails_if_the_playlist_changes(monkeypatch)
     assert total is None
 
 
+def test_copy_playlist_tracks_duplicates_in_chunks(monkeypatch):
+    """Copying hands Music.app the source's own tracks a range at a time, so a
+    1200-track copy is three calls, not 1200 name lookups."""
+    seq = setrun(monkeypatch, Seq([(True, "1200,500"), (True, "1200,1000"), (True, "1200,1200")]))
+
+    assert asc.copy_playlist_tracks("PL", "ABC123") == (True, (1200, 1200, []))
+    assert len(seq.calls) == 3
+    scripts = [code_only(s) for s in seq.calls]
+    assert all('persistent ID is "ABC123"' in s for s in scripts)
+    assert [("set startPos to %d" % n) in s for n, s in zip((1, 501, 1001), scripts)] == [True] * 3
+    assert all("duplicate" in s for s in scripts)
+
+
+def test_copy_playlist_tracks_names_refused_tracks(monkeypatch):
+    """A track Music.app refuses is counted and named, not hidden."""
+    setrun(monkeypatch, Seq([(True, "600,499\nBlue"), (True, "600,598\nGreen")]))
+
+    assert asc.copy_playlist_tracks("PL", "ABC") == (True, (598, 600, ["Blue", "Green"]))
+
+
+def test_copy_playlist_tracks_resumes_after_a_refused_track(monkeypatch):
+    """A range copy stops at the first refused track with the ones before it
+    already copied. Copying the range again would duplicate them (live: a
+    12,466-track copy came out with 14,685)."""
+    recorder = setrun(monkeypatch, Recorder(True, "1,1"))
+    asc.copy_playlist_tracks("PL", "ABC")
+    script = code_only(recorder.calls[0])
+
+    assert "set pos to pos + ((count of tracks of destPlaylist) - countBefore)" in script
+    assert "repeat with i from" not in script
+    # A track whose name can't be read is still listed, by position.
+    assert '"track " & pos' in script
+
+
+def test_copy_playlist_tracks_fails_if_the_source_changes(monkeypatch):
+    setrun(monkeypatch, Seq([(True, "1200,500"), (True, "900,900")]))
+
+    assert asc.copy_playlist_tracks("PL", "ABC") == (False, asc._PLAYLIST_CHANGED)
+
+
+def test_copy_playlist_tracks_passes_errors_through(monkeypatch):
+    setrun(monkeypatch, Seq([(True, "ERROR:Playlist not found: PL")]))
+    assert asc.copy_playlist_tracks("PL", "ABC") == (False, "Playlist not found: PL")
+
+    timeout = "AppleScript timed out after 30 seconds"
+    setrun(monkeypatch, Seq([(False, timeout)]))
+    assert asc.copy_playlist_tracks("PL", "ABC") == (False, timeout)
+
+
 def test_create_playlist(monkeypatch):
     r = setrun(monkeypatch, Recorder(True, "PID"))
     assert asc.create_playlist("X") == (True, "PID")
