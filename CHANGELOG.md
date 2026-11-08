@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The result says how many tracks didn't copy and names up to five of the ones Music.app refused. It also drops some tracks without an error; those are counted but not named.
 - **Web API (Windows/Linux, and `engine=web` on macOS): songs already in your library were reported as missing.** Since 0.16.0, `playlist add` with `auto_add` off (the default), its `dry_run` preview, and `library remove` searched your library for "title artist", which Apple's library search never matches. They said "not in your library" about songs that were. They now search by title, then keep only results whose artist contains the one you gave, so "Hey Jude" with artist "Beatles" won't pick another artist's recording. The match is by substring: "Adele" also matches "Adele Tribute".
 - **Web API `playlist add` of a library song reported it as not stored when it was.** It sent the song's library id where a catalog id belongs, then didn't find that id when it checked the playlist. It now sends the catalog id, or the library id for a song without one.
+- **Signed in to the web API on macOS, a playlist name could pick the wrong playlist.** A loose match from the web API beat an exact match in Music.app, so "Music" picked "New Music", and `playlist copy` copied that one. An exact name in Music.app now wins.
+- **Changes to Music.app's built-in playlists are refused.** "Music" is your whole library, so removing a track from it would most likely delete the song. Delete, rename, move and remove-track now refuse a built-in playlist. Folders still work.
+- **Two Music.app playlists with exactly the same name are refused** instead of taking the first. Rename one so it's clear which to use.
+- **Moving a playlist into a folder took the first partial match.** It now follows the same rule as delete and rename: an exact name wins, a single partial match is used, and several are refused.
 
 ### Changed
 
