@@ -90,3 +90,103 @@ def test_cli_login_safari_non_macos(monkeypatch):
     monkeypatch.setattr("platform.system", lambda: "Linux")
     rc = cli.cmd_login(types.SimpleNamespace(dev=False, safari=True))
     assert rc == 1
+
+
+class _Clock:
+    """A fake monotonic clock that sleep() advances."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, s):
+        self.sleeps.append(s)
+        self.now += s
+
+
+def test_wait_for_sign_in_returns_the_token_once_it_appears(monkeypatch):
+    replies = [(False, safari.NOT_SIGNED_IN)] * 2 + [(True, "TOK")]
+    monkeypatch.setattr(safari, "media_user_token", lambda: replies.pop(0))
+    clock = _Clock()
+
+    assert safari.wait_for_sign_in(300, 3, sleep=clock.sleep, clock=clock) == (True, "TOK")
+    assert clock.sleeps == [3, 3]
+
+
+def test_wait_for_sign_in_gives_up_at_the_timeout(monkeypatch):
+    monkeypatch.setattr(safari, "media_user_token", lambda: (False, safari.NOT_SIGNED_IN))
+    clock = _Clock()
+
+    assert safari.wait_for_sign_in(9, 3, sleep=clock.sleep, clock=clock) == (
+        False,
+        safari.NOT_SIGNED_IN,
+    )
+    assert clock.now == 9
+
+
+def test_wait_for_sign_in_stops_on_a_different_error(monkeypatch):
+    """Waiting only helps someone who still has to sign in; a blocked setting won't fix itself."""
+    monkeypatch.setattr(safari, "media_user_token", lambda: (False, safari._SETTING_OFF_MSG))
+    clock = _Clock()
+
+    assert safari.wait_for_sign_in(300, 3, sleep=clock.sleep, clock=clock)[0] is False
+    assert clock.sleeps == []
+
+
+def test_show_sign_in_brings_the_apple_music_tab_forward(monkeypatch):
+    calls = []
+    monkeypatch.setattr(safari, "run_applescript", lambda s: calls.append(s) or (True, ""))
+    safari.show_sign_in()
+
+    assert "activate" in calls[0] and "https://music.apple.com" in calls[0]
+
+
+def test_cli_login_safari_waits_for_you_to_sign_in(monkeypatch, capsys):
+    """Not signed in: open the tab, say so, wait, then save the token. It used to
+    print setup steps and quit, so you had to sign in and run login again."""
+    from applemusic_mcp import auth, cli, safari as safari_mod
+    import types
+
+    saved, shown = {}, []
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    monkeypatch.setattr(safari_mod, "media_user_token", lambda: (False, safari_mod.NOT_SIGNED_IN))
+    monkeypatch.setattr(safari_mod, "show_sign_in", lambda: shown.append(1))
+    monkeypatch.setattr(safari_mod, "wait_for_sign_in", lambda: (True, "TOK"))
+    monkeypatch.setattr(auth, "save_user_token", lambda t: saved.setdefault("t", t))
+
+    rc = cli.cmd_login(types.SimpleNamespace(dev=False, safari=True))
+
+    assert rc == 0 and saved["t"] == "TOK" and shown == [1]
+    assert "Sign in to Apple Music in Safari" in capsys.readouterr().out
+
+
+def test_cli_login_safari_wait_times_out(monkeypatch, capsys):
+    from applemusic_mcp import cli, safari as safari_mod
+    import types
+
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    monkeypatch.setattr(safari_mod, "media_user_token", lambda: (False, safari_mod.NOT_SIGNED_IN))
+    monkeypatch.setattr(safari_mod, "show_sign_in", lambda: None)
+    monkeypatch.setattr(safari_mod, "wait_for_sign_in", lambda: (False, safari_mod.NOT_SIGNED_IN))
+
+    assert cli.cmd_login(types.SimpleNamespace(dev=False, safari=True)) == 1
+    assert "login --dev" in capsys.readouterr().out
+
+
+def test_cli_login_safari_ctrl_c_while_waiting(monkeypatch, capsys):
+    from applemusic_mcp import cli, safari as safari_mod
+    import types
+
+    def interrupted():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("platform.system", lambda: "Darwin")
+    monkeypatch.setattr(safari_mod, "media_user_token", lambda: (False, safari_mod.NOT_SIGNED_IN))
+    monkeypatch.setattr(safari_mod, "show_sign_in", lambda: None)
+    monkeypatch.setattr(safari_mod, "wait_for_sign_in", interrupted)
+
+    assert cli.cmd_login(types.SimpleNamespace(dev=False, safari=True)) == 1
+    assert "Stopped waiting" in capsys.readouterr().out

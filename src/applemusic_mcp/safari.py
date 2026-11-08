@@ -19,6 +19,7 @@ Develop → **Allow JavaScript from Apple Events**.
 from __future__ import annotations
 
 import re
+import time
 
 from .applescript import run_applescript
 
@@ -53,6 +54,26 @@ _SETTING_OFF_MSG = (
 )
 
 _NOT_SIGNED_IN_MSG = "No Apple Music session found in Safari — sign in at music.apple.com first."
+NOT_SIGNED_IN = _NOT_SIGNED_IN_MSG
+
+# Bring the music.apple.com tab (opening one if needed) to the front, so the
+# person sees where to sign in.
+_SHOW_SCRIPT = """
+tell application "Safari"
+    activate
+    repeat with w in windows
+        repeat with t in tabs of w
+            if (URL of t) starts with "https://music.apple.com" then
+                set current tab of w to t
+                set index of w to 1
+                return "shown"
+            end if
+        end repeat
+    end repeat
+    make new document with properties {URL:"https://music.apple.com"}
+    return "opened"
+end tell
+"""
 
 
 def _parse_media_user_token(cookie_str: str) -> str:
@@ -85,3 +106,23 @@ def media_user_token() -> tuple[bool, str]:
     if not token:
         return False, _NOT_SIGNED_IN_MSG
     return True, token
+
+
+def show_sign_in() -> None:
+    """Bring Safari's Apple Music tab to the front so the person can sign in."""
+    run_applescript(_SHOW_SCRIPT)
+
+
+def wait_for_sign_in(
+    timeout: float = 300, interval: float = 3, sleep=time.sleep, clock=time.monotonic
+) -> tuple[bool, str]:
+    """Check Safari every `interval` seconds until the person has signed in.
+
+    Returns as soon as there's a token, or on any other error (waiting won't
+    fix a blocked setting), or with the not-signed-in result at `timeout`."""
+    deadline = clock() + timeout
+    while True:
+        ok, res = media_user_token()
+        if ok or res != _NOT_SIGNED_IN_MSG or clock() >= deadline:
+            return ok, res
+        sleep(interval)
