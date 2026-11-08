@@ -785,7 +785,7 @@ def get_playlists() -> tuple[bool, list[dict]]:
                         "name": parts[0],
                         "id": parts[1],
                         "smart": parts[2].lower() == "true",
-                        "track_count": int(parts[3]) if parts[3].isdigit() else 0,
+                        "track_count": int(parts[3]) if parts[3].isdecimal() else 0,
                         "duration": parts[4],
                     }
                 )
@@ -1640,6 +1640,12 @@ def _unambiguous_playlist_applescript(safe_name: str) -> str:
                 end repeat
                 return "ERROR:AMBIGUOUS_PL:" & (count of partialMatches) & ":" & candidates
             end if
+        end if
+        -- Built-ins like "Music" are your whole library: deleting a track from
+        -- one deletes the song. Folders have special kind `folder` and pass.
+        set sk to special kind of targetPlaylist
+        if sk is not none and sk is not folder then
+            return "ERROR:'" & (name of targetPlaylist as text) & "' is a built-in Music.app playlist; refusing to change it."
         end if"""
 
 

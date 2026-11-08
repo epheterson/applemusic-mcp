@@ -1678,6 +1678,27 @@ class TestResolvePlaylistPrefersExactName:
         self._setup(monkeypatch, ("p.new", self._partial("New Music")), (False, "timed out"))
         assert server._resolve_playlist("Music").api_id == "p.new"
 
+    def test_two_music_app_playlists_with_the_exact_name_are_refused(self, monkeypatch):
+        """Taking the first could copy the wrong one, and falling back to the
+        loose API match would surely be wrong (cubic, CodeRabbit, PR #82)."""
+        self._setup(
+            monkeypatch, ("p.new", self._partial("New Music")), (True, ["Music", "music"])
+        )
+        resolved = server._resolve_playlist("Music")
+
+        assert resolved.error and "2 playlists" in resolved.error
+        assert resolved.api_id is None and resolved.applescript_name is None
+
+    def test_add_and_its_preview_stop_on_the_duplicate_name_error(self, monkeypatch):
+        self._setup(
+            monkeypatch, ("p.new", self._partial("New Music")), (True, ["Music", "Music"])
+        )
+        monkeypatch.setattr(
+            server.asc, "add_track_to_playlist", lambda *a, **k: pytest.fail("must not write")
+        )
+        assert "2 playlists" in server._playlist_add(playlist="Music", track="Song")
+        assert "2 playlists" in server._playlist_add_preview("Music", "Song")
+
     def test_an_exact_api_match_skips_music_app(self, monkeypatch):
         """The common case stays one API listing, with no Apple Event added."""
         calls = self._setup(monkeypatch, ("p.music", None), (True, ["Music"]))
