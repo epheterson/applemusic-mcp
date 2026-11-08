@@ -2325,6 +2325,7 @@ def test_destructive_playlist_ops_refuse_music_apps_built_in_playlists(monkeypat
         (asc.delete_playlist, ("Music",), {}, "delete targetPlaylist"),
         (asc.rename_playlist, ("Music", "Y"), {}, "set name of targetPlaylist"),
         (asc.move_to_root, ("Music",), {}, "make new user playlist"),
+        (asc.move_to_folder, ("Music", "F"), {}, "move targetPlaylist to targetFolder"),
         (asc.remove_track_from_playlist, ("Music",), {"track_name": "T"}, "delete targetTrack"),
     ]
     for fn, args, kwargs, act in cases:
@@ -2348,3 +2349,11 @@ def test_get_playlists_survives_a_count_field_that_is_a_digit_but_not_a_number(m
     setrun(monkeypatch, const(True, "P|||ID|||true|||²|||3:00"))
     ok, pls = asc.get_playlists()
     assert ok and pls[0]["track_count"] == 0
+
+
+def test_move_to_folder_refuses_an_ambiguous_match(monkeypatch):
+    """It resolved by `name contains`, so moving "Rock" could move "Rock Classics"
+    (cubic, PR #82)."""
+    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS_PL:2:Rock Classics; Rock Mix; "))
+    ok, msg = asc.move_to_folder("Rock", "F")
+    assert ok is False and "refusing to move" in msg and "Rock Classics" in msg

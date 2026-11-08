@@ -1487,12 +1487,15 @@ def move_to_folder(item_name: str, folder_path: str) -> tuple[bool, str]:
     script = f"""
     tell application "Music"
 {_resolve_folder_path_applescript(folder_path)}
-{_find_playlist_applescript(safe_item)}
+{_unambiguous_playlist_applescript(safe_item)}
         move targetPlaylist to targetFolder
         return "Moved '" & name of targetPlaylist & "' to folder '" & name of targetFolder & "'"
     end tell
     """
     success, output = run_applescript(script)
+    ambiguous = _ambiguous_message(output, item_name, "move")
+    if ambiguous:
+        return False, ambiguous
     if output.startswith("ERROR:"):
         return False, output[6:]
     return success, output
