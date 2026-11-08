@@ -2085,6 +2085,25 @@ def _resolve_playlist(playlist: str) -> ResolvedPlaylist:
     # User provided a name - try to find API ID first (faster than AppleScript)
     api_id, fuzzy_match = _find_api_playlist_by_name(playlist)
 
+    # A loose API match must not beat an exact Music.app name: Music.app's own
+    # playlists (e.g. "Music") aren't in the API listing, so "Music" would
+    # otherwise resolve to "New Music". Exact API matches skip this check.
+    if api_id and fuzzy_match and APPLESCRIPT_AVAILABLE:
+        success, names = asc.get_playlist_names()
+        if success:
+            wanted = playlist.lower()
+            exact = [n for n in names if n.lower() == wanted]
+            if len(exact) > 1:
+                return ResolvedPlaylist(
+                    raw_input=playlist,
+                    error=(
+                        f"Error: {len(exact)} playlists in Music.app are named {playlist!r}. "
+                        "Rename one so it's clear which to use."
+                    ),
+                )
+            if exact:
+                return ResolvedPlaylist(raw_input=playlist, api_id=None, applescript_name=exact[0])
+
     if api_id:
         # Found via API - we have both ID and name
         # The matched name comes from fuzzy_match if it was fuzzy, otherwise it's exact
@@ -4191,6 +4210,8 @@ def _playlist_add_preview(
         auto_add = get_user_preferences().get("auto_add", False)
 
     resolved = _resolve_playlist(playlist.strip())
+    if resolved.error:
+        return resolved.error
     dest = resolved.applescript_name or resolved.api_id or playlist.strip()
 
     # Existing contents, so "already there" is reported rather than discovered at
@@ -4389,9 +4410,7 @@ def _playlist_add(
         # Resolve playlist with fuzzy matching
         resolved = _resolve_playlist(playlist_str)
         if resolved.error:
-            return (
-                resolved.error
-            )  # pragma: no cover  # unreachable: empty playlist is rejected by the guard above, so .error is always None here
+            return resolved.error
 
         # If we have tracks (names or IDs) and AppleScript is available, prefer AppleScript mode
         # But use the fuzzy-matched applescript_name, not the raw input!
