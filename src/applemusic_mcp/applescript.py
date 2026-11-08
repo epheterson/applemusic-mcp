@@ -1245,7 +1245,22 @@ def get_playlist_tracks_matching(
             return True, collected, None
 
 
-def copy_playlist_tracks(source_name: str, dest_id: str) -> tuple[bool, Any]:
+def get_playlist_persistent_id(playlist_name: str) -> tuple[bool, str]:
+    """Persistent ID of the playlist a name resolves to (as the readers find it)."""
+    safe_name = _escape_for_applescript(playlist_name)
+    script = f"""
+    tell application "Music"
+{_find_playlist_applescript(safe_name)}
+        return persistent ID of targetPlaylist
+    end tell
+    """
+    success, output = run_applescript(script)
+    if output.startswith("ERROR:"):
+        return False, output[6:]
+    return success, output
+
+
+def copy_playlist_tracks(source_id: str, dest_id: str) -> tuple[bool, Any]:
     """Copy every track of a playlist into another, in source order.
 
     Duplicates the source's own track references a page at a time, so each
@@ -1255,14 +1270,15 @@ def copy_playlist_tracks(source_name: str, dest_id: str) -> tuple[bool, Any]:
     A track Music.app refuses is skipped and named, not fatal.
 
     Args:
-        source_name: Name of the playlist to copy from
+        source_id: Persistent ID of the playlist to copy from. By ID, because
+            by name it could be the new copy itself when the names are the same.
         dest_id: Persistent ID of the playlist to copy into
 
     Returns:
         (True, (tracks_in_destination, tracks_in_source, refused_names))
         or (False, error).
     """
-    safe_source = _escape_for_applescript(source_name)
+    safe_source = _escape_for_applescript(source_id)
     safe_dest = _escape_for_applescript(dest_id)
     first_total = None
     position = 1
@@ -1270,7 +1286,11 @@ def copy_playlist_tracks(source_name: str, dest_id: str) -> tuple[bool, Any]:
     while True:
         script = f"""
     tell application "Music"
-{_find_playlist_applescript(safe_source)}
+        try
+            set targetPlaylist to first playlist whose persistent ID is "{safe_source}"
+        on error
+            return "ERROR:Source playlist not found"
+        end try
         try
             set destPlaylist to first user playlist whose persistent ID is "{safe_dest}"
         on error

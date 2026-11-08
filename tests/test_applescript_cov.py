@@ -947,12 +947,20 @@ def test_copy_playlist_tracks_duplicates_in_chunks(monkeypatch):
     1200-track copy is three calls, not 1200 name lookups."""
     seq = setrun(monkeypatch, Seq([(True, "1200,500"), (True, "1200,1000"), (True, "1200,1200")]))
 
-    assert asc.copy_playlist_tracks("PL", "ABC123") == (True, (1200, 1200, []))
+    assert asc.copy_playlist_tracks("SRC9", "ABC123") == (True, (1200, 1200, []))
     assert len(seq.calls) == 3
     scripts = [code_only(s) for s in seq.calls]
-    assert all('persistent ID is "ABC123"' in s for s in scripts)
+    # Both ends by persistent ID: the source by name could be the new copy itself
+    # when it has the same name (Sourcery, PR #81).
+    assert all('first playlist whose persistent ID is "SRC9"' in s for s in scripts)
+    assert all('first user playlist whose persistent ID is "ABC123"' in s for s in scripts)
     assert [("set startPos to %d" % n) in s for n, s in zip((1, 501, 1001), scripts)] == [True] * 3
-    assert all("duplicate" in s for s in scripts)
+    for s in scripts:
+        # Each call copies from where it is to the end of its own 500-track range.
+        assert "set endPos to startPos + 499" in s
+        assert "if endPos > trackCount then set endPos to trackCount" in s
+        assert "duplicate (tracks pos thru endPos of targetPlaylist) to destPlaylist" in s
+        assert "set pos to endPos + 1" in s
 
 
 def test_copy_playlist_tracks_names_refused_tracks(monkeypatch):
@@ -976,6 +984,10 @@ def test_copy_playlist_tracks_resumes_after_a_refused_track(monkeypatch):
     assert "persistent ID of track countNow of destPlaylist" in script
     assert "persistent ID of tracks pos thru endPos of targetPlaylist" in script
     assert "set pos to pos + ((count of tracks of destPlaylist) - countBefore)" not in script
+    # The error path always moves past the refused track, so it can't loop on it.
+    error_path = script[script.index("on error") :]
+    assert "set pos to pos + stopAt" in error_path
+    assert error_path.index("set pos to pos + 1") > error_path.index("set pos to pos + stopAt")
     # A track whose name can't be read is still listed, by position.
     assert '"track " & pos' in script
 
@@ -993,6 +1005,15 @@ def test_copy_playlist_tracks_passes_errors_through(monkeypatch):
     timeout = "AppleScript timed out after 30 seconds"
     setrun(monkeypatch, Seq([(False, timeout)]))
     assert asc.copy_playlist_tracks("PL", "ABC") == (False, timeout)
+
+
+def test_get_playlist_persistent_id(monkeypatch):
+    rec = setrun(monkeypatch, Recorder(True, "ABCDEF0123"))
+    assert asc.get_playlist_persistent_id('Mix "1"') == (True, "ABCDEF0123")
+    assert "return persistent ID of targetPlaylist" in rec.calls[0]
+
+    setrun(monkeypatch, const(True, "ERROR:Playlist not found: Mix"))
+    assert asc.get_playlist_persistent_id("Mix") == (False, "Playlist not found: Mix")
 
 
 def test_create_playlist(monkeypatch):

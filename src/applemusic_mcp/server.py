@@ -4993,6 +4993,11 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
             return f"Error: {_format_applescript_error(str(_page), 'read source playlist')}"
         if not total:
             return f"Error: Playlist '{resolved.applescript_name}' is empty"
+        # Pin the source before the copy exists: by name, copying "Mix" to a new
+        # "Mix" could find the new, empty one.
+        success, source_id = asc.get_playlist_persistent_id(resolved.applescript_name)
+        if not success:
+            return f"Error: {_format_applescript_error(str(source_id), 'read source playlist')}"
 
         success, new_playlist_id = asc.create_playlist(new_name, "")
         if not success:
@@ -5002,7 +5007,7 @@ def _playlist_copy(source: str = "", new_name: str = "") -> str:
         # persistent ID. Looking each track up by name took ~0.4s a track and
         # could add a different version, or add to an older playlist that
         # already had the new name.
-        success, result = asc.copy_playlist_tracks(resolved.applescript_name, new_playlist_id)
+        success, result = asc.copy_playlist_tracks(source_id, new_playlist_id)
         if not success:
             # The playlist exists now, possibly with some tracks: log it so it can
             # be found and undone.

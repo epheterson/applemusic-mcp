@@ -144,6 +144,9 @@ def test_show_sign_in_brings_the_apple_music_tab_forward(monkeypatch):
     assert safari.show_sign_in() == (True, "shown")
 
     assert "activate" in calls[0] and "https://music.apple.com" in calls[0]
+    # Selects the tab and raises its window, not just Safari.
+    assert "set current tab of w to t" in calls[0]
+    assert "set index of w to 1" in calls[0]
 
 
 def test_cli_login_safari_waits_for_you_to_sign_in(monkeypatch, capsys):

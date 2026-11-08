@@ -1524,7 +1524,17 @@ def _as_copy_source(monkeypatch, total, copied=None, copy_error=None, refused=()
     monkeypatch.setattr(
         server.asc, "get_playlist_tracks_page", lambda name, offset, limit: (True, [], total)
     )
-    monkeypatch.setattr(server.asc, "create_playlist", lambda name, desc="": (True, "NEWPERSIST"))
+    monkeypatch.setattr(
+        server.asc,
+        "get_playlist_persistent_id",
+        lambda name: calls.append(("id", name)) or (True, "SRCPERSIST"),
+    )
+
+    def create(name, desc=""):
+        calls.append(("create", name))
+        return True, "NEWPERSIST"
+
+    monkeypatch.setattr(server.asc, "create_playlist", create)
 
     def copy(source, dest_id):
         calls.append((source, dest_id))
@@ -1553,14 +1563,14 @@ class TestPlaylistCopy:
         assert "Copy PL" in result
         assert "NEWPERSIST" in result
         assert "with 2 tracks" in result
-        assert calls == [("Source PL", "NEWPERSIST")]
+        assert calls == [("id", "Source PL"), ("create", "Copy PL"), ("SRCPERSIST", "NEWPERSIST")]
 
     def test_applescript_empty_source(self, monkeypatch):
         calls = _as_copy_source(monkeypatch, 0)
         result = server._playlist_copy("Source PL", "Copy PL")
         assert "Error" in result
         assert "empty" in result.lower()
-        assert calls == []
+        assert [c for c in calls if c[0] == "create"] == []
 
     def test_applescript_source_read_fails(self, monkeypatch):
         _as_copy_source(monkeypatch, 2)
@@ -1575,7 +1585,15 @@ class TestPlaylistCopy:
         monkeypatch.setattr(server.asc, "create_playlist", lambda name, desc="": (False, "error"))
         result = server._playlist_copy("Source PL", "Copy PL")
         assert "Error" in result
-        assert calls == []
+        assert calls == [("id", "Source PL")]
+
+    def test_applescript_copy_to_the_same_name_copies_the_original(self, monkeypatch):
+        """The source is pinned by persistent ID before the copy exists, so copying
+        "Mix" to a new "Mix" can't pick the empty new one (Sourcery, PR #81)."""
+        calls = _as_copy_source(monkeypatch, 3)
+        server._playlist_copy("Source PL", "Source PL")
+        assert calls[0] == ("id", "Source PL")
+        assert calls[-1] == ("SRCPERSIST", "NEWPERSIST")
 
     def test_applescript_some_tracks_fail(self, monkeypatch):
         _as_copy_source(monkeypatch, 972, copied=971, refused=["Blue"])
@@ -6602,7 +6620,7 @@ class TestPlaylistCopyLongPlaylist:
         calls = _as_copy_source(monkeypatch, 1200)
         result = server._playlist_copy("Source PL", "Copy PL")
 
-        assert calls == [("Source PL", "NEWPERSIST")]
+        assert calls == [("id", "Source PL"), ("create", "Copy PL"), ("SRCPERSIST", "NEWPERSIST")]
         assert "with 1200 tracks" in result
 
 

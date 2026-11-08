@@ -4597,6 +4597,7 @@ class TestPlaylistCopyNoTokenLeakOnAsFailure:
             [{"name": "Track 1", "artist": "Artist 1", "album": "Album 1", "id": "t.1"}],
             1,
         )
+        mock_asc.get_playlist_persistent_id.return_value = (True, "SRCPERSIST")
         # AS create of destination succeeds
         mock_asc.create_playlist.return_value = (True, "p.dest")
         # AS copy of the tracks succeeds
