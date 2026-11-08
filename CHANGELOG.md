@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.1] - 2026-11-07
+
+`playlist copy` on macOS is fast and exact, adding a library song over the web API works again, and `login` waits for you to sign in.
+
+### Fixed
+
+| What | Before | Now |
+|---|---|---|
+| Copying a 972-track playlist | 6.4 minutes | 2 seconds |
+| Copying a 12,466-track playlist | Over an hour, likely cut off by the client | 13 seconds |
+| Which tracks land in the copy | Each track looked up again by title and artist, which could pick a different song with a similar title | The source playlist's own tracks, in order |
+| A new playlist with the same name as an existing one | Tracks could go into the older playlist | Tracks go into the new one, found by its ID |
+
+- A track Music.app won't copy is skipped and named in the result, as before.
+- **Web API (Windows/Linux, and `engine=web` on macOS): songs already in your library were reported as missing.** Since 0.16.0, `playlist add` with `auto_add` off (the default), its `dry_run` preview, and `library remove` searched your library for "title artist", which Apple's library search never matches. They said "not in your library" about songs that were. They now search by title and match the artist on the results; a different artist's song with the same title is never picked.
+- **Web API `playlist add` of a library song reported it as not stored when it was.** It sent the song's library id where a catalog id belongs, then didn't find that id when it checked the playlist. It now sends the catalog id, or the library id for a song without one.
+
+### Changed
+
+- **`login` on macOS waits for you to sign in.** If Safari isn't signed in to Apple Music, it brings the music.apple.com tab to the front, waits up to 5 minutes, and finishes once you're in. It used to print the setup steps and quit, so you had to run it again.
+
 ## [0.22.0] - 2026-11-06
 
 Long playlists and big libraries are no longer silently cut off. Fixes from [@melodysium](https://github.com/melodysium) ([#78](https://github.com/epheterson/applemusic-mcp/pull/78), [#79](https://github.com/epheterson/applemusic-mcp/pull/79)).
