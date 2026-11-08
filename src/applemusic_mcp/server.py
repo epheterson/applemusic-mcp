@@ -2085,6 +2085,17 @@ def _resolve_playlist(playlist: str) -> ResolvedPlaylist:
     # User provided a name - try to find API ID first (faster than AppleScript)
     api_id, fuzzy_match = _find_api_playlist_by_name(playlist)
 
+    # A loose API match must not beat an exact Music.app name: Music.app's own
+    # playlists (e.g. "Music") aren't in the API listing, so "Music" would
+    # otherwise resolve to "New Music". Exact API matches skip this check.
+    if api_id and fuzzy_match and APPLESCRIPT_AVAILABLE:
+        success, names = asc.get_playlist_names()
+        if success:
+            wanted = playlist.lower()
+            exact = next((n for n in names if n.lower() == wanted), None)
+            if exact:
+                return ResolvedPlaylist(raw_input=playlist, api_id=None, applescript_name=exact)
+
     if api_id:
         # Found via API - we have both ID and name
         # The matched name comes from fuzzy_match if it was fuzzy, otherwise it's exact

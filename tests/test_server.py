@@ -1622,8 +1622,78 @@ class TestResolvePlaylistApiLookup:
         assert resolved.error is None
 
 
+class TestResolvePlaylistPrefersExactName:
+    """A fuzzy web-API match must not beat an exact Music.app name. Live: "Music"
+    resolved to the API playlist "New Music", because Music.app's own "Music"
+    playlist isn't in the API listing and the API was asked first, so `playlist
+    copy` copied the wrong playlist."""
+
+    def _setup(self, monkeypatch, api_hit, names):
+        calls = []
+        monkeypatch.setattr(server, "APPLESCRIPT_AVAILABLE", True)
+        monkeypatch.setattr(server, "_find_api_playlist_by_name", lambda n: api_hit)
+
+        def get_names():
+            calls.append(1)
+            return names
+
+        monkeypatch.setattr(server.asc, "get_playlist_names", get_names)
+        return calls
+
+    @staticmethod
+    def _partial(matched):
+        return server.FuzzyMatchResult(
+            matched_name=matched,
+            query="Music",
+            normalized_query="music",
+            normalized_match=matched.lower(),
+            transformations=[],
+            match_type="partial",
+        )
+
+    def test_exact_music_app_name_beats_a_partial_api_match(self, monkeypatch):
+        self._setup(
+            monkeypatch, ("p.new", self._partial("New Music")), (True, ["New Music", "Music"])
+        )
+        resolved = server._resolve_playlist("Music")
+
+        assert resolved.applescript_name == "Music"
+        assert resolved.api_id is None
+        assert resolved.fuzzy_match is None
+
+    def test_exact_name_ignores_case(self, monkeypatch):
+        self._setup(monkeypatch, ("p.new", self._partial("New Music")), (True, ["MUSIC"]))
+        assert server._resolve_playlist("music").applescript_name == "MUSIC"
+
+    def test_keeps_the_api_match_when_music_app_has_no_exact_name(self, monkeypatch):
+        self._setup(
+            monkeypatch, ("p.new", self._partial("New Music")), (True, ["New Music", "Musicals"])
+        )
+        resolved = server._resolve_playlist("Music")
+
+        assert resolved.api_id == "p.new"
+        assert resolved.applescript_name == "New Music"
+
+    def test_keeps_the_api_match_when_music_app_cannot_list(self, monkeypatch):
+        self._setup(monkeypatch, ("p.new", self._partial("New Music")), (False, "timed out"))
+        assert server._resolve_playlist("Music").api_id == "p.new"
+
+    def test_an_exact_api_match_skips_music_app(self, monkeypatch):
+        """The common case stays one API listing, with no Apple Event added."""
+        calls = self._setup(monkeypatch, ("p.music", None), (True, ["Music"]))
+        resolved = server._resolve_playlist("Music")
+
+        assert resolved.api_id == "p.music" and calls == []
+
+
 class TestFuzzyMatchingPlaylistResolution:
     """Tests for fuzzy matching playlist names - REGRESSION TESTS."""
+
+    @pytest.fixture(autouse=True)
+    def _no_exact_music_app_name(self, monkeypatch):
+        # A fuzzy API match now checks Music.app for an exact name first; here
+        # Music.app has none, so the API match stands.
+        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, []))
 
     @responses.activate
     def test_fuzzy_matches_and_vs_ampersand(
@@ -1778,7 +1848,7 @@ class TestPlaylistResolutionPerformance:
 
     @responses.activate
     def test_fuzzy_matching_performance_with_many_playlists(
-        self, mock_config_dir, mock_developer_token, mock_user_token
+        self, mock_config_dir, mock_developer_token, mock_user_token, monkeypatch
     ):
         """Should complete fuzzy matching in reasonable time even with many playlists.
 
@@ -1813,6 +1883,7 @@ class TestPlaylistResolutionPerformance:
             status=200,
         )
 
+        monkeypatch.setattr(server.asc, "get_playlists", lambda: (True, []))  # no exact twin
         start = time_module.time()
         resolved = server._resolve_playlist("Rock and Roll")  # Fuzzy: "and" → "&"
         elapsed = time_module.time() - start
