@@ -2386,3 +2386,48 @@ def test_jxa_mouse_refused_without_flag(monkeypatch, fn):
     monkeypatch.setenv("APPLEMUSIC_LEVEL", "api")
     monkeypatch.setattr(asc.subprocess, "run", lambda *a, **k: pytest.fail("osascript ran"))
     assert fn() is False
+
+
+def test_destructive_playlist_ops_refuse_music_apps_built_in_playlists(monkeypatch):
+    """Music.app's built-in "Music" playlist is a `user playlist` with a special
+    kind, and it is your whole library: removing a track from it removes the
+    song from the library. Name resolution can now return it (an exact
+    Music.app name beats a loose web-API match), so every destructive path
+    refuses a playlist with a special kind. Folders have the special kind
+    `folder` and stay allowed."""
+    cases = [
+        (asc.delete_playlist, ("Music",), {}, "delete targetPlaylist"),
+        (asc.rename_playlist, ("Music", "Y"), {}, "set name of targetPlaylist"),
+        (asc.move_to_root, ("Music",), {}, "make new user playlist"),
+        (asc.move_to_folder, ("Music", "F"), {}, "move targetPlaylist to targetFolder"),
+        (asc.remove_track_from_playlist, ("Music",), {"track_name": "T"}, "delete targetTrack"),
+    ]
+    for fn, args, kwargs, act in cases:
+        r = setrun(monkeypatch, Recorder(True, ""))
+        fn(*args, **kwargs)
+        script = code_only(r.calls[0])
+        guard = "if sk is not none and sk is not folder then"
+        assert guard in script, fn.__name__
+        assert script.index(guard) < script.index(act), f"{fn.__name__} acts before the guard"
+
+
+def test_built_in_playlist_refusal_reaches_the_caller(monkeypatch):
+    setrun(monkeypatch, const(True, "ERROR:'Music' is a built-in Music.app playlist"))
+    ok, msg = asc.remove_track_from_playlist("Music", track_name="T")
+    assert ok is False and msg == "'Music' is a built-in Music.app playlist"
+
+
+def test_get_playlists_survives_a_count_field_that_is_a_digit_but_not_a_number(monkeypatch):
+    """`"²".isdigit()` is True and `int("²")` raises, so a name containing `|||`
+    could shift the fields and crash the listing (CodeRabbit, PR #82)."""
+    setrun(monkeypatch, const(True, "P|||ID|||true|||²|||3:00"))
+    ok, pls = asc.get_playlists()
+    assert ok and pls[0]["track_count"] == 0
+
+
+def test_move_to_folder_refuses_an_ambiguous_match(monkeypatch):
+    """It resolved by `name contains`, so moving "Rock" could move "Rock Classics"
+    (cubic, PR #82)."""
+    setrun(monkeypatch, const(True, "ERROR:AMBIGUOUS_PL:2:Rock Classics; Rock Mix; "))
+    ok, msg = asc.move_to_folder("Rock", "F")
+    assert ok is False and "refusing to move" in msg and "Rock Classics" in msg
