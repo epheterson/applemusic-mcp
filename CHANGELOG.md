@@ -18,10 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | Tracks in the copy | Looked up again by title and artist, sometimes a different song | The source's own tracks, in order |
 | Copy to a name that already exists | Tracks could go into the older playlist | Tracks go into the new one |
 
-- The copy result counts tracks that didn't copy and names up to five.
+- **macOS:** the copy result counts tracks that didn't copy and names up to five that Music.app refused.
 - **Web API:** `playlist add`, its preview and `library remove` said songs in your library weren't there.
 - **Web API:** adding a library song said it wasn't stored when it was.
-- **macOS:** an exact Music.app name now wins, so "Music" no longer picks "New Music".
+- **macOS:** an exact Music.app name now beats a loose web-API match, so "Music" no longer picks "New Music".
 - **macOS:** delete, rename, move and remove-track refuse built-in playlists like "Music", which is your whole library.
 - **macOS:** moving a playlist into a folder follows the same name rule as delete and rename.
 
